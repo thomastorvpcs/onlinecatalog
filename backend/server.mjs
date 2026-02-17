@@ -87,7 +87,7 @@ function json(res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization"
   });
   res.end(JSON.stringify(payload));
@@ -109,7 +109,22 @@ function ensureDeviceSchema() {
       sort_order INTEGER NOT NULL DEFAULT 0
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+      change_type TEXT NOT NULL CHECK (change_type IN ('set', 'adjust')),
+      previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
+      new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
+      delta INTEGER NOT NULL,
+      reason TEXT,
+      changed_by_user_id INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_inventory_events_device ON inventory_events(device_id)");
 }
 
 function ensureLargeCatalog() {
@@ -573,6 +588,73 @@ function getCategories() {
   return db.prepare("SELECT name FROM categories ORDER BY id").all().map((row) => row.name);
 }
 
+function isInteger(value) {
+  return Number.isInteger(value);
+}
+
+function getDeviceExists(deviceId) {
+  const row = db.prepare("SELECT id, model_name FROM devices WHERE id = ?").get(deviceId);
+  return row || null;
+}
+
+function getLocationExists(locationId) {
+  const row = db.prepare("SELECT id, name FROM locations WHERE id = ?").get(locationId);
+  return row || null;
+}
+
+function getInventoryByDeviceId(deviceId) {
+  const device = db.prepare("SELECT id, model_name FROM devices WHERE id = ?").get(deviceId);
+  if (!device?.id) return null;
+  const rows = db.prepare(`
+    SELECT
+      l.id AS locationId,
+      l.name AS location,
+      COALESCE(di.quantity, 0) AS quantity
+    FROM locations l
+    LEFT JOIN device_inventory di
+      ON di.location_id = l.id
+      AND di.device_id = ?
+    ORDER BY l.id
+  `).all(deviceId);
+  const total = rows.reduce((sum, r) => sum + Number(r.quantity || 0), 0);
+  return {
+    deviceId: device.id,
+    model: device.model_name,
+    locations: rows.map((r) => ({
+      locationId: Number(r.locationId),
+      location: r.location,
+      quantity: Number(r.quantity || 0)
+    })),
+    total
+  };
+}
+
+function upsertInventoryQuantity(deviceId, locationId, quantity) {
+  db.prepare(`
+    INSERT INTO device_inventory (device_id, location_id, quantity)
+    VALUES (?, ?, ?)
+    ON CONFLICT(device_id, location_id)
+    DO UPDATE SET quantity = excluded.quantity
+  `).run(deviceId, locationId, quantity);
+}
+
+function getInventoryQuantity(deviceId, locationId) {
+  const row = db.prepare(`
+    SELECT quantity
+    FROM device_inventory
+    WHERE device_id = ? AND location_id = ?
+  `).get(deviceId, locationId);
+  return Number(row?.quantity || 0);
+}
+
+function addInventoryEvent({ deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason, changedByUserId }) {
+  db.prepare(`
+    INSERT INTO inventory_events (
+      device_id, location_id, change_type, previous_quantity, new_quantity, delta, reason, changed_by_user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason || null, changedByUserId ?? null);
+}
+
 initDb();
 
 const server = createServer(async (req, res) => {
@@ -817,6 +899,209 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(res, 200, getDevices(url));
+      return;
+    }
+
+    const inventoryByDeviceMatch = url.pathname.match(/^\/api\/inventory\/([^/]+)$/);
+    if (req.method === "GET" && inventoryByDeviceMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const deviceId = decodeURIComponent(inventoryByDeviceMatch[1]);
+      const inventory = getInventoryByDeviceId(deviceId);
+      if (!inventory) {
+        json(res, 404, { error: "Device not found." });
+        return;
+      }
+      json(res, 200, inventory);
+      return;
+    }
+
+    const inventorySetMatch = url.pathname.match(/^\/api\/inventory\/([^/]+)\/(\d+)$/);
+    if (req.method === "PUT" && inventorySetMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const deviceId = decodeURIComponent(inventorySetMatch[1]);
+      const locationId = Number(inventorySetMatch[2]);
+      const body = await parseBody(req);
+      const quantity = Number(body.quantity);
+      const reason = String(body.reason || "").trim();
+
+      if (!isInteger(quantity) || quantity < 0) {
+        json(res, 400, { error: "Quantity must be an integer >= 0." });
+        return;
+      }
+      if (!getDeviceExists(deviceId)) {
+        json(res, 404, { error: "Device not found." });
+        return;
+      }
+      if (!getLocationExists(locationId)) {
+        json(res, 404, { error: "Location not found." });
+        return;
+      }
+
+      const previousQuantity = getInventoryQuantity(deviceId, locationId);
+      upsertInventoryQuantity(deviceId, locationId, quantity);
+      addInventoryEvent({
+        deviceId,
+        locationId,
+        changeType: "set",
+        previousQuantity,
+        newQuantity: quantity,
+        delta: quantity - previousQuantity,
+        reason,
+        changedByUserId: user.id
+      });
+
+      json(res, 200, { ok: true, deviceId, locationId, quantity });
+      return;
+    }
+
+    const inventoryAdjustMatch = url.pathname.match(/^\/api\/inventory\/([^/]+)\/(\d+)\/adjust$/);
+    if (req.method === "POST" && inventoryAdjustMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const deviceId = decodeURIComponent(inventoryAdjustMatch[1]);
+      const locationId = Number(inventoryAdjustMatch[2]);
+      const body = await parseBody(req);
+      const delta = Number(body.delta);
+      const reason = String(body.reason || "").trim();
+
+      if (!isInteger(delta) || delta === 0) {
+        json(res, 400, { error: "Delta must be a non-zero integer." });
+        return;
+      }
+      if (!getDeviceExists(deviceId)) {
+        json(res, 404, { error: "Device not found." });
+        return;
+      }
+      if (!getLocationExists(locationId)) {
+        json(res, 404, { error: "Location not found." });
+        return;
+      }
+
+      const previousQuantity = getInventoryQuantity(deviceId, locationId);
+      const newQuantity = previousQuantity + delta;
+      if (newQuantity < 0) {
+        json(res, 400, { error: "Adjustment would result in negative quantity." });
+        return;
+      }
+
+      upsertInventoryQuantity(deviceId, locationId, newQuantity);
+      addInventoryEvent({
+        deviceId,
+        locationId,
+        changeType: "adjust",
+        previousQuantity,
+        newQuantity,
+        delta,
+        reason,
+        changedByUserId: user.id
+      });
+
+      json(res, 200, { ok: true, deviceId, locationId, previousQuantity, newQuantity, delta });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/inventory/bulk") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      const mode = String(body.mode || "").trim().toLowerCase();
+      const reason = String(body.reason || "").trim();
+      const updates = Array.isArray(body.updates) ? body.updates : [];
+
+      if (!["set", "adjust"].includes(mode)) {
+        json(res, 400, { error: "Mode must be 'set' or 'adjust'." });
+        return;
+      }
+      if (!updates.length) {
+        json(res, 400, { error: "Updates array is required." });
+        return;
+      }
+
+      const errors = [];
+      for (let i = 0; i < updates.length; i += 1) {
+        const row = updates[i] || {};
+        const deviceId = String(row.deviceId || "").trim();
+        const locationId = Number(row.locationId);
+        if (!deviceId) {
+          errors.push({ index: i, field: "deviceId", message: "deviceId is required." });
+          continue;
+        }
+        if (!isInteger(locationId) || locationId < 1) {
+          errors.push({ index: i, field: "locationId", message: "locationId must be a positive integer." });
+          continue;
+        }
+        if (!getDeviceExists(deviceId)) {
+          errors.push({ index: i, field: "deviceId", message: "Device not found." });
+        }
+        if (!getLocationExists(locationId)) {
+          errors.push({ index: i, field: "locationId", message: "Location not found." });
+        }
+        if (mode === "set") {
+          const quantity = Number(row.quantity);
+          if (!isInteger(quantity) || quantity < 0) {
+            errors.push({ index: i, field: "quantity", message: "Must be an integer >= 0." });
+          }
+        } else {
+          const delta = Number(row.delta);
+          if (!isInteger(delta) || delta === 0) {
+            errors.push({ index: i, field: "delta", message: "Must be a non-zero integer." });
+            continue;
+          }
+          const current = getInventoryQuantity(deviceId, locationId);
+          if (current + delta < 0) {
+            errors.push({ index: i, field: "delta", message: "Adjustment would result in negative quantity." });
+          }
+        }
+      }
+      if (errors.length) {
+        json(res, 400, { error: "Validation failed", details: errors });
+        return;
+      }
+
+      db.exec("BEGIN TRANSACTION");
+      try {
+        for (const row of updates) {
+          const deviceId = String(row.deviceId).trim();
+          const locationId = Number(row.locationId);
+          const previousQuantity = getInventoryQuantity(deviceId, locationId);
+          if (mode === "set") {
+            const quantity = Number(row.quantity);
+            upsertInventoryQuantity(deviceId, locationId, quantity);
+            addInventoryEvent({
+              deviceId,
+              locationId,
+              changeType: "set",
+              previousQuantity,
+              newQuantity: quantity,
+              delta: quantity - previousQuantity,
+              reason,
+              changedByUserId: user.id
+            });
+          } else {
+            const delta = Number(row.delta);
+            const newQuantity = previousQuantity + delta;
+            upsertInventoryQuantity(deviceId, locationId, newQuantity);
+            addInventoryEvent({
+              deviceId,
+              locationId,
+              changeType: "adjust",
+              previousQuantity,
+              newQuantity,
+              delta,
+              reason,
+              changedByUserId: user.id
+            });
+          }
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+
+      json(res, 200, { ok: true, processed: updates.length, failed: 0 });
       return;
     }
 

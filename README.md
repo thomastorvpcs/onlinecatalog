@@ -1,4 +1,4 @@
-# PCS Online Catalog MVP (Local Demo)
+﻿# PCS Online Catalog MVP (Local Demo)
 
 This project is a working local MVP demo of the "PCS Online Catalog & Request Management Platform" based on your uploaded PDF.
 
@@ -71,3 +71,8 @@ Steps:
 Render will run:
 - Build: `npm ci && npm run build`
 - Start: `npm run start`
+
+## Inventory API
+See docs/inventory-api.md for inventory update endpoint design and examples.
+
+
