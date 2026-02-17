@@ -49,7 +49,231 @@ function modelFamilyOf(model) {
   return model.split(" ").filter((t) => !/^\d+(gb|tb)$/i.test(t)).join(" ");
 }
 
+const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostname.endsWith("github.io");
+const DEMO_VERIFICATION_CODE = "123456";
+const DEMO_USERS_KEY = "pcs.demo.users";
+const DEMO_SESSIONS_KEY = "pcs.demo.sessions";
+
+function passwordMeetsPolicy(password) {
+  return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
+}
+
+function initDemoState() {
+  const users = readJson(localStorage, DEMO_USERS_KEY, null);
+  if (!users) {
+    writeJson(localStorage, DEMO_USERS_KEY, [
+      {
+        id: 1,
+        email: "thomas.torvund@pcsww.com",
+        company: "PCSWW",
+        role: "admin",
+        password: "AdminPassword123!",
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        resetCode: null,
+        resetCodeExpiresAt: null
+      }
+    ]);
+  }
+  const sessions = readJson(localStorage, DEMO_SESSIONS_KEY, null);
+  if (!sessions) {
+    writeJson(localStorage, DEMO_SESSIONS_KEY, {});
+  }
+}
+
+function getDemoUsers() {
+  initDemoState();
+  return readJson(localStorage, DEMO_USERS_KEY, []);
+}
+
+function setDemoUsers(users) {
+  writeJson(localStorage, DEMO_USERS_KEY, users);
+}
+
+function getDemoSessions() {
+  initDemoState();
+  return readJson(localStorage, DEMO_SESSIONS_KEY, {});
+}
+
+function setDemoSessions(sessions) {
+  writeJson(localStorage, DEMO_SESSIONS_KEY, sessions);
+}
+
+function makeDemoPublicUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    company: user.company,
+    role: user.role,
+    isActive: !!user.isActive,
+    createdAt: user.createdAt
+  };
+}
+
+function throwApiError(message, code, payload = {}) {
+  const err = new Error(message);
+  err.code = code;
+  err.payload = payload;
+  throw err;
+}
+
+async function demoApiRequest(path, options = {}) {
+  const { token, method = "GET", body = {} } = options;
+  const users = getDemoUsers();
+  const sessions = getDemoSessions();
+  const authUserId = token ? sessions[token] : null;
+  const authUser = authUserId ? users.find((u) => u.id === authUserId) : null;
+
+  const requireAuth = () => {
+    if (!authUser) throwApiError("Unauthorized", 401);
+    return authUser;
+  };
+  const requireAdmin = () => {
+    const user = requireAuth();
+    if (user.role !== "admin") throwApiError("Forbidden", 403);
+    return user;
+  };
+
+  if (method === "GET" && path === "/api/auth/me") {
+    const user = requireAuth();
+    return { user: makeDemoPublicUser(user) };
+  }
+
+  if (method === "POST" && path === "/api/auth/register") {
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const company = String(body.company || "").trim();
+    if (!email || !password || !company) throwApiError("Email, company and password are required.", 400);
+    if (!passwordMeetsPolicy(password)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
+    if (users.some((u) => u.email === email)) throwApiError("User already exists.", 409);
+    const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
+    users.push({
+      id: nextId,
+      email,
+      company,
+      role: "buyer",
+      password,
+      isActive: false,
+      createdAt: new Date().toISOString(),
+      resetCode: null,
+      resetCodeExpiresAt: null
+    });
+    setDemoUsers(users);
+    return { ok: true };
+  }
+
+  if (method === "POST" && path === "/api/auth/login") {
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const user = users.find((u) => u.email === email && u.password === password);
+    if (!user) throwApiError("Invalid email or password.", 401);
+    if (!user.isActive) return { pendingApproval: true, email: user.email, company: user.company };
+    const nextToken = crypto.randomUUID();
+    sessions[nextToken] = user.id;
+    setDemoSessions(sessions);
+    return { token: nextToken, user: makeDemoPublicUser(user) };
+  }
+
+  if (method === "POST" && path === "/api/auth/request-password-reset") {
+    const email = String(body.email || "").trim().toLowerCase();
+    if (!email) throwApiError("Email is required.", 400);
+    const user = users.find((u) => u.email === email);
+    if (user) {
+      user.resetCode = DEMO_VERIFICATION_CODE;
+      user.resetCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      setDemoUsers(users);
+    }
+    return {
+      ok: true,
+      message: "If the email exists, a verification code has been sent.",
+      demoCode: DEMO_VERIFICATION_CODE
+    };
+  }
+
+  if (method === "POST" && path === "/api/auth/reset-password") {
+    const email = String(body.email || "").trim().toLowerCase();
+    const code = String(body.code || "").trim();
+    const newPassword = String(body.newPassword || "");
+    if (!email || !code || !newPassword) throwApiError("Email, verification code and new password are required.", 400);
+    if (!/^\d{6}$/.test(code)) throwApiError("Verification code must be 6 digits.", 400);
+    if (!passwordMeetsPolicy(newPassword)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
+    const user = users.find((u) => u.email === email);
+    if (!user || user.resetCode !== code) throwApiError("Invalid verification code.", 400);
+    if (!user.resetCodeExpiresAt || new Date(user.resetCodeExpiresAt).getTime() < Date.now()) {
+      throwApiError("Verification code expired. Please request a new code.", 400);
+    }
+    user.password = newPassword;
+    user.resetCode = null;
+    user.resetCodeExpiresAt = null;
+    setDemoUsers(users);
+    return { ok: true };
+  }
+
+  if (method === "GET" && path === "/api/devices") {
+    requireAuth();
+    return productsSeed.map((p) => ({ ...p, modelFamily: modelFamilyOf(p.model) }));
+  }
+
+  if (method === "GET" && path === "/api/users") {
+    requireAdmin();
+    return users.map(makeDemoPublicUser).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  if (method === "POST" && path === "/api/users") {
+    requireAdmin();
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const company = String(body.company || "").trim();
+    const isActive = body.isActive === true;
+    const isAdmin = body.isAdmin === true;
+    if (!email || !password || !company) throwApiError("Email, company and password are required.", 400);
+    if (!passwordMeetsPolicy(password)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
+    if (users.some((u) => u.email === email)) throwApiError("User already exists.", 409);
+    const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
+    users.push({
+      id: nextId,
+      email,
+      company,
+      role: isAdmin ? "admin" : "buyer",
+      password,
+      isActive,
+      createdAt: new Date().toISOString(),
+      resetCode: null,
+      resetCodeExpiresAt: null
+    });
+    setDemoUsers(users);
+    return { ok: true };
+  }
+
+  const userMatch = path.match(/^\/api\/users\/(\d+)$/);
+  if (userMatch && method === "PATCH") {
+    const actingUser = requireAdmin();
+    const targetId = Number(userMatch[1]);
+    const target = users.find((u) => u.id === targetId);
+    if (!target) throwApiError("User not found.", 404);
+    if (typeof body.isActive === "boolean") target.isActive = body.isActive;
+    if (typeof body.isAdmin === "boolean") target.role = body.isAdmin ? "admin" : "buyer";
+    if (target.id === actingUser.id && target.role !== "admin") throwApiError("You cannot remove your own admin role.", 400);
+    setDemoUsers(users);
+    return { ok: true };
+  }
+
+  if (userMatch && method === "DELETE") {
+    const actingUser = requireAdmin();
+    const targetId = Number(userMatch[1]);
+    if (actingUser.id === targetId) throwApiError("You cannot delete your own admin user.", 400);
+    const filtered = users.filter((u) => u.id !== targetId);
+    setDemoUsers(filtered);
+    return { ok: true };
+  }
+
+  throwApiError("Not found", 404);
+}
+
 async function apiRequest(path, options = {}) {
+  if (IS_GITHUB_PAGES) {
+    return demoApiRequest(path, options);
+  }
   const { token, method = "GET", body } = options;
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";

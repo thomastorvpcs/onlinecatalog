@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.vite/
 *.log
 vite.out.log
 vite.err.log

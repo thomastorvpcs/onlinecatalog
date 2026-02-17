@@ -37,6 +37,12 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - Seeded admin account:
     - Email: `thomas.torvund@pcsww.com`
     - Password: `AdminPassword123!`
+- GitHub Pages mode:
+  - On `*.github.io`, the app runs in a built-in demo mode (no backend server required).
+  - Demo admin account is the same:
+    - Email: `thomas.torvund@pcsww.com`
+    - Password: `AdminPassword123!`
+  - Demo reset verification code: `123456`
 - Current storage model for request flow:
   - `sessionStorage` for in-session request builder state
   - `localStorage` for user session, saved filters, and submitted requests
@@ -48,3 +54,6 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
 2. Start frontend:
    - `npm run dev`
 3. Open the Vite URL shown in terminal.
+
+## Deploy (GitHub Pages)
+Push to `main`. The workflow `.github/workflows/deploy-pages.yml` builds and deploys `dist` automatically.
