@@ -16,6 +16,7 @@ const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
 const ADMIN_PASSWORD = "AdminPassword123!";
 const DEMO_RESET_CODE = "123456";
+const EXTRA_DEVICES_PER_CATEGORY = 1000;
 const sessions = new Map();
 
 const db = new DatabaseSync(dbPath);
@@ -29,6 +30,7 @@ function initDb() {
   if (count === 0) {
     db.exec(readFileSync(seedPath, "utf8"));
   }
+  ensureLargeCatalog();
   ensureAdminUser();
 }
 
@@ -88,6 +90,124 @@ function json(res, statusCode, payload) {
     "Access-Control-Allow-Headers": "Content-Type, Authorization"
   });
   res.end(JSON.stringify(payload));
+}
+
+function titleCase(slug) {
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+function ensureLargeCatalog() {
+  const categories = db.prepare("SELECT id, name FROM categories").all();
+  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
+  const locations = db.prepare("SELECT id FROM locations ORDER BY id").all().map((l) => l.id);
+  const config = [
+    {
+      name: "Smartphones",
+      slug: "smartphones",
+      families: ["iPhone 15 Pro", "Galaxy A", "Pixel", "Moto Edge"],
+      storages: ["64GB", "128GB", "256GB", "512GB"],
+      manufacturers: [1, 2, 3, 4],
+      grade: "A"
+    },
+    {
+      name: "Tablets",
+      slug: "tablets",
+      families: ["iPad Pro", "Galaxy Tab", "Pixel Tablet", "Yoga Tab"],
+      storages: ["64GB", "128GB", "256GB", "512GB"],
+      manufacturers: [1, 2, 3, 4],
+      grade: "A"
+    },
+    {
+      name: "Laptops",
+      slug: "laptops",
+      families: ["ThinkPad X", "MacBook Pro", "Galaxy Book", "Latitude"],
+      storages: ["256GB", "512GB", "1TB", "2TB"],
+      manufacturers: [4, 1, 2, 3],
+      grade: "A"
+    },
+    {
+      name: "Wearables",
+      slug: "wearables",
+      families: ["Watch Ultra", "Galaxy Watch", "Pixel Watch", "Fit Pro"],
+      storages: ["16GB", "32GB", "64GB", "128GB"],
+      manufacturers: [1, 2, 3, 4],
+      grade: "A"
+    },
+    {
+      name: "Accessories",
+      slug: "accessories",
+      families: ["AirPods", "Power Bank", "Wireless Charger", "Keyboard Pro"],
+      storages: ["N/A", "N/A", "N/A", "N/A"],
+      manufacturers: [1, 2, 3, 4],
+      grade: "A"
+    }
+  ];
+
+  const deviceInsert = db.prepare(`
+    INSERT INTO devices (
+      id, manufacturer_id, category_id, model_name, model_family, storage_capacity,
+      grade, base_price, image_url, default_location_id, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)
+  `);
+  const inventoryInsert = db.prepare(`
+    INSERT INTO device_inventory (device_id, location_id, quantity) VALUES (?, ?, ?)
+  `);
+
+  const generatedCountStmt = db.prepare("SELECT COUNT(*) AS count FROM devices WHERE id LIKE ?");
+  const existsStmt = db.prepare("SELECT 1 AS found FROM devices WHERE id = ?");
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (const cfg of config) {
+      const categoryId = categoryByName.get(cfg.name);
+      if (!categoryId) continue;
+      const prefix = `gen-${cfg.slug}-`;
+      const currentGenerated = Number(generatedCountStmt.get(`${prefix}%`).count || 0);
+      const toCreate = Math.max(0, EXTRA_DEVICES_PER_CATEGORY - currentGenerated);
+      let created = 0;
+      let n = currentGenerated + 1;
+
+      while (created < toCreate) {
+        const id = `${prefix}${String(n).padStart(4, "0")}`;
+        n += 1;
+        if (existsStmt.get(id)?.found) continue;
+
+        const famIdx = created % cfg.families.length;
+        const manuIdx = created % cfg.manufacturers.length;
+        const storageIdx = created % cfg.storages.length;
+        const locationIdx = created % locations.length;
+        const family = cfg.families[famIdx];
+        const storage = cfg.storages[storageIdx];
+        const modelSuffix = String(100 + ((created * 7) % 900));
+        const modelFamily = `${family} ${modelSuffix}`;
+        const modelName = storage === "N/A" ? modelFamily : `${modelFamily} ${storage}`;
+        const price = Number((60 + (created % 140) + famIdx * 5 + manuIdx * 3).toFixed(2));
+        const defaultLocationId = locations[locationIdx];
+
+        deviceInsert.run(
+          id,
+          cfg.manufacturers[manuIdx],
+          categoryId,
+          modelName,
+          modelFamily,
+          storage,
+          cfg.grade,
+          price,
+          defaultLocationId
+        );
+
+        for (let i = 0; i < locations.length; i += 1) {
+          const qty = 5 + ((created + i * 11) % 120);
+          inventoryInsert.run(id, locations[i], qty);
+        }
+        created += 1;
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function mimeTypeFor(filePath) {
