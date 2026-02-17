@@ -1,0 +1,74 @@
+﻿PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS manufacturers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS locations (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
+  category_id INTEGER NOT NULL REFERENCES categories(id),
+  model_name TEXT NOT NULL,
+  model_family TEXT NOT NULL,
+  storage_capacity TEXT NOT NULL,
+  grade TEXT NOT NULL,
+  base_price REAL NOT NULL CHECK (base_price >= 0),
+  image_url TEXT,
+  default_location_id INTEGER REFERENCES locations(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS device_inventory (
+  device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  quantity INTEGER NOT NULL CHECK (quantity >= 0),
+  PRIMARY KEY (device_id, location_id)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  company TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'buyer')),
+  password_hash TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_category ON devices(category_id);
+CREATE INDEX IF NOT EXISTS idx_devices_manufacturer ON devices(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_devices_model_family ON devices(model_family);
+CREATE INDEX IF NOT EXISTS idx_inventory_location ON device_inventory(location_id);
+
+CREATE VIEW IF NOT EXISTS v_device_catalog AS
+SELECT
+  d.id,
+  d.model_name,
+  d.model_family,
+  d.storage_capacity,
+  d.grade,
+  d.base_price,
+  d.image_url,
+  c.name AS category,
+  m.name AS manufacturer,
+  dl.name AS default_region,
+  COALESCE(SUM(di.quantity), 0) AS total_available
+FROM devices d
+JOIN categories c ON c.id = d.category_id
+JOIN manufacturers m ON m.id = d.manufacturer_id
+LEFT JOIN locations dl ON dl.id = d.default_location_id
+LEFT JOIN device_inventory di ON di.device_id = d.id
+GROUP BY d.id, d.model_name, d.model_family, d.storage_capacity, d.grade, d.base_price, d.image_url, c.name, m.name, dl.name;
