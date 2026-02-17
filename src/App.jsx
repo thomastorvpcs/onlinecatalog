@@ -50,6 +50,23 @@ function modelFamilyOf(model) {
   return model.split(" ").filter((t) => !/^\d+(gb|tb)$/i.test(t)).join(" ");
 }
 
+function normalizeDevice(p) {
+  const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
+  const fallbackImage = p.image || (images.length ? images[0] : "");
+  return {
+    ...p,
+    modelFamily: p.modelFamily || modelFamilyOf(p.model),
+    image: fallbackImage,
+    images: images.length ? images : (fallbackImage ? [fallbackImage] : []),
+    carrier: p.carrier || "Unlocked",
+    screenSize: p.screenSize || "N/A",
+    modular: p.modular || "No",
+    color: p.color || "N/A",
+    kitType: p.kitType || "Full Kit",
+    productNotes: p.productNotes || ""
+  };
+}
+
 const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostname.endsWith("github.io");
 const DEMO_VERIFICATION_CODE = "123456";
 const DEMO_USERS_KEY = "pcs.demo.users";
@@ -226,7 +243,7 @@ async function demoApiRequest(path, options = {}) {
     const regions = csv("region");
     const storages = csv("storage");
 
-    const all = productsSeed.map((p) => ({ ...p, modelFamily: modelFamilyOf(p.model) }));
+    const all = productsSeed.map((p) => normalizeDevice(p));
     const filtered = all.filter((p) => {
       const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
       if (search && !text.includes(search)) return false;
@@ -350,7 +367,7 @@ export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [products, setProducts] = useState(productsSeed);
+  const [products, setProducts] = useState(productsSeed.map(normalizeDevice));
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState("");
   const [categoryDevices, setCategoryDevices] = useState([]);
@@ -370,6 +387,7 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
   const [productQty, setProductQty] = useState(1);
   const [productNote, setProductNote] = useState("");
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
@@ -418,7 +436,7 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
     async function loadProducts() {
-      if (!authToken) {
+      if (!user || !authToken) {
         setProductsLoading(false);
         return;
       }
@@ -430,7 +448,7 @@ export default function App() {
           throw new Error("Invalid payload");
         }
         if (!ignore) {
-          setProducts(payload);
+          setProducts(payload.map(normalizeDevice));
         }
       } catch {
         if (!ignore) {
@@ -447,7 +465,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken]);
+  }, [authToken, user]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -483,13 +501,13 @@ export default function App() {
           throw new Error("Invalid paged payload");
         }
         if (!ignore) {
-          setCategoryDevices(payload.items);
+          setCategoryDevices(payload.items.map(normalizeDevice));
           setCategoryTotal(Number(payload.total || 0));
         }
       } catch (error) {
         if (!ignore) {
           setProductsError(error.message || "Failed loading category page.");
-          setCategoryDevices([]);
+      setCategoryDevices([]);
           setCategoryTotal(0);
         }
       } finally {
@@ -503,6 +521,10 @@ export default function App() {
       ignore = true;
     };
   }, [authToken, productsView, selectedCategory, search, filters, categoryPage]);
+
+  useEffect(() => {
+    setActiveImageIndex(0);
+  }, [activeProduct?.id]);
 
   useEffect(() => {
     let ignore = false;
@@ -550,7 +572,7 @@ export default function App() {
     writeJson(sessionStorage, "pcs.cart", next);
   };
 
-  const imageFor = (p) => p.image || categoryImagePlaceholders[p.category] || "";
+  const imageFor = (p) => p.image || p.images?.[0] || categoryImagePlaceholders[p.category] || "";
 
   const addToCart = (p, qty, note) => {
     const existing = cart.find((i) => i.productId === p.id && i.note === note);
@@ -868,8 +890,47 @@ export default function App() {
           <article className="modal">
             <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>${activeProduct.price.toFixed(2)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
             <div className="modal-grid">
-              <div className="modal-box"><div className="thumb" style={{ height: 190 }}><img src={imageFor(activeProduct)} alt={activeProduct.model} /></div><h4>Device Specifications</h4><table className="table"><tbody><tr><td>Device Class</td><td>{activeProduct.category}</td></tr><tr><td>Grade</td><td>{activeProduct.grade}</td></tr><tr><td>Manufacturer</td><td>{activeProduct.manufacturer}</td></tr><tr><td>Storage</td><td>{activeProduct.storage}</td></tr><tr><td>Region</td><td>{activeProduct.region}</td></tr></tbody></table></div>
-              <div><div className="modal-box" style={{ background: "#eef9f3" }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div><div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div></div>
+              <div>
+                <div className="modal-box">
+                  <div className="thumb modal-main-image" style={{ height: 230 }}>
+                    <img src={activeProduct.images?.[activeImageIndex] || imageFor(activeProduct)} alt={activeProduct.model} />
+                  </div>
+                  {activeProduct.images?.length > 1 ? (
+                    <div className="modal-thumbs">
+                      {activeProduct.images.map((img, idx) => (
+                        <button type="button" key={`${activeProduct.id}-img-${idx}`} className={`modal-thumb-btn ${idx === activeImageIndex ? "active" : ""}`} onClick={() => setActiveImageIndex(idx)}>
+                          <img src={img} alt={`${activeProduct.model} ${idx + 1}`} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="modal-box" style={{ marginTop: 10 }}>
+                  <h4 style={{ marginTop: 0 }}>Device Specifications</h4>
+                  <table className="table">
+                    <tbody>
+                      <tr><td>Device Class</td><td>{activeProduct.category}</td></tr>
+                      <tr><td>Grade</td><td>{activeProduct.grade}</td></tr>
+                      <tr><td>Manufacturer</td><td>{activeProduct.manufacturer}</td></tr>
+                      <tr><td>Model</td><td>{activeProduct.modelFamily}</td></tr>
+                      <tr><td>Storage</td><td>{activeProduct.storage}</td></tr>
+                      <tr><td>Carrier</td><td>{activeProduct.carrier}</td></tr>
+                      <tr><td>Screen Size</td><td>{activeProduct.screenSize}</td></tr>
+                      <tr><td>Modular</td><td>{activeProduct.modular}</td></tr>
+                      <tr><td>Color</td><td>{activeProduct.color}</td></tr>
+                      <tr><td>Kit Type</td><td>{activeProduct.kitType}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <div className="modal-box" style={{ background: "#eef9f3" }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div>
+                <div className="modal-box" style={{ marginTop: 10 }}>
+                  <h4 style={{ marginTop: 0 }}>Product notes</h4>
+                  <p className="small" style={{ margin: 0 }}>{activeProduct.productNotes || "No notes provided."}</p>
+                </div>
+                <div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div>
+              </div>
             </div>
           </article>
         </dialog>

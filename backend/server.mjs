@@ -25,6 +25,7 @@ function initDb() {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(schemaPath, "utf8"));
   ensureUsersColumns();
+  ensureDeviceSchema();
   const countStmt = db.prepare("SELECT COUNT(*) AS count FROM categories");
   const count = Number(countStmt.get().count || 0);
   if (count === 0) {
@@ -90,6 +91,25 @@ function json(res, statusCode, payload) {
     "Access-Control-Allow-Headers": "Content-Type, Authorization"
   });
   res.end(JSON.stringify(payload));
+}
+
+function ensureDeviceSchema() {
+  const cols = db.prepare("PRAGMA table_info(devices)").all().map((c) => c.name);
+  if (!cols.includes("carrier")) db.exec("ALTER TABLE devices ADD COLUMN carrier TEXT");
+  if (!cols.includes("screen_size")) db.exec("ALTER TABLE devices ADD COLUMN screen_size TEXT");
+  if (!cols.includes("modular")) db.exec("ALTER TABLE devices ADD COLUMN modular TEXT");
+  if (!cols.includes("color")) db.exec("ALTER TABLE devices ADD COLUMN color TEXT");
+  if (!cols.includes("kit_type")) db.exec("ALTER TABLE devices ADD COLUMN kit_type TEXT");
+  if (!cols.includes("product_notes")) db.exec("ALTER TABLE devices ADD COLUMN product_notes TEXT");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS device_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      image_url TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id)");
 }
 
 function ensureLargeCatalog() {
@@ -183,16 +203,35 @@ function ensureLargeCatalog() {
   const deviceInsert = db.prepare(`
     INSERT INTO devices (
       id, manufacturer_id, category_id, model_name, model_family, storage_capacity,
-      grade, base_price, image_url, default_location_id, is_active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)
+      grade, base_price, image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1)
   `);
   const inventoryInsert = db.prepare(`
     INSERT INTO device_inventory (device_id, location_id, quantity) VALUES (?, ?, ?)
   `);
+  const imageInsert = db.prepare(`
+    INSERT INTO device_images (device_id, image_url, sort_order) VALUES (?, ?, ?)
+  `);
+  const updateDeviceMeta = db.prepare(`
+    UPDATE devices
+    SET carrier = ?,
+        screen_size = ?,
+        modular = ?,
+        color = ?,
+        kit_type = ?,
+        product_notes = ?
+    WHERE id = ?
+  `);
+  const devicesForBackfill = db.prepare(`
+    SELECT d.id, d.model_name, d.storage_capacity, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes, c.name AS category
+    FROM devices d
+    JOIN categories c ON c.id = d.category_id
+  `);
+  const imageCountStmt = db.prepare("SELECT COUNT(*) AS count FROM device_images WHERE device_id = ?");
 
   db.exec("BEGIN TRANSACTION");
   try {
-    // Clean up previous synthetic generated rows so we can repopulate with cleaner realistic variants.
+    // Clean up previous generated rows so we can repopulate with cleaner realistic variants.
     db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
 
     for (const cfg of config) {
@@ -211,6 +250,18 @@ function ensureLargeCatalog() {
         const storageStep = cfg.storages.indexOf(storage);
         const modelStep = cfg.models.findIndex((m) => m.family === modelFamily);
         const price = Number((cfg.basePrice + (modelStep * 15) + (storageStep * 35) + (i % 10)).toFixed(2));
+        const carrier = cfg.name === "Tablets" || cfg.name === "Laptops" ? "WiFi" : (cfg.name === "Wearables" ? "LTE" : (cfg.name === "Accessories" ? "Bluetooth" : "Unlocked"));
+        const screenSize = cfg.name === "Smartphones"
+          ? (modelFamily.includes("Pro Max") ? "6.7 inches" : "6.1 inches")
+          : cfg.name === "Tablets"
+            ? "11 inches"
+            : cfg.name === "Laptops"
+              ? "14 inches"
+              : cfg.name === "Wearables"
+                ? "47 mm"
+                : "N/A";
+        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
+        const productNotes = `${modelFamily} variant in ${color} with ${storage}.`;
 
         deviceInsert.run(
           id,
@@ -221,6 +272,12 @@ function ensureLargeCatalog() {
           storage,
           cfg.grade,
           price,
+          carrier,
+          screenSize,
+          "No",
+          color,
+          kitType,
+          productNotes,
           defaultLocationId
         );
 
@@ -228,6 +285,36 @@ function ensureLargeCatalog() {
           const qty = 8 + ((i * 3 + locIdx * 13) % 140);
           inventoryInsert.run(id, locations[locIdx], qty);
         }
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-1/900/700`, 1);
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-2/900/700`, 2);
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-3/900/700`, 3);
+      }
+    }
+
+    // Backfill missing metadata and images on non-generated seed rows.
+    const rows = devicesForBackfill.all();
+    for (const row of rows) {
+      const carrier = row.carrier || (row.category === "Tablets" || row.category === "Laptops" ? "WiFi" : (row.category === "Wearables" ? "LTE" : (row.category === "Accessories" ? "Bluetooth" : "Unlocked")));
+      const screenSize = row.screen_size || (row.category === "Smartphones" ? "6.1 inches" : row.category === "Tablets" ? "11 inches" : row.category === "Laptops" ? "14 inches" : row.category === "Wearables" ? "47 mm" : "N/A");
+      const modular = row.modular || "No";
+      const parsedColor = (() => {
+        const parts = String(row.model_name || "").split(" - ");
+        return parts.length > 1 ? parts[parts.length - 1].trim() : "Gray";
+      })();
+      const color = row.color || parsedColor || "Gray";
+      const kitType = row.kit_type || (row.category === "Accessories" ? "Retail Pack" : "Full Kit");
+      const notes = row.product_notes || `${row.model_name} variant with ${row.storage_capacity}.`;
+      updateDeviceMeta.run(carrier, screenSize, modular, color, kitType, notes, row.id);
+
+      const existingImages = Number(imageCountStmt.get(row.id).count || 0);
+      let sort = existingImages + 1;
+      if (existingImages === 0 && row.image_url) {
+        imageInsert.run(row.id, row.image_url, sort);
+        sort += 1;
+      }
+      while (sort <= 3) {
+        imageInsert.run(row.id, `https://picsum.photos/seed/${row.id}-${sort}/900/700`, sort);
+        sort += 1;
       }
     }
     db.exec("COMMIT");
@@ -382,6 +469,12 @@ function getDevices(url) {
       d.storage_capacity AS storage,
       d.base_price AS price,
       d.image_url AS image,
+      d.carrier AS carrier,
+      d.screen_size AS screenSize,
+      d.modular AS modular,
+      d.color AS color,
+      d.kit_type AS kitType,
+      d.product_notes AS productNotes,
       COALESCE(SUM(di.quantity), 0) AS available
     FROM devices d
     JOIN manufacturers m ON m.id = d.manufacturer_id
@@ -389,7 +482,7 @@ function getDevices(url) {
     LEFT JOIN locations dl ON dl.id = d.default_location_id
     LEFT JOIN device_inventory di ON di.device_id = d.id
     ${whereSql}
-    GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url
+    GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes
     ORDER BY c.id, m.name, d.model_name
   `;
 
@@ -426,13 +519,23 @@ function getDevices(url) {
       AND di.device_id = ?
     ORDER BY l.id
   `);
+  const imagesStmt = db.prepare(`
+    SELECT image_url
+    FROM device_images
+    WHERE device_id = ?
+    ORDER BY sort_order, id
+  `);
 
   const items = devices.map((d) => {
     const locationRows = locationStmt.all(d.id);
+    const imageRows = imagesStmt.all(d.id);
     const locations = {};
     for (const row of locationRows) {
       locations[row.location] = Number(row.quantity || 0);
     }
+    const images = imageRows.map((r) => r.image_url).filter(Boolean);
+    const fallbackImage = d.image || undefined;
+    const image = images[0] || fallbackImage;
     return {
       id: d.id,
       manufacturer: d.manufacturer,
@@ -443,7 +546,14 @@ function getDevices(url) {
       region: d.region,
       storage: d.storage,
       price: Number(d.price),
-      image: d.image || undefined,
+      image,
+      images: images.length ? images : (fallbackImage ? [fallbackImage] : []),
+      carrier: d.carrier || "Unlocked",
+      screenSize: d.screenSize || "N/A",
+      modular: d.modular || "No",
+      color: d.color || "N/A",
+      kitType: d.kitType || "Full Kit",
+      productNotes: d.productNotes || "",
       available: Number(d.available || 0),
       locations
     };

@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS devices (
   grade TEXT NOT NULL,
   base_price REAL NOT NULL CHECK (base_price >= 0),
   image_url TEXT,
+  carrier TEXT,
+  screen_size TEXT,
+  modular TEXT,
+  color TEXT,
+  kit_type TEXT,
+  product_notes TEXT,
   default_location_id INTEGER REFERENCES locations(id),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -36,6 +42,13 @@ CREATE TABLE IF NOT EXISTS device_inventory (
   location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   quantity INTEGER NOT NULL CHECK (quantity >= 0),
   PRIMARY KEY (device_id, location_id)
+);
+
+CREATE TABLE IF NOT EXISTS device_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -52,6 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_devices_category ON devices(category_id);
 CREATE INDEX IF NOT EXISTS idx_devices_manufacturer ON devices(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_model_family ON devices(model_family);
 CREATE INDEX IF NOT EXISTS idx_inventory_location ON device_inventory(location_id);
+CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id);
 
 CREATE VIEW IF NOT EXISTS v_device_catalog AS
 SELECT

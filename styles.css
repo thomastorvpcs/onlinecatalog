@@ -255,6 +255,36 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .muted { color: var(--muted); }
 .small { font-size: 0.82rem; color: var(--muted); }
 
+.modal-main-image img {
+  object-fit: contain;
+}
+
+.modal-thumbs {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.modal-thumb-btn {
+  width: 66px;
+  height: 66px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+}
+
+.modal-thumb-btn.active {
+  border-color: var(--blue-2);
+}
+
+.modal-thumb-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
 .admin-user-form {
   margin-bottom: 12px;
   padding: 12px;
