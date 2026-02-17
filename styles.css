@@ -499,6 +499,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 12px;
 }
 
+.home-products-grid {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
 .card {
   background: #fff;
   border: 1px solid var(--line);
@@ -897,8 +901,94 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-color: var(--blue-2);
 }
 
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e6eaf1;
+  border-radius: 8px;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0));
+  animation: skeleton-shimmer 1.1s infinite;
+}
+
+.skeleton-line {
+  height: 12px;
+}
+
+.skeleton-input {
+  height: 38px;
+  margin-bottom: 10px;
+}
+
+.skeleton-button {
+  height: 36px;
+}
+
+.skeleton-thumb {
+  height: 92px;
+}
+
+.skeleton-circle {
+  width: 78px;
+  height: 78px;
+  border-radius: 999px;
+}
+
+.skeleton-checkbox {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.category-btn-skeleton {
+  cursor: default;
+}
+
+.card-skeleton {
+  pointer-events: none;
+}
+
+.users-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.users-skeleton-row {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr 56px 56px 1.2fr 96px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 @media (max-width: 1100px) {
   .products-shell { grid-template-columns: 1fr; }
+  .home-products-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1500px) {
+  .home-products-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
@@ -1043,6 +1133,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
     gap: 10px;
   }
 
+  .home-products-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .product-modal {
     width: min(98vw, 700px);
     max-height: 94vh;
@@ -1085,6 +1179,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
     grid-template-columns: 1fr;
   }
 
+  .home-products-grid {
+    grid-template-columns: 1fr;
+  }
+
   .modal {
     padding: 12px;
   }
@@ -1118,5 +1216,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .qty-control {
     grid-template-columns: 1fr 44px 44px;
+  }
+
+  .users-skeleton-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 }

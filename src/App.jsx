@@ -704,7 +704,13 @@ export default function App() {
   if (authLoading) {
     return (
       <div className="auth-shell">
-        <div className="auth-card"><p className="muted" style={{ margin: 0 }}>Loading...</p></div>
+        <div className="auth-card">
+          <div className="skeleton skeleton-line" style={{ width: "52%", height: 28, marginBottom: 12 }} />
+          <div className="skeleton skeleton-line" style={{ width: "70%", marginBottom: 18 }} />
+          <div className="skeleton skeleton-input" />
+          <div className="skeleton skeleton-input" />
+          <div className="skeleton skeleton-button" />
+        </div>
       </div>
     );
   }
@@ -806,12 +812,20 @@ export default function App() {
               <h1 className="page-title">Products</h1>
               <section className="panel home-hero">
                 <div><h2 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>Categories</h2><p className="muted" style={{ marginTop: 6 }}>Browse device classes and open a filtered catalog view.</p></div>
-                <div className="category-strip">{categories.map((c) => <button key={c} className="category-btn" onClick={() => openCategory(c)}><span className="cat-icon">{iconForCategory(c)}</span><span className="cat-label">{c}</span></button>)}</div>
+                {productsLoading ? (
+                  <div className="category-strip">{Array.from({ length: 5 }).map((_, idx) => <CategoryTileSkeleton key={`cat-sk-${idx}`} />)}</div>
+                ) : (
+                  <div className="category-strip">{categories.map((c) => <button key={c} className="category-btn" onClick={() => openCategory(c)}><span className="cat-icon">{iconForCategory(c)}</span><span className="cat-label">{c}</span></button>)}</div>
+                )}
               </section>
-              {categories.map((cat) => (
+              {(productsLoading ? CATEGORY_ORDER : categories).map((cat) => (
                 <section key={cat} className="panel">
                   <div className="category-header"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>{cat}</h3><button className="ghost-btn" onClick={() => openCategory(cat)}>View all</button></div>
-                  <div className="products-grid">{products.filter((p) => p.category === cat).slice(0, 6).map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                  {productsLoading ? (
+                    <div className="products-grid home-products-grid">{Array.from({ length: 8 }).map((_, idx) => <ProductCardSkeleton key={`${cat}-card-sk-${idx}`} />)}</div>
+                  ) : (
+                    <div className="products-grid home-products-grid">{products.filter((p) => p.category === cat).slice(0, 8).map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                  )}
                 </section>
               ))}
             </>
@@ -823,7 +837,9 @@ export default function App() {
               <div className="products-shell">
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
-                  {fields.map((f) => {
+                  {categoryLoading ? (
+                    <FilterSkeleton />
+                  ) : fields.map((f) => {
                     const options = filterOptions[f.key] || [];
                     return (
                       <div key={f.key} className="filter-row">
@@ -856,7 +872,7 @@ export default function App() {
                     Showing {categoryTotal ? categoryStartIndex + 1 : 0}-{Math.min(categoryTotal, categoryStartIndex + CATEGORY_PAGE_SIZE)} of {categoryTotal} devices
                   </div>
                   {categoryLoading ? (
-                    <p className="small">Loading devices...</p>
+                    <div className="products-grid">{Array.from({ length: 8 }).map((_, idx) => <ProductCardSkeleton key={`page-card-sk-${idx}`} />)}</div>
                   ) : (
                     <>
                       <div className="products-grid">{categoryDevices.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
@@ -908,7 +924,7 @@ export default function App() {
                 <button type="submit" style={{ width: "auto" }} disabled={userActionLoading}>Create user</button>
               </form>
               {usersLoading ? (
-                <p className="small">Loading users...</p>
+                <UsersTableSkeleton />
               ) : (
                 <table className="table">
                   <thead><tr><th>Email</th><th>Company</th><th>Active</th><th>Admin</th><th>Created</th><th /></tr></thead>
@@ -1125,6 +1141,64 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function CategoryTileSkeleton() {
+  return (
+    <div className="category-btn category-btn-skeleton">
+      <div className="skeleton skeleton-circle" />
+      <div className="skeleton skeleton-line" style={{ width: "66%" }} />
+    </div>
+  );
+}
+
+function ProductCardSkeleton() {
+  return (
+    <article className="card card-skeleton">
+      <div className="skeleton skeleton-thumb" />
+      <div className="skeleton skeleton-line" style={{ width: "34%", marginTop: 8 }} />
+      <div className="skeleton skeleton-line" style={{ width: "92%", marginTop: 7 }} />
+      <div className="skeleton skeleton-line" style={{ width: "46%", height: 26, marginTop: 8 }} />
+      <div className="skeleton skeleton-line" style={{ width: "56%", marginTop: 8 }} />
+      <div className="skeleton skeleton-line" style={{ width: "52%", marginTop: 6 }} />
+      <div className="skeleton skeleton-button" style={{ marginTop: 10 }} />
+    </article>
+  );
+}
+
+function FilterSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 4 }).map((_, groupIdx) => (
+        <div key={`filter-sk-${groupIdx}`} className="filter-row">
+          <div className="skeleton skeleton-line" style={{ width: "54%", marginBottom: 8 }} />
+          {Array.from({ length: 4 }).map((__, itemIdx) => (
+            <div key={`filter-sk-${groupIdx}-${itemIdx}`} className="skeleton-row">
+              <div className="skeleton skeleton-checkbox" />
+              <div className="skeleton skeleton-line" style={{ width: `${58 + (itemIdx % 3) * 12}%` }} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function UsersTableSkeleton() {
+  return (
+    <div className="users-skeleton">
+      {Array.from({ length: 6 }).map((_, idx) => (
+        <div key={`user-sk-${idx}`} className="users-skeleton-row">
+          <div className="skeleton skeleton-line" style={{ width: "30%" }} />
+          <div className="skeleton skeleton-line" style={{ width: "18%" }} />
+          <div className="skeleton skeleton-checkbox" />
+          <div className="skeleton skeleton-checkbox" />
+          <div className="skeleton skeleton-line" style={{ width: "20%" }} />
+          <div className="skeleton skeleton-button" style={{ width: 86, height: 30 }} />
+        </div>
+      ))}
     </div>
   );
 }
