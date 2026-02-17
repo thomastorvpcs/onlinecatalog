@@ -92,10 +92,6 @@ function json(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function titleCase(slug) {
-  return slug.charAt(0).toUpperCase() + slug.slice(1);
-}
-
 function ensureLargeCatalog() {
   const categories = db.prepare("SELECT id, name FROM categories").all();
   const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
@@ -104,41 +100,82 @@ function ensureLargeCatalog() {
     {
       name: "Smartphones",
       slug: "smartphones",
-      families: ["iPhone 15 Pro", "Galaxy A", "Pixel", "Moto Edge"],
-      storages: ["64GB", "128GB", "256GB", "512GB"],
-      manufacturers: [1, 2, 3, 4],
+      models: [
+        { manufacturerId: 1, family: "iPhone 15" },
+        { manufacturerId: 1, family: "iPhone 15 Pro" },
+        { manufacturerId: 1, family: "iPhone 15 Pro Max" },
+        { manufacturerId: 2, family: "Galaxy S24" },
+        { manufacturerId: 2, family: "Galaxy Z Flip5" },
+        { manufacturerId: 3, family: "Pixel 8" },
+        { manufacturerId: 3, family: "Pixel 8 Pro" },
+        { manufacturerId: 4, family: "Motorola Edge 50" }
+      ],
+      storages: ["128GB", "256GB", "512GB", "1TB"],
+      colors: ["Black", "Blue", "Silver", "Gray", "White", "Purple"],
+      basePrice: 420,
       grade: "A"
     },
     {
       name: "Tablets",
       slug: "tablets",
-      families: ["iPad Pro", "Galaxy Tab", "Pixel Tablet", "Yoga Tab"],
+      models: [
+        { manufacturerId: 1, family: "iPad Pro 11" },
+        { manufacturerId: 1, family: "iPad Air 11" },
+        { manufacturerId: 2, family: "Galaxy Tab S9" },
+        { manufacturerId: 2, family: "Galaxy Tab A9+" },
+        { manufacturerId: 3, family: "Pixel Tablet" },
+        { manufacturerId: 4, family: "Lenovo Tab P12" }
+      ],
       storages: ["64GB", "128GB", "256GB", "512GB"],
-      manufacturers: [1, 2, 3, 4],
+      colors: ["Gray", "Blue", "Silver", "Starlight"],
+      basePrice: 260,
       grade: "A"
     },
     {
       name: "Laptops",
       slug: "laptops",
-      families: ["ThinkPad X", "MacBook Pro", "Galaxy Book", "Latitude"],
+      models: [
+        { manufacturerId: 1, family: "MacBook Air 13" },
+        { manufacturerId: 1, family: "MacBook Pro 14" },
+        { manufacturerId: 2, family: "Galaxy Book4 Pro" },
+        { manufacturerId: 4, family: "ThinkPad X1 Carbon" },
+        { manufacturerId: 4, family: "Yoga Slim 9i" },
+        { manufacturerId: 3, family: "Chromebook Plus 14" }
+      ],
       storages: ["256GB", "512GB", "1TB", "2TB"],
-      manufacturers: [4, 1, 2, 3],
+      colors: ["Black", "Gray", "Silver", "Blue"],
+      basePrice: 740,
       grade: "A"
     },
     {
       name: "Wearables",
       slug: "wearables",
-      families: ["Watch Ultra", "Galaxy Watch", "Pixel Watch", "Fit Pro"],
-      storages: ["16GB", "32GB", "64GB", "128GB"],
-      manufacturers: [1, 2, 3, 4],
+      models: [
+        { manufacturerId: 1, family: "Apple Watch Series 9" },
+        { manufacturerId: 1, family: "Watch Ultra 2" },
+        { manufacturerId: 2, family: "Galaxy Watch 6" },
+        { manufacturerId: 3, family: "Pixel Watch 2" },
+        { manufacturerId: 4, family: "Fit Pro Watch" }
+      ],
+      storages: ["32GB", "64GB", "128GB"],
+      colors: ["Black", "Silver", "Blue", "Rose Gold"],
+      basePrice: 180,
       grade: "A"
     },
     {
       name: "Accessories",
       slug: "accessories",
-      families: ["AirPods", "Power Bank", "Wireless Charger", "Keyboard Pro"],
-      storages: ["N/A", "N/A", "N/A", "N/A"],
-      manufacturers: [1, 2, 3, 4],
+      models: [
+        { manufacturerId: 1, family: "AirPods Pro" },
+        { manufacturerId: 2, family: "Galaxy Buds2 Pro" },
+        { manufacturerId: 4, family: "65W USB-C Charger" },
+        { manufacturerId: 4, family: "10000mAh Power Bank" },
+        { manufacturerId: 3, family: "Wireless Mouse" },
+        { manufacturerId: 3, family: "Mechanical Keyboard" }
+      ],
+      storages: ["N/A"],
+      colors: ["Black", "White", "Blue", "Gray"],
+      basePrice: 45,
       grade: "A"
     }
   ];
@@ -153,40 +190,31 @@ function ensureLargeCatalog() {
     INSERT INTO device_inventory (device_id, location_id, quantity) VALUES (?, ?, ?)
   `);
 
-  const generatedCountStmt = db.prepare("SELECT COUNT(*) AS count FROM devices WHERE id LIKE ?");
-  const existsStmt = db.prepare("SELECT 1 AS found FROM devices WHERE id = ?");
-
   db.exec("BEGIN TRANSACTION");
   try {
+    // Clean up previous synthetic generated rows so we can repopulate with cleaner realistic variants.
+    db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
+
     for (const cfg of config) {
       const categoryId = categoryByName.get(cfg.name);
       if (!categoryId) continue;
-      const prefix = `gen-${cfg.slug}-`;
-      const currentGenerated = Number(generatedCountStmt.get(`${prefix}%`).count || 0);
-      const toCreate = Math.max(0, EXTRA_DEVICES_PER_CATEGORY - currentGenerated);
-      let created = 0;
-      let n = currentGenerated + 1;
-
-      while (created < toCreate) {
-        const id = `${prefix}${String(n).padStart(4, "0")}`;
-        n += 1;
-        if (existsStmt.get(id)?.found) continue;
-
-        const famIdx = created % cfg.families.length;
-        const manuIdx = created % cfg.manufacturers.length;
-        const storageIdx = created % cfg.storages.length;
-        const locationIdx = created % locations.length;
-        const family = cfg.families[famIdx];
-        const storage = cfg.storages[storageIdx];
-        const modelSuffix = String(100 + ((created * 7) % 900));
-        const modelFamily = `${family} ${modelSuffix}`;
-        const modelName = storage === "N/A" ? modelFamily : `${modelFamily} ${storage}`;
-        const price = Number((60 + (created % 140) + famIdx * 5 + manuIdx * 3).toFixed(2));
-        const defaultLocationId = locations[locationIdx];
+      for (let i = 0; i < EXTRA_DEVICES_PER_CATEGORY; i += 1) {
+        const id = `gen-${cfg.slug}-${String(i + 1).padStart(4, "0")}`;
+        const modelMeta = cfg.models[i % cfg.models.length];
+        const storage = cfg.storages[i % cfg.storages.length];
+        const color = cfg.colors[i % cfg.colors.length];
+        const defaultLocationId = locations[i % locations.length];
+        const modelFamily = modelMeta.family;
+        const modelName = storage === "N/A"
+          ? `${modelFamily} - ${color}`
+          : `${modelFamily} ${storage} - ${color}`;
+        const storageStep = cfg.storages.indexOf(storage);
+        const modelStep = cfg.models.findIndex((m) => m.family === modelFamily);
+        const price = Number((cfg.basePrice + (modelStep * 15) + (storageStep * 35) + (i % 10)).toFixed(2));
 
         deviceInsert.run(
           id,
-          cfg.manufacturers[manuIdx],
+          modelMeta.manufacturerId,
           categoryId,
           modelName,
           modelFamily,
@@ -196,11 +224,10 @@ function ensureLargeCatalog() {
           defaultLocationId
         );
 
-        for (let i = 0; i < locations.length; i += 1) {
-          const qty = 5 + ((created + i * 11) % 120);
-          inventoryInsert.run(id, locations[i], qty);
+        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
+          const qty = 8 + ((i * 3 + locIdx * 13) % 140);
+          inventoryInsert.run(id, locations[locIdx], qty);
         }
-        created += 1;
       }
     }
     db.exec("COMMIT");
