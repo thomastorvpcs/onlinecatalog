@@ -259,6 +259,35 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   object-fit: contain;
 }
 
+.modal-main-image {
+  position: relative;
+}
+
+.modal-image-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(15, 23, 42, 0.38);
+  color: #fff;
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.modal-image-nav.left {
+  left: 8px;
+}
+
+.modal-image-nav.right {
+  right: 8px;
+}
+
 .modal-thumbs {
   display: flex;
   gap: 8px;
@@ -571,10 +600,13 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 12px;
   width: min(860px, 94vw);
   padding: 0;
+  box-shadow: 0 28px 72px rgba(15, 23, 42, 0.28);
+  animation: dialog-pop-in 190ms ease-out;
 }
 
 .app-dialog::backdrop {
-  background: rgba(17, 24, 39, 0.55);
+  background: rgba(17, 24, 39, 0.5);
+  backdrop-filter: blur(1.5px);
 }
 
 .modal {
@@ -609,6 +641,39 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 8px;
   padding: 10px;
   background: #fbfcff;
+}
+
+.modal-warning-box {
+  background: #fff5f5;
+  border-color: #fecaca;
+}
+
+.spec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+}
+
+.spec-item {
+  min-width: 0;
+}
+
+.spec-key {
+  font-size: 0.68rem;
+  color: #7b8494;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.spec-val {
+  margin-top: 2px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .qty-control {
@@ -755,6 +820,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   }
 }
 
+@keyframes dialog-pop-in {
+  from {
+    transform: translateY(8px) scale(0.985);
+    opacity: 0.7;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
 .cart-footer {
   margin-top: auto;
   display: flex;
@@ -803,6 +879,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   }
   .products-top { flex-direction: column; align-items: flex-start; }
   .modal-grid { grid-template-columns: 1fr; }
+  .spec-grid { grid-template-columns: 1fr 1fr; }
   .cart-dialog {
     width: 100vw;
     border-left: none;

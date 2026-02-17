@@ -734,6 +734,10 @@ export default function App() {
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
     .filter((r) => r.requestNumber.toLowerCase().includes(requestSearch.toLowerCase()));
   const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
+  const modalImages = activeProduct ? (activeProduct.images?.length ? activeProduct.images : [imageFor(activeProduct)]) : [];
+  const canCarousel = modalImages.length > 1;
+  const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
+  const modalProductUnavailable = activeProduct ? activeProduct.available < 1 : false;
 
   return (
     <div className="app-shell">
@@ -893,11 +897,13 @@ export default function App() {
               <div>
                 <div className="modal-box">
                   <div className="thumb modal-main-image" style={{ height: 230 }}>
-                    <img src={activeProduct.images?.[activeImageIndex] || imageFor(activeProduct)} alt={activeProduct.model} />
+                    <img src={activeModalImage} alt={activeProduct.model} />
+                    {canCarousel ? <button type="button" className="modal-image-nav left" onClick={() => setActiveImageIndex((i) => (i - 1 + modalImages.length) % modalImages.length)}>‹</button> : null}
+                    {canCarousel ? <button type="button" className="modal-image-nav right" onClick={() => setActiveImageIndex((i) => (i + 1) % modalImages.length)}>›</button> : null}
                   </div>
-                  {activeProduct.images?.length > 1 ? (
+                  {canCarousel ? (
                     <div className="modal-thumbs">
-                      {activeProduct.images.map((img, idx) => (
+                      {modalImages.map((img, idx) => (
                         <button type="button" key={`${activeProduct.id}-img-${idx}`} className={`modal-thumb-btn ${idx === activeImageIndex ? "active" : ""}`} onClick={() => setActiveImageIndex(idx)}>
                           <img src={img} alt={`${activeProduct.model} ${idx + 1}`} />
                         </button>
@@ -907,29 +913,28 @@ export default function App() {
                 </div>
                 <div className="modal-box" style={{ marginTop: 10 }}>
                   <h4 style={{ marginTop: 0 }}>Device Specifications</h4>
-                  <table className="table">
-                    <tbody>
-                      <tr><td>Device Class</td><td>{activeProduct.category}</td></tr>
-                      <tr><td>Grade</td><td>{activeProduct.grade}</td></tr>
-                      <tr><td>Manufacturer</td><td>{activeProduct.manufacturer}</td></tr>
-                      <tr><td>Model</td><td>{activeProduct.modelFamily}</td></tr>
-                      <tr><td>Storage</td><td>{activeProduct.storage}</td></tr>
-                      <tr><td>Carrier</td><td>{activeProduct.carrier}</td></tr>
-                      <tr><td>Screen Size</td><td>{activeProduct.screenSize}</td></tr>
-                      <tr><td>Modular</td><td>{activeProduct.modular}</td></tr>
-                      <tr><td>Color</td><td>{activeProduct.color}</td></tr>
-                      <tr><td>Kit Type</td><td>{activeProduct.kitType}</td></tr>
-                    </tbody>
-                  </table>
+                  <div className="spec-grid">
+                    <div className="spec-item"><div className="spec-key">Device Class</div><div className="spec-val">{activeProduct.category}</div></div>
+                    <div className="spec-item"><div className="spec-key">Grade</div><div className="spec-val">{activeProduct.grade}</div></div>
+                    <div className="spec-item"><div className="spec-key">Manufacturer</div><div className="spec-val">{activeProduct.manufacturer}</div></div>
+                    <div className="spec-item"><div className="spec-key">Model</div><div className="spec-val">{activeProduct.modelFamily}</div></div>
+                    <div className="spec-item"><div className="spec-key">Storage</div><div className="spec-val">{activeProduct.storage}</div></div>
+                    <div className="spec-item"><div className="spec-key">Carrier</div><div className="spec-val">{activeProduct.carrier}</div></div>
+                    <div className="spec-item"><div className="spec-key">Screen Size</div><div className="spec-val">{activeProduct.screenSize}</div></div>
+                    <div className="spec-item"><div className="spec-key">Modular</div><div className="spec-val">{activeProduct.modular}</div></div>
+                    <div className="spec-item"><div className="spec-key">Color</div><div className="spec-val">{activeProduct.color}</div></div>
+                    <div className="spec-item"><div className="spec-key">Kit Type</div><div className="spec-val">{activeProduct.kitType}</div></div>
+                  </div>
                 </div>
               </div>
               <div>
-                <div className="modal-box" style={{ background: "#eef9f3" }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div>
+                {modalProductUnavailable ? <div className="modal-box modal-warning-box"><p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>Currently not available.</p></div> : null}
+                <div className="modal-box" style={{ background: "#eef9f3", marginTop: modalProductUnavailable ? 10 : 0 }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div>
                 <div className="modal-box" style={{ marginTop: 10 }}>
                   <h4 style={{ marginTop: 0 }}>Product notes</h4>
                   <p className="small" style={{ margin: 0 }}>{activeProduct.productNotes || "No notes provided."}</p>
                 </div>
-                <div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div>
+                <div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)} disabled={modalProductUnavailable}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))} disabled={modalProductUnavailable}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} disabled={modalProductUnavailable} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div>
               </div>
             </div>
           </article>
