@@ -891,8 +891,8 @@ export default function App() {
       </div>
 
       {activeProduct && (
-        <dialog className="app-dialog" open>
-          <article className="modal">
+        <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveProduct(null); }}>
+          <article className="modal product-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>${activeProduct.price.toFixed(2)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
             <div className="modal-grid">
               <div>
@@ -939,7 +939,7 @@ export default function App() {
               </div>
             </div>
           </article>
-        </dialog>
+        </div>
       )}
 
       {cartOpen && (
