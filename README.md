@@ -57,3 +57,17 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
 
 ## Deploy (GitHub Pages)
 Push to `main`. The workflow `.github/workflows/deploy-pages.yml` builds and deploys `dist` automatically.
+
+## Deploy (Render)
+This repo includes `render.yaml` for a single Node web service that serves:
+- API endpoints at `/api/*`
+- Built frontend from `dist`
+
+Steps:
+1. In Render, create **New + > Blueprint** and select this repo.
+2. Confirm service from `render.yaml`.
+3. Deploy.
+
+Render will run:
+- Build: `npm ci && npm run build`
+- Start: `npm run start`

@@ -1,16 +1,17 @@
 import { createServer } from "node:http";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dbDir = join(__dirname, "db");
 const dbPath = join(dbDir, "catalog.sqlite");
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
-const port = Number(process.env.API_PORT || 8787);
+const distDir = join(__dirname, "..", "dist");
+const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 
 const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
 const ADMIN_PASSWORD = "AdminPassword123!";
@@ -87,6 +88,41 @@ function json(res, statusCode, payload) {
     "Access-Control-Allow-Headers": "Content-Type, Authorization"
   });
   res.end(JSON.stringify(payload));
+}
+
+function mimeTypeFor(filePath) {
+  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
+  if (filePath.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
+  if (filePath.endsWith(".png")) return "image/png";
+  if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) return "image/jpeg";
+  if (filePath.endsWith(".svg")) return "image/svg+xml";
+  if (filePath.endsWith(".ico")) return "image/x-icon";
+  if (filePath.endsWith(".json")) return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}
+
+function serveFile(res, filePath) {
+  if (!existsSync(filePath)) return false;
+  const data = readFileSync(filePath);
+  res.writeHead(200, {
+    "Content-Type": mimeTypeFor(filePath),
+    "Cache-Control": "no-cache"
+  });
+  res.end(data);
+  return true;
+}
+
+function tryServeFrontend(req, res, url) {
+  if (req.method !== "GET") return false;
+  if (!existsSync(distDir)) return false;
+  const pathname = decodeURIComponent(url.pathname);
+  if (pathname.startsWith("/api")) return false;
+  const normalized = pathname.replace(/^\/+/, "");
+  if (normalized.includes("..")) return false;
+  const directPath = join(distDir, normalized);
+  if (normalized && serveFile(res, directPath)) return true;
+  return serveFile(res, join(distDir, "index.html"));
 }
 
 function parseBody(req) {
@@ -260,6 +296,10 @@ const server = createServer(async (req, res) => {
     }
 
     const url = new URL(req.url, `http://${req.headers.host}`);
+
+    if (tryServeFrontend(req, res, url)) {
+      return;
+    }
 
     if (req.method === "GET" && url.pathname === "/api/health") {
       json(res, 200, { ok: true });
