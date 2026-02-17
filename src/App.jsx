@@ -1,0 +1,723 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+const productsSeed = [
+  { id: "p1", manufacturer: "Apple", model: "iPhone 15 Pro Max 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 100, available: 100, image: "images/iphone_15_Pro.png", locations: { Miami: 40, Dubai: 20, "Hong Kong": 25, Japan: 15 } },
+  { id: "p2", manufacturer: "Apple", model: "iPhone 15 Pro Max 256GB", category: "Smartphones", grade: "A", region: "Dubai", storage: "256GB", price: 110, available: 0, image: "images/iphone_15_Pro.png", locations: { Miami: 0, Dubai: 0, "Hong Kong": 0, Japan: 0 } },
+  { id: "p9", manufacturer: "Apple", model: "iPhone 15 Pro 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 98, available: 52, image: "images/iphone_15_Pro.png", locations: { Miami: 20, Dubai: 14, "Hong Kong": 10, Japan: 8 } },
+  { id: "p10", manufacturer: "Apple", model: "iPhone 15 128GB", category: "Smartphones", grade: "A", region: "Japan", storage: "128GB", price: 88, available: 46, image: "images/iphone_15_Pro.png", locations: { Miami: 16, Dubai: 10, "Hong Kong": 8, Japan: 12 } },
+  { id: "p3", manufacturer: "Samsung", model: "Galaxy A07 64GB", category: "Smartphones", grade: "A", region: "Miami", storage: "64GB", price: 100, available: 100, locations: { Miami: 55, Dubai: 15, "Hong Kong": 10, Japan: 20 } },
+  { id: "p4", manufacturer: "Google", model: "Pixel 8 128GB", category: "Smartphones", grade: "B", region: "Japan", storage: "128GB", price: 90, available: 65, locations: { Miami: 20, Dubai: 15, "Hong Kong": 10, Japan: 20 } },
+  { id: "p5", manufacturer: "Apple", model: "iPad Pro 11 256GB", category: "Tablets", grade: "A", region: "Miami", storage: "256GB", price: 180, available: 45, locations: { Miami: 15, Dubai: 10, "Hong Kong": 12, Japan: 8 } },
+  { id: "p6", manufacturer: "Lenovo", model: "Yoga Slim 9i", category: "Laptops", grade: "A", region: "Dubai", storage: "512GB", price: 300, available: 12, locations: { Miami: 4, Dubai: 2, "Hong Kong": 3, Japan: 3 } },
+  { id: "p7", manufacturer: "Apple", model: "Watch Ultra 47mm", category: "Wearables", grade: "A", region: "Hong Kong", storage: "32GB", price: 220, available: 22, locations: { Miami: 4, Dubai: 7, "Hong Kong": 9, Japan: 2 } },
+  { id: "p8", manufacturer: "Apple", model: "AirPods Pro", category: "Accessories", grade: "A", region: "Miami", storage: "N/A", price: 75, available: 80, locations: { Miami: 25, Dubai: 25, "Hong Kong": 10, Japan: 20 } }
+];
+
+const categoryImagePlaceholders = {
+  Smartphones: "https://unsplash.com/photos/HpZrngfKpG8/download?force=true&w=900",
+  Tablets: "https://unsplash.com/photos/6AA9MDixOYM/download?force=true&w=900",
+  Laptops: "https://unsplash.com/photos/fJdEMpA83NM/download?force=true&w=900",
+  Wearables: "https://unsplash.com/photos/zIkV81RVwYY/download?force=true&w=900",
+  Accessories: "https://unsplash.com/photos/KSmo3sxapCo/download?force=true&w=900"
+};
+
+const baseNavItems = [
+  { key: "dashboard", label: "Dashboard", icon: "D" },
+  { key: "orders", label: "Orders", icon: "O" },
+  { key: "products", label: "Products", icon: "phone" },
+  { key: "requests", label: "Requests", icon: "R" },
+  { key: "feedback", label: "Feedback", icon: "F" },
+  { key: "settings", label: "Settings", icon: "S" }
+];
+
+const CATEGORY_ORDER = ["Smartphones", "Tablets", "Laptops", "Wearables", "Accessories"];
+
+function readJson(area, key, fallback) {
+  try {
+    const raw = area.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(area, key, value) {
+  area.setItem(key, JSON.stringify(value));
+}
+
+function modelFamilyOf(model) {
+  return model.split(" ").filter((t) => !/^\d+(gb|tb)$/i.test(t)).join(" ");
+}
+
+async function apiRequest(path, options = {}) {
+  const { token, method = "GET", body } = options;
+  const headers = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(payload.error || `Request failed (${response.status})`);
+    err.code = payload.code;
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
+}
+
+function iconForCategory(category) {
+  const base = { fill: "#147bd1" };
+  const screen = { fill: "#eef0f3" };
+  if (category === "Smartphones") {
+    return <svg viewBox="0 0 64 64"><rect x="16" y="4" width="32" height="56" rx="6" {...base} /><rect x="21" y="12" width="22" height="38" {...screen} /></svg>;
+  }
+  if (category === "Tablets") {
+    return <svg viewBox="0 0 64 64"><rect x="12" y="4" width="40" height="56" rx="6" {...base} /><rect x="18" y="12" width="28" height="38" {...screen} /></svg>;
+  }
+  if (category === "Laptops") {
+    return <svg viewBox="0 0 64 64"><rect x="8" y="13" width="48" height="26" rx="2" {...base} /><rect x="13" y="18" width="38" height="16" {...screen} /><path d="M5 41h54c-1.2 6.2-5.4 10-13.5 10h-27C10.4 51 6.2 47.2 5 41z" {...base} /></svg>;
+  }
+  if (category === "Wearables") {
+    return <svg viewBox="0 0 64 64"><rect x="22" y="2" width="20" height="60" rx="5" {...base} /><rect x="14" y="12" width="36" height="40" rx="8" {...base} /><rect x="19" y="18" width="26" height="28" rx="5" {...screen} /></svg>;
+  }
+  return <svg className="accessories-icon" viewBox="0 0 64 64"><path d="M8 24a8 8 0 0 1 16 0" fill="none" stroke="#147bd1" strokeWidth="3.4" /><rect x="6.5" y="23.2" width="3.9" height="10.2" rx="1.9" {...base} /><rect x="21.6" y="23.2" width="3.9" height="10.2" rx="1.9" {...base} /><rect x="39.2" y="18" width="13.6" height="15.2" rx="2.1" {...base} /><rect x="6.3" y="38.8" width="51.4" height="13.4" rx="2.4" {...base} /></svg>;
+}
+
+function PhoneNavIcon() {
+  return <svg className="nav-icon-svg" viewBox="0 0 24 24"><rect x="7.2" y="3" width="9.6" height="18" rx="2.4" fill="none" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="18.1" r="1" fill="currentColor" /></svg>;
+}
+
+export default function App() {
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [products, setProducts] = useState(productsSeed);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState("");
+  const [route, setRoute] = useState("products");
+  const [productsView, setProductsView] = useState("home");
+  const [selectedCategory, setSelectedCategory] = useState("Smartphones");
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+  const [cart, setCart] = useState(() => readJson(sessionStorage, "pcs.cart", []));
+  const [requestStatusFilter, setRequestStatusFilter] = useState("All");
+  const [requestSearch, setRequestSearch] = useState("");
+  const [activeRequestId, setActiveRequestId] = useState(null);
+  const [activeProduct, setActiveProduct] = useState(null);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [productQty, setProductQty] = useState(1);
+  const [productNote, setProductNote] = useState("");
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserCompany, setNewUserCompany] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserIsActive, setNewUserIsActive] = useState(false);
+  const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
+  const [userActionLoading, setUserActionLoading] = useState(false);
+
+  const companyKey = user ? user.company.toLowerCase().trim() : "anon";
+  const requestsKey = `pcs.requests.${companyKey}`;
+  const requests = useMemo(() => readJson(localStorage, requestsKey, []), [requestsKey, cart, requestStatusFilter, requestSearch, activeRequestId]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadMe() {
+      if (!authToken) {
+        setAuthLoading(false);
+        setUser(null);
+        return;
+      }
+      try {
+        const data = await apiRequest("/api/auth/me", { token: authToken });
+        if (!ignore) {
+          setUser(data.user);
+        }
+      } catch {
+        localStorage.removeItem("pcs.authToken");
+        if (!ignore) {
+          setAuthToken("");
+          setUser(null);
+        }
+      } finally {
+        if (!ignore) {
+          setAuthLoading(false);
+        }
+      }
+    }
+    loadMe();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadProducts() {
+      if (!authToken) {
+        setProductsLoading(false);
+        return;
+      }
+      try {
+        setProductsLoading(true);
+        setProductsError("");
+        const payload = await apiRequest("/api/devices", { token: authToken });
+        if (!Array.isArray(payload)) {
+          throw new Error("Invalid payload");
+        }
+        if (!ignore) {
+          setProducts(payload);
+        }
+      } catch {
+        if (!ignore) {
+          setProductsError("Using local demo data because the backend API is unavailable.");
+        }
+      } finally {
+        if (!ignore) {
+          setProductsLoading(false);
+        }
+      }
+    }
+
+    loadProducts();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!products.length) return;
+    const categorySet = new Set(products.map((p) => p.category));
+    if (!categorySet.has(selectedCategory)) {
+      setSelectedCategory(products[0].category);
+    }
+  }, [products, selectedCategory]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadUsers() {
+      if (!user || user.role !== "admin" || route !== "users") return;
+      try {
+        setUsersLoading(true);
+        setUsersError("");
+        const payload = await apiRequest("/api/users", { token: authToken });
+        if (!ignore) {
+          setUsers(payload);
+        }
+      } catch (error) {
+        if (!ignore) {
+          setUsersError(error.message);
+        }
+      } finally {
+        if (!ignore) {
+          setUsersLoading(false);
+        }
+      }
+    }
+    loadUsers();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, route, user]);
+
+  const refreshUsers = async () => {
+    if (!user || user.role !== "admin") return;
+    setUsersLoading(true);
+    setUsersError("");
+    try {
+      const payload = await apiRequest("/api/users", { token: authToken });
+      setUsers(payload);
+    } catch (error) {
+      setUsersError(error.message);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const updateCart = (next) => {
+    setCart(next);
+    writeJson(sessionStorage, "pcs.cart", next);
+  };
+
+  const imageFor = (p) => p.image || categoryImagePlaceholders[p.category] || "";
+
+  const addToCart = (p, qty, note) => {
+    const existing = cart.find((i) => i.productId === p.id && i.note === note);
+    let next = [...cart];
+    if (existing) {
+      next = next.map((i) => (i.id === existing.id ? { ...i, quantity: Math.min(9999, i.quantity + qty) } : i));
+    } else {
+      next.push({ id: crypto.randomUUID(), productId: p.id, model: p.model, grade: p.grade, quantity: qty, offerPrice: p.price, note });
+    }
+    updateCart(next);
+  };
+
+  const openCategory = (c) => {
+    setSelectedCategory(c);
+    setProductsView("category");
+    setSearch("");
+    setFilters({});
+  };
+
+  const submitRequest = () => {
+    if (!cart.length || !user) return;
+    const valid = cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0);
+    if (!valid) return;
+    const existing = readJson(localStorage, requestsKey, []);
+    const requestNumber = `REQ-${new Date().getFullYear()}-${String(existing.length + 1).padStart(4, "0")}`;
+    const lines = cart.map((x) => ({ productId: x.productId, model: x.model, grade: x.grade, quantity: Number(x.quantity), offerPrice: Number(x.offerPrice), note: x.note || "" }));
+    const total = lines.reduce((s, l) => s + l.quantity * l.offerPrice, 0);
+    writeJson(localStorage, requestsKey, [...existing, { id: crypto.randomUUID(), requestNumber, company: user.company, createdBy: user.email, createdAt: new Date().toISOString(), status: "New", lines, total }]);
+    updateCart([]);
+    setCartOpen(false);
+    setRoute("requests");
+  };
+
+  const handleLogin = async (email, password) => {
+    const data = await apiRequest("/api/auth/login", { method: "POST", body: { email, password } });
+    if (data.pendingApproval) {
+      return { pendingApproval: true, email: data.email };
+    }
+    localStorage.setItem("pcs.authToken", data.token);
+    setAuthToken(data.token);
+    setUser(data.user);
+    return { pendingApproval: false };
+  };
+
+  const handleRegister = async (email, password, company) => {
+    await apiRequest("/api/auth/register", { method: "POST", body: { email, password, company } });
+  };
+
+  const handleRequestPasswordReset = async (email) => {
+    return apiRequest("/api/auth/request-password-reset", { method: "POST", body: { email } });
+  };
+
+  const handleResetPassword = async (email, code, newPassword) => {
+    return apiRequest("/api/auth/reset-password", { method: "POST", body: { email, code, newPassword } });
+  };
+
+  const logout = () => {
+    localStorage.removeItem("pcs.authToken");
+    setAuthToken("");
+    setUser(null);
+    setRoute("products");
+  };
+
+  const createUserAsAdmin = async (e) => {
+    e.preventDefault();
+    if (!newUserEmail || !newUserCompany || !newUserPassword) return;
+    try {
+      setUserActionLoading(true);
+      setUsersError("");
+      await apiRequest("/api/users", {
+        method: "POST",
+        token: authToken,
+        body: {
+          email: newUserEmail.trim(),
+          company: newUserCompany.trim(),
+          password: newUserPassword,
+          isActive: newUserIsActive,
+          isAdmin: newUserIsAdmin
+        }
+      });
+      setNewUserEmail("");
+      setNewUserCompany("");
+      setNewUserPassword("");
+      setNewUserIsActive(false);
+      setNewUserIsAdmin(false);
+      await refreshUsers();
+    } catch (error) {
+      setUsersError(error.message);
+    } finally {
+      setUserActionLoading(false);
+    }
+  };
+
+  const toggleUserField = async (targetUser, field, value) => {
+    try {
+      setUserActionLoading(true);
+      setUsersError("");
+      await apiRequest(`/api/users/${targetUser.id}`, {
+        method: "PATCH",
+        token: authToken,
+        body: { [field]: value }
+      });
+      await refreshUsers();
+    } catch (error) {
+      setUsersError(error.message);
+    } finally {
+      setUserActionLoading(false);
+    }
+  };
+
+  const deleteUser = async (targetUser) => {
+    try {
+      setUserActionLoading(true);
+      setUsersError("");
+      await apiRequest(`/api/users/${targetUser.id}`, {
+        method: "DELETE",
+        token: authToken
+      });
+      await refreshUsers();
+    } catch (error) {
+      setUsersError(error.message);
+    } finally {
+      setUserActionLoading(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card"><p className="muted" style={{ margin: 0 }}>Loading...</p></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} onRegister={handleRegister} onRequestPasswordReset={handleRequestPasswordReset} onResetPassword={handleResetPassword} />;
+  }
+
+  const navItems = user.role === "admin"
+    ? [...baseNavItems, { key: "users", label: "Users", icon: "U" }]
+    : baseNavItems;
+
+  const categories = [...new Set(products.map((p) => p.category))].sort((a, b) => {
+    const aIndex = CATEGORY_ORDER.indexOf(a);
+    const bIndex = CATEGORY_ORDER.indexOf(b);
+    const aOrder = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+    const bOrder = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.localeCompare(b);
+  });
+  const source = products.filter((p) => p.category === selectedCategory);
+  const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
+  const filtered = source.filter((p) => {
+    const text = `${p.manufacturer} ${p.model} ${p.modelFamily || ""} ${p.category}`.toLowerCase();
+    if (search && !text.includes(search.toLowerCase())) return false;
+    return fields.every((f) => {
+      const active = filters[f.key];
+      if (!active?.length) return true;
+      const val = f.key === "modelFamily" ? (p.modelFamily || modelFamilyOf(p.model)) : p[f.key];
+      return active.includes(val);
+    });
+  });
+
+  const filteredRequests = requests
+    .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
+    .filter((r) => r.requestNumber.toLowerCase().includes(requestSearch.toLowerCase()));
+  const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
+
+  return (
+    <div className="app-shell">
+      <aside className="left-rail">
+        <div className="rail-logo"><img className="brand-logo-img" src="logo.png" alt="Company logo" /></div>
+        <nav className="rail-nav">
+          {navItems.map((n) => (
+            <button key={n.key} className={n.key === route ? "active" : ""} onClick={() => { setRoute(n.key); if (n.key === "products") { setProductsView("home"); setSearch(""); setFilters({}); } }}>
+              <span className="nav-icon-wrap">{n.icon === "phone" ? <PhoneNavIcon /> : <span className="nav-icon">{n.icon}</span>}</span>
+              <span className="nav-label">{n.label}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="content-shell">
+        <header className="topbar">
+          <div className="brand-wrap"><span className="dot" /><strong>Gadget Crazy</strong></div>
+          <div className="top-actions"><span className="muted">{user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
+        </header>
+
+        <main className="view">
+          {route === "products" && productsError && (
+            <section className="panel" style={{ marginBottom: 10 }}>
+              <p className="small" style={{ margin: 0 }}>{productsError}</p>
+            </section>
+          )}
+
+          {route === "products" && productsView === "home" && (
+            <>
+              <h1 className="page-title">Products</h1>
+              <section className="panel home-hero">
+                <div><h2 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>Categories</h2><p className="muted" style={{ marginTop: 6 }}>Browse device classes and open a filtered catalog view.</p></div>
+                <div className="category-strip">{categories.map((c) => <button key={c} className="category-btn" onClick={() => openCategory(c)}><span className="cat-icon">{iconForCategory(c)}</span><span className="cat-label">{c}</span></button>)}</div>
+              </section>
+              {categories.map((cat) => (
+                <section key={cat} className="panel">
+                  <div className="category-header"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>{cat}</h3><button className="ghost-btn" onClick={() => openCategory(cat)}>View all</button></div>
+                  <div className="products-grid">{products.filter((p) => p.category === cat).slice(0, 6).map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                </section>
+              ))}
+            </>
+          )}
+
+          {route === "products" && productsView === "category" && (
+            <>
+              <h1 className="page-title">Products</h1>
+              <div className="products-shell">
+                <aside className="filters-panel">
+                  <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
+                  {fields.map((f) => {
+                    const values = [...new Set(source.map((p) => (f.key === "modelFamily" ? (p.modelFamily || modelFamilyOf(p.model)) : p[f.key])))].sort();
+                    return (
+                      <div key={f.key} className="filter-row">
+                        <h4>{f.title}</h4>
+                        {values.map((v) => (
+                          <label key={v} className="checkbox-item">
+                            <input type="checkbox" checked={(filters[f.key] || []).includes(v)} onChange={(e) => { const set = new Set(filters[f.key] || []); if (e.target.checked) set.add(v); else set.delete(v); setFilters({ ...filters, [f.key]: [...set] }); }} />
+                            <span>{v}</span>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </aside>
+                <section className="products-main">
+                  <div className="products-top">
+                    <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategory}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategory}</h2></div>
+                    <div className="right-actions"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" style={{ width: 220 }} /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
+                  </div>
+                  {productsLoading ? (
+                    <p className="small">Loading devices...</p>
+                  ) : (
+                    <div className="products-grid">{filtered.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
+
+          {route === "requests" && (
+            <>
+              <section className="panel">
+                <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>Requests</h2>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  {["All", "New", "Received", "Estimate Created", "Completed"].map((s) => <button key={s} className="ghost-btn" style={requestStatusFilter === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}} onClick={() => setRequestStatusFilter(s)}>{s}</button>)}
+                  <input style={{ maxWidth: 220 }} placeholder="Search request #" value={requestSearch} onChange={(e) => setRequestSearch(e.target.value)} />
+                </div>
+                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>${r.total.toFixed(2)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
+              </section>
+              <section className="panel">
+                <h3 style={{ marginTop: 0 }}>Request details</h3>
+                {activeRequest ? <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>${l.offerPrice.toFixed(2)}</td><td>${(l.quantity * l.offerPrice).toFixed(2)}</td></tr>)}</tbody></table> : <p className="small">Choose a request above.</p>}
+              </section>
+            </>
+          )}
+
+          {route === "users" && user.role === "admin" && (
+            <section className="panel">
+              <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>User Management</h2>
+              {usersError ? <p className="small" style={{ color: "#b91c1c" }}>{usersError}</p> : null}
+              <form onSubmit={createUserAsAdmin} className="admin-user-form">
+                <div className="admin-user-form-grid">
+                  <input type="email" placeholder="Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
+                  <input type="text" placeholder="Company" value={newUserCompany} onChange={(e) => setNewUserCompany(e.target.value)} required />
+                  <input type="password" placeholder="Password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} required />
+                </div>
+                <div className="admin-user-form-checks">
+                  <label><input type="checkbox" checked={newUserIsActive} onChange={(e) => setNewUserIsActive(e.target.checked)} /> Active</label>
+                  <label><input type="checkbox" checked={newUserIsAdmin} onChange={(e) => setNewUserIsAdmin(e.target.checked)} /> Admin rights</label>
+                </div>
+                <button type="submit" style={{ width: "auto" }} disabled={userActionLoading}>Create user</button>
+              </form>
+              {usersLoading ? (
+                <p className="small">Loading users...</p>
+              ) : (
+                <table className="table">
+                  <thead><tr><th>Email</th><th>Company</th><th>Active</th><th>Admin</th><th>Created</th><th /></tr></thead>
+                  <tbody>
+                    {users.map((u) => (
+                      <tr key={u.id}>
+                        <td>{u.email}</td>
+                        <td>{u.company}</td>
+                        <td><input type="checkbox" checked={u.isActive} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isActive", e.target.checked)} /></td>
+                        <td><input type="checkbox" checked={u.role === "admin"} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isAdmin", e.target.checked)} /></td>
+                        <td>{new Date(u.createdAt).toLocaleString()}</td>
+                        <td>{u.email === user.email ? <span className="small">Current</span> : <button className="delete-btn" style={{ width: "auto" }} disabled={userActionLoading} onClick={() => deleteUser(u)}>Delete</button>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
+
+          {route !== "products" && route !== "requests" && route !== "users" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
+        </main>
+      </div>
+
+      {activeProduct && (
+        <dialog className="app-dialog" open>
+          <article className="modal">
+            <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>${activeProduct.price.toFixed(2)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
+            <div className="modal-grid">
+              <div className="modal-box"><div className="thumb" style={{ height: 190 }}><img src={imageFor(activeProduct)} alt={activeProduct.model} /></div><h4>Device Specifications</h4><table className="table"><tbody><tr><td>Device Class</td><td>{activeProduct.category}</td></tr><tr><td>Grade</td><td>{activeProduct.grade}</td></tr><tr><td>Manufacturer</td><td>{activeProduct.manufacturer}</td></tr><tr><td>Storage</td><td>{activeProduct.storage}</td></tr><tr><td>Region</td><td>{activeProduct.region}</td></tr></tbody></table></div>
+              <div><div className="modal-box" style={{ background: "#eef9f3" }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div><div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div></div>
+            </div>
+          </article>
+        </dialog>
+      )}
+
+      {cartOpen && (
+        <dialog className="app-dialog cart-dialog" open>
+          <article className="modal">
+            <div className="modal-head"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 500 }}>Requested items</h3><button className="close-btn" onClick={() => setCartOpen(false)}>X</button></div>
+            <div className="cart-scroll">
+              <table className="table cart-table">
+                <colgroup><col className="cart-col-name-col" /><col className="cart-col-grade-col" /><col className="cart-col-offer-col" /><col className="cart-col-qty-col" /><col className="cart-col-total-col" /><col className="cart-col-action-col" /></colgroup>
+                <thead><tr><th>Product Name</th><th>Grade</th><th>Offer Price</th><th>Qty</th><th>Total</th><th /></tr></thead>
+                <tbody>
+                  {cart.length ? cart.map((r) => {
+                    const lineTotal = Number(r.offerPrice || 0) * Number(r.quantity || 0);
+                    return (
+                      <tr key={r.id}>
+                        <td className="cart-col-name" title={r.model}>{r.model}</td>
+                        <td className="cart-col-grade">{r.grade}</td>
+                        <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
+                        <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || 1)))) } : i))} /></td>
+                        <td className="cart-col-total">${lineTotal.toFixed(2)}</td>
+                        <td className="cart-col-action"><button className="delete-btn cart-delete-btn" onClick={() => updateCart(cart.filter((i) => i.id !== r.id))}>Delete</button></td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan={6} className="small">No requested items yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])}>Delete all</button><button className="submit-btn" disabled={!cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>Submit request</button></div></div>
+          </article>
+        </dialog>
+      )}
+    </div>
+  );
+}
+
+function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword }) {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [company, setCompany] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [demoCodeHint, setDemoCodeHint] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (mode === "approval") return;
+    if (mode === "login" && (!email || !password)) return;
+    if (mode === "register" && (!email || !password || !company)) return;
+    if (mode === "reset-request" && !email) return;
+    if (mode === "reset-confirm" && (!email || !resetCode || !resetPassword)) return;
+    try {
+      setLoading(true);
+      setError("");
+      setNotice("");
+      if (mode === "login") {
+        const result = await onLogin(email.trim(), password);
+        if (result?.pendingApproval) {
+          setPendingEmail(result.email || email.trim());
+          setMode("approval");
+          return;
+        }
+      } else if (mode === "register") {
+        await onRegister(email.trim(), password, company.trim());
+        setMode("login");
+        setPassword("");
+        setNotice("User created. You can now sign in.");
+      } else if (mode === "reset-request") {
+        const result = await onRequestPasswordReset(email.trim());
+        setMode("reset-confirm");
+        setDemoCodeHint(result.demoCode || "");
+        setNotice("Verification code sent. Enter it below with your new password.");
+      } else if (mode === "reset-confirm") {
+        await onResetPassword(email.trim(), resetCode.trim(), resetPassword);
+        setMode("login");
+        setResetCode("");
+        setResetPassword("");
+        setNotice("Password has been reset. You can now sign in.");
+      }
+    } catch (err) {
+      setError(err.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <h1>PCS Catalog</h1>
+        <p className="muted">B2B inventory prototype</p>
+        {mode === "approval" ? (
+          <>
+            <h3 style={{ marginBottom: 6 }}>Waiting for approval</h3>
+            <p className="small" style={{ marginTop: 0 }}>
+              {pendingEmail || "This account"} has been created and is waiting for admin approval.
+            </p>
+            <button type="button" onClick={() => { setMode("login"); setError(""); setNotice(""); }} style={{ marginTop: 8 }}>
+              Back to sign in
+            </button>
+          </>
+        ) : (
+          <>
+        {error ? <p className="auth-error">{error}</p> : null}
+        {notice ? <p className="auth-notice">{notice}</p> : null}
+        <form onSubmit={submit}>
+          <label>Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="buyer@company.com" />
+          {(mode === "login" || mode === "register") ? (
+            <>
+              <label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Password" />
+            </>
+          ) : null}
+          {mode === "register" ? (
+            <>
+              <label>Company</label><input type="text" value={company} onChange={(e) => setCompany(e.target.value)} required placeholder="Test Company" />
+              <p className="small">Password: 8+ chars, one uppercase, one number, one special character.</p>
+            </>
+          ) : null}
+          {mode === "reset-confirm" ? (
+            <>
+              <label>Verification code</label><input type="text" inputMode="numeric" maxLength={6} value={resetCode} onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
+              <label>New password</label><input type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required placeholder="New password" />
+              <p className="small">Code must be 6 digits. Password policy still applies.</p>
+              {demoCodeHint ? <p className="small">Demo verification code: {demoCodeHint}</p> : null}
+            </>
+          ) : null}
+          <button type="submit" disabled={loading}>
+            {loading ? "Please wait..." : mode === "login" ? "Sign In" : mode === "register" ? "Create User" : mode === "reset-request" ? "Send verification code" : "Reset password"}
+          </button>
+        </form>
+        <div className="auth-links">
+          {mode === "login" ? <button type="button" className="link-btn" onClick={() => { setMode("register"); setError(""); setNotice(""); }}>Create user</button> : null}
+          {mode === "login" ? <button type="button" className="link-btn" onClick={() => { setMode("reset-request"); setError(""); setNotice(""); }}>Reset password</button> : null}
+          {(mode === "register" || mode === "reset-request" || mode === "reset-confirm") ? <button type="button" className="link-btn" onClick={() => { setMode("login"); setError(""); setNotice(""); }}>Back to sign in</button> : null}
+        </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProductCard({ p, image, onOpen, onAdd }) {
+  const unavailable = p.available < 1;
+  return (
+    <article className="card">
+      <div className="thumb product-thumb" onClick={() => onOpen(p)}><img src={image} alt={p.model} loading="lazy" /></div>
+      <div className="brand product-brand">{p.manufacturer}</div>
+      <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
+      <div className="price">${p.price.toFixed(2)}</div>
+      <div className="product-meta">Device Grade {p.grade}</div>
+      <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${p.available} items available`}</div>
+      <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, 1, "")}>Add to request</button>
+    </article>
+  );
+}
