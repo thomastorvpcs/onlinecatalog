@@ -75,4 +75,9 @@ Render will run:
 ## Inventory API
 See docs/inventory-api.md for inventory update endpoint design and examples.
 
+## Swagger / OpenAPI
+- OpenAPI file: `docs/openapi.yaml`
+- Raw spec endpoint: `/api/openapi.yaml`
+- Swagger UI endpoint: `/api/docs`
+
 

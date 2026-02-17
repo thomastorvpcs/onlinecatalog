@@ -1,0 +1,769 @@
+openapi: 3.0.3
+info:
+  title: PCS Online Catalog API
+  version: 1.0.0
+  description: API for authentication, users, catalog, and inventory management.
+servers:
+  - url: http://localhost:8787
+    description: Local API server
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Users
+  - name: Catalog
+  - name: Inventory
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new buyer user (inactive by default)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "409":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in or pending approval
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LoginSuccessResponse"
+                  - $ref: "#/components/schemas/LoginPendingApprovalResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/PublicUser"
+        "401":
+          $ref: "#/components/responses/Error401"
+  /api/auth/request-password-reset:
+    post:
+      tags: [Auth]
+      summary: Request password reset code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetRequest"
+      responses:
+        "200":
+          description: Reset flow started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                  demoCode:
+                    type: string
+                    example: "123456"
+  /api/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with 6-digit verification code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetConfirmRequest"
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+  /api/users:
+    get:
+      tags: [Users]
+      summary: List all users (admin only)
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublicUser"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    post:
+      tags: [Users]
+      summary: Create user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateUserRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "409":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/users/{id}:
+    patch:
+      tags: [Users]
+      summary: Update user active/admin flags (admin only)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPatchUserRequest"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    delete:
+      tags: [Users]
+      summary: Delete user (admin only)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+  /api/categories:
+    get:
+      tags: [Catalog]
+      summary: Get categories
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "401":
+          $ref: "#/components/responses/Error401"
+  /api/devices:
+    get:
+      tags: [Catalog]
+      summary: Get devices with filtering and optional pagination
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: category
+          description: Comma-separated category names
+          schema:
+            type: string
+        - in: query
+          name: manufacturer
+          description: Comma-separated manufacturer names
+          schema:
+            type: string
+        - in: query
+          name: modelFamily
+          description: Comma-separated model family names
+          schema:
+            type: string
+        - in: query
+          name: region
+          description: Comma-separated region names
+          schema:
+            type: string
+        - in: query
+          name: storage
+          description: Comma-separated storage values
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Devices (array when no pageSize, paged object when pageSize is set)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/Device"
+                  - $ref: "#/components/schemas/DevicePage"
+        "401":
+          $ref: "#/components/responses/Error401"
+  /api/inventory/{deviceId}:
+    get:
+      tags: [Inventory]
+      summary: Get per-location inventory for one device (admin only)
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Device inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceInventoryResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/inventory/{deviceId}/{locationId}:
+    put:
+      tags: [Inventory]
+      summary: Set absolute inventory quantity for device+location (admin only)
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: locationId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetInventoryRequest"
+      responses:
+        "200":
+          description: Quantity updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetInventoryResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          description: Device or location not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/inventory/{deviceId}/{locationId}/adjust:
+    post:
+      tags: [Inventory]
+      summary: Adjust quantity by delta for device+location (admin only)
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: locationId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustInventoryRequest"
+      responses:
+        "200":
+          description: Quantity adjusted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdjustInventoryResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          description: Device or location not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/inventory/bulk:
+    post:
+      tags: [Inventory]
+      summary: Bulk set or adjust inventory (admin only, all-or-nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkInventoryRequest"
+      responses:
+        "200":
+          description: Bulk update complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkInventoryResponse"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+  responses:
+    Error400:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error401:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error403:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+    ValidationErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  index:
+                    type: integer
+                  field:
+                    type: string
+                  message:
+                    type: string
+    PublicUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        company:
+          type: string
+        role:
+          type: string
+          enum: [admin, buyer]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [email, company, password]
+      properties:
+        email:
+          type: string
+          format: email
+        company:
+          type: string
+        password:
+          type: string
+          description: Must include uppercase, number, special character, min 8 chars
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    LoginSuccessResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/PublicUser"
+    LoginPendingApprovalResponse:
+      type: object
+      properties:
+        pendingApproval:
+          type: boolean
+          example: true
+        email:
+          type: string
+          format: email
+        company:
+          type: string
+    PasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    PasswordResetConfirmRequest:
+      type: object
+      required: [email, code, newPassword]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          pattern: "^[0-9]{6}$"
+        newPassword:
+          type: string
+    AdminCreateUserRequest:
+      type: object
+      required: [email, company, password]
+      properties:
+        email:
+          type: string
+          format: email
+        company:
+          type: string
+        password:
+          type: string
+        isActive:
+          type: boolean
+        isAdmin:
+          type: boolean
+    AdminPatchUserRequest:
+      type: object
+      properties:
+        isActive:
+          type: boolean
+        isAdmin:
+          type: boolean
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+        manufacturer:
+          type: string
+        model:
+          type: string
+        modelFamily:
+          type: string
+        category:
+          type: string
+        grade:
+          type: string
+        region:
+          type: string
+        storage:
+          type: string
+        price:
+          type: number
+        image:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+        carrier:
+          type: string
+        screenSize:
+          type: string
+        modular:
+          type: string
+        color:
+          type: string
+        kitType:
+          type: string
+        productNotes:
+          type: string
+        available:
+          type: integer
+        locations:
+          type: object
+          additionalProperties:
+            type: integer
+    DevicePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+    DeviceInventoryResponse:
+      type: object
+      properties:
+        deviceId:
+          type: string
+        model:
+          type: string
+        locations:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryLocation"
+        total:
+          type: integer
+    InventoryLocation:
+      type: object
+      properties:
+        locationId:
+          type: integer
+        location:
+          type: string
+        quantity:
+          type: integer
+    SetInventoryRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+    SetInventoryResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        deviceId:
+          type: string
+        locationId:
+          type: integer
+        quantity:
+          type: integer
+    AdjustInventoryRequest:
+      type: object
+      required: [delta]
+      properties:
+        delta:
+          type: integer
+          description: Non-zero integer
+        reason:
+          type: string
+    AdjustInventoryResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        deviceId:
+          type: string
+        locationId:
+          type: integer
+        previousQuantity:
+          type: integer
+        newQuantity:
+          type: integer
+        delta:
+          type: integer
+    BulkInventoryRequest:
+      type: object
+      required: [mode, updates]
+      properties:
+        mode:
+          type: string
+          enum: [set, adjust]
+        reason:
+          type: string
+        updates:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/BulkSetUpdate"
+              - $ref: "#/components/schemas/BulkAdjustUpdate"
+    BulkSetUpdate:
+      type: object
+      required: [deviceId, locationId, quantity]
+      properties:
+        deviceId:
+          type: string
+        locationId:
+          type: integer
+        quantity:
+          type: integer
+          minimum: 0
+    BulkAdjustUpdate:
+      type: object
+      required: [deviceId, locationId, delta]
+      properties:
+        deviceId:
+          type: string
+        locationId:
+          type: integer
+        delta:
+          type: integer
+    BulkInventoryResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        processed:
+          type: integer
+        failed:
+          type: integer

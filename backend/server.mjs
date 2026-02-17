@@ -11,6 +11,8 @@ const dbPath = join(dbDir, "catalog.sqlite");
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
 const distDir = join(__dirname, "..", "dist");
+const docsDir = join(__dirname, "..", "docs");
+const openApiPath = join(docsDir, "openapi.yaml");
 const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 
 const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
@@ -343,6 +345,7 @@ function mimeTypeFor(filePath) {
   if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
   if (filePath.endsWith(".js")) return "application/javascript; charset=utf-8";
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
+  if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) return "application/yaml; charset=utf-8";
   if (filePath.endsWith(".png")) return "image/png";
   if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) return "image/jpeg";
   if (filePath.endsWith(".svg")) return "image/svg+xml";
@@ -677,6 +680,46 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/health") {
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/openapi.yaml") {
+      if (!existsSync(openApiPath)) {
+        json(res, 404, { error: "OpenAPI spec not found." });
+        return;
+      }
+      serveFile(res, openApiPath);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/docs") {
+      const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PCS Online Catalog API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body style="margin:0;background:#f5f7fb;">
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "/api/openapi.yaml",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      presets: [SwaggerUIBundle.presets.apis],
+      layout: "BaseLayout"
+    });
+  </script>
+</body>
+</html>`;
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache"
+      });
+      res.end(html);
       return;
     }
 
