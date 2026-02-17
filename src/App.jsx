@@ -364,6 +364,7 @@ function PhoneNavIcon() {
 }
 
 export default function App() {
+  const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -742,7 +743,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="left-rail">
-        <div className="rail-logo"><img className="brand-logo-img" src="logo.png" alt="Company logo" /></div>
+        <div className="rail-logo"><img className="brand-logo-img" src={logoUrl} alt="Company logo" /></div>
         <nav className="rail-nav">
           {navItems.map((n) => (
             <button key={n.key} className={n.key === route ? "active" : ""} onClick={() => { setRoute(n.key); if (n.key === "products") { setProductsView("home"); setSearch(""); setFilters({}); } }}>
