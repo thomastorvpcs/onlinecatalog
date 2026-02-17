@@ -727,6 +727,40 @@ export default function App() {
   });
   const source = products.filter((p) => p.category === selectedCategory);
   const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
+  const valueForField = (device, fieldKey) => (fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey]);
+  const matchesOtherFilters = (device, excludedField) => {
+    for (const field of fields) {
+      if (field.key === excludedField) continue;
+      const selected = filters[field.key] || [];
+      if (!selected.length) continue;
+      const value = valueForField(device, field.key);
+      if (!selected.includes(value)) return false;
+    }
+    return true;
+  };
+  const filterOptions = (() => {
+    const optionsByField = {};
+    for (const field of fields) {
+      const selected = filters[field.key] || [];
+      const allValues = [...new Set(source.map((p) => valueForField(p, field.key)))].sort((a, b) => String(a).localeCompare(String(b)));
+      const enabledValues = new Set(
+        source
+          .filter((p) => matchesOtherFilters(p, field.key))
+          .map((p) => valueForField(p, field.key))
+      );
+      optionsByField[field.key] = allValues
+        .map((value) => {
+          const isSelected = selected.includes(value);
+          const isEnabled = enabledValues.has(value) || isSelected;
+          return { value, isEnabled, isSelected };
+        })
+        .sort((a, b) => {
+          if (a.isEnabled !== b.isEnabled) return a.isEnabled ? -1 : 1;
+          return String(a.value).localeCompare(String(b.value));
+        });
+    }
+    return optionsByField;
+  })();
   const totalCategoryPages = Math.max(1, Math.ceil(categoryTotal / CATEGORY_PAGE_SIZE));
   const safeCategoryPage = Math.min(categoryPage, totalCategoryPages);
   const categoryStartIndex = (safeCategoryPage - 1) * CATEGORY_PAGE_SIZE;
@@ -790,14 +824,23 @@ export default function App() {
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
                   {fields.map((f) => {
-                    const values = [...new Set(source.map((p) => (f.key === "modelFamily" ? (p.modelFamily || modelFamilyOf(p.model)) : p[f.key])))].sort();
+                    const options = filterOptions[f.key] || [];
                     return (
                       <div key={f.key} className="filter-row">
                         <h4>{f.title}</h4>
-                        {values.map((v) => (
-                          <label key={v} className="checkbox-item">
-                            <input type="checkbox" checked={(filters[f.key] || []).includes(v)} onChange={(e) => { const set = new Set(filters[f.key] || []); if (e.target.checked) set.add(v); else set.delete(v); setFilters({ ...filters, [f.key]: [...set] }); }} />
-                            <span>{v}</span>
+                        {options.map((option) => (
+                          <label key={option.value} className={`checkbox-item${option.isEnabled ? "" : " disabled"}`}>
+                            <input
+                              type="checkbox"
+                              disabled={!option.isEnabled}
+                              checked={(filters[f.key] || []).includes(option.value)}
+                              onChange={(e) => {
+                                const set = new Set(filters[f.key] || []);
+                                if (e.target.checked) set.add(option.value); else set.delete(option.value);
+                                setFilters({ ...filters, [f.key]: [...set] });
+                              }}
+                            />
+                            <span>{option.value}</span>
                           </label>
                         ))}
                       </div>
@@ -807,7 +850,7 @@ export default function App() {
                 <section className="products-main">
                   <div className="products-top">
                     <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategory}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategory}</h2></div>
-                    <div className="right-actions"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" style={{ width: 220 }} /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
+                    <div className="right-actions"><input className="catalog-search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
                   </div>
                   <div className="small" style={{ marginBottom: 8 }}>
                     Showing {categoryTotal ? categoryStartIndex + 1 : 0}-{Math.min(categoryTotal, categoryStartIndex + CATEGORY_PAGE_SIZE)} of {categoryTotal} devices
@@ -837,7 +880,7 @@ export default function App() {
                 <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>Requests</h2>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                   {["All", "New", "Received", "Estimate Created", "Completed"].map((s) => <button key={s} className="ghost-btn" style={requestStatusFilter === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}} onClick={() => setRequestStatusFilter(s)}>{s}</button>)}
-                  <input style={{ maxWidth: 220 }} placeholder="Search request #" value={requestSearch} onChange={(e) => setRequestSearch(e.target.value)} />
+                  <input className="request-search-input" placeholder="Search request #" value={requestSearch} onChange={(e) => setRequestSearch(e.target.value)} />
                 </div>
                 <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>${r.total.toFixed(2)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
               </section>
