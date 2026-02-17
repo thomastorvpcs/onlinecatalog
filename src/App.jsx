@@ -31,6 +31,7 @@ const baseNavItems = [
 ];
 
 const CATEGORY_ORDER = ["Smartphones", "Tablets", "Laptops", "Wearables", "Accessories"];
+const CATEGORY_PAGE_SIZE = 40;
 
 function readJson(area, key, fallback) {
   try {
@@ -119,6 +120,8 @@ function throwApiError(message, code, payload = {}) {
 
 async function demoApiRequest(path, options = {}) {
   const { token, method = "GET", body = {} } = options;
+  const url = new URL(path, "https://demo.local");
+  const pathname = url.pathname;
   const users = getDemoUsers();
   const sessions = getDemoSessions();
   const authUserId = token ? sessions[token] : null;
@@ -134,12 +137,12 @@ async function demoApiRequest(path, options = {}) {
     return user;
   };
 
-  if (method === "GET" && path === "/api/auth/me") {
+  if (method === "GET" && pathname === "/api/auth/me") {
     const user = requireAuth();
     return { user: makeDemoPublicUser(user) };
   }
 
-  if (method === "POST" && path === "/api/auth/register") {
+  if (method === "POST" && pathname === "/api/auth/register") {
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     const company = String(body.company || "").trim();
@@ -162,7 +165,7 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true };
   }
 
-  if (method === "POST" && path === "/api/auth/login") {
+  if (method === "POST" && pathname === "/api/auth/login") {
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     const user = users.find((u) => u.email === email && u.password === password);
@@ -174,7 +177,7 @@ async function demoApiRequest(path, options = {}) {
     return { token: nextToken, user: makeDemoPublicUser(user) };
   }
 
-  if (method === "POST" && path === "/api/auth/request-password-reset") {
+  if (method === "POST" && pathname === "/api/auth/request-password-reset") {
     const email = String(body.email || "").trim().toLowerCase();
     if (!email) throwApiError("Email is required.", 400);
     const user = users.find((u) => u.email === email);
@@ -190,7 +193,7 @@ async function demoApiRequest(path, options = {}) {
     };
   }
 
-  if (method === "POST" && path === "/api/auth/reset-password") {
+  if (method === "POST" && pathname === "/api/auth/reset-password") {
     const email = String(body.email || "").trim().toLowerCase();
     const code = String(body.code || "").trim();
     const newPassword = String(body.newPassword || "");
@@ -209,17 +212,45 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true };
   }
 
-  if (method === "GET" && path === "/api/devices") {
+  if (method === "GET" && pathname === "/api/devices") {
     requireAuth();
-    return productsSeed.map((p) => ({ ...p, modelFamily: modelFamilyOf(p.model) }));
+    const search = (url.searchParams.get("search") || "").trim().toLowerCase();
+    const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+    const pageSizeRaw = Number(url.searchParams.get("pageSize") || 0);
+    const pageSize = pageSizeRaw > 0 ? Math.min(200, pageSizeRaw) : 0;
+
+    const csv = (key) => (url.searchParams.get(key) || "").split(",").map((x) => x.trim()).filter(Boolean);
+    const categories = csv("category");
+    const manufacturers = csv("manufacturer");
+    const modelFamilies = csv("modelFamily");
+    const regions = csv("region");
+    const storages = csv("storage");
+
+    const all = productsSeed.map((p) => ({ ...p, modelFamily: modelFamilyOf(p.model) }));
+    const filtered = all.filter((p) => {
+      const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
+      if (search && !text.includes(search)) return false;
+      if (categories.length && !categories.includes(p.category)) return false;
+      if (manufacturers.length && !manufacturers.includes(p.manufacturer)) return false;
+      if (modelFamilies.length && !modelFamilies.includes(p.modelFamily)) return false;
+      if (regions.length && !regions.includes(p.region)) return false;
+      if (storages.length && !storages.includes(p.storage)) return false;
+      return true;
+    });
+
+    if (!pageSize) return filtered;
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return { items, total, page, pageSize };
   }
 
-  if (method === "GET" && path === "/api/users") {
+  if (method === "GET" && pathname === "/api/users") {
     requireAdmin();
     return users.map(makeDemoPublicUser).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
-  if (method === "POST" && path === "/api/users") {
+  if (method === "POST" && pathname === "/api/users") {
     requireAdmin();
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
@@ -245,7 +276,7 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true };
   }
 
-  const userMatch = path.match(/^\/api\/users\/(\d+)$/);
+  const userMatch = pathname.match(/^\/api\/users\/(\d+)$/);
   if (userMatch && method === "PATCH") {
     const actingUser = requireAdmin();
     const targetId = Number(userMatch[1]);
@@ -322,11 +353,15 @@ export default function App() {
   const [products, setProducts] = useState(productsSeed);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState("");
+  const [categoryDevices, setCategoryDevices] = useState([]);
+  const [categoryTotal, setCategoryTotal] = useState(0);
+  const [categoryLoading, setCategoryLoading] = useState(false);
   const [route, setRoute] = useState("products");
   const [productsView, setProductsView] = useState("home");
   const [selectedCategory, setSelectedCategory] = useState("Smartphones");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({});
+  const [categoryPage, setCategoryPage] = useState(1);
   const [cart, setCart] = useState(() => readJson(sessionStorage, "pcs.cart", []));
   const [requestStatusFilter, setRequestStatusFilter] = useState("All");
   const [requestSearch, setRequestSearch] = useState("");
@@ -423,6 +458,53 @@ export default function App() {
   }, [products, selectedCategory]);
 
   useEffect(() => {
+    if (productsView === "category") {
+      setCategoryPage(1);
+    }
+  }, [selectedCategory, search, filters, productsView]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadCategoryPage() {
+      if (!authToken || productsView !== "category") return;
+      try {
+        setCategoryLoading(true);
+        const qs = new URLSearchParams();
+        qs.set("category", selectedCategory);
+        qs.set("page", String(categoryPage));
+        qs.set("pageSize", String(CATEGORY_PAGE_SIZE));
+        if (search.trim()) qs.set("search", search.trim());
+        if (filters.manufacturer?.length) qs.set("manufacturer", filters.manufacturer.join(","));
+        if (filters.modelFamily?.length) qs.set("modelFamily", filters.modelFamily.join(","));
+        if (filters.region?.length) qs.set("region", filters.region.join(","));
+        if (filters.storage?.length) qs.set("storage", filters.storage.join(","));
+        const payload = await apiRequest(`/api/devices?${qs.toString()}`, { token: authToken });
+        if (!payload || !Array.isArray(payload.items)) {
+          throw new Error("Invalid paged payload");
+        }
+        if (!ignore) {
+          setCategoryDevices(payload.items);
+          setCategoryTotal(Number(payload.total || 0));
+        }
+      } catch (error) {
+        if (!ignore) {
+          setProductsError(error.message || "Failed loading category page.");
+          setCategoryDevices([]);
+          setCategoryTotal(0);
+        }
+      } finally {
+        if (!ignore) {
+          setCategoryLoading(false);
+        }
+      }
+    }
+    loadCategoryPage();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, productsView, selectedCategory, search, filters, categoryPage]);
+
+  useEffect(() => {
     let ignore = false;
     async function loadUsers() {
       if (!user || user.role !== "admin" || route !== "users") return;
@@ -486,6 +568,7 @@ export default function App() {
     setProductsView("category");
     setSearch("");
     setFilters({});
+    setCategoryPage(1);
   };
 
   const submitRequest = () => {
@@ -621,16 +704,9 @@ export default function App() {
   });
   const source = products.filter((p) => p.category === selectedCategory);
   const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
-  const filtered = source.filter((p) => {
-    const text = `${p.manufacturer} ${p.model} ${p.modelFamily || ""} ${p.category}`.toLowerCase();
-    if (search && !text.includes(search.toLowerCase())) return false;
-    return fields.every((f) => {
-      const active = filters[f.key];
-      if (!active?.length) return true;
-      const val = f.key === "modelFamily" ? (p.modelFamily || modelFamilyOf(p.model)) : p[f.key];
-      return active.includes(val);
-    });
-  });
+  const totalCategoryPages = Math.max(1, Math.ceil(categoryTotal / CATEGORY_PAGE_SIZE));
+  const safeCategoryPage = Math.min(categoryPage, totalCategoryPages);
+  const categoryStartIndex = (safeCategoryPage - 1) * CATEGORY_PAGE_SIZE;
 
   const filteredRequests = requests
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
@@ -706,10 +782,22 @@ export default function App() {
                     <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategory}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategory}</h2></div>
                     <div className="right-actions"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" style={{ width: 220 }} /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
                   </div>
-                  {productsLoading ? (
+                  <div className="small" style={{ marginBottom: 8 }}>
+                    Showing {categoryTotal ? categoryStartIndex + 1 : 0}-{Math.min(categoryTotal, categoryStartIndex + CATEGORY_PAGE_SIZE)} of {categoryTotal} devices
+                  </div>
+                  {categoryLoading ? (
                     <p className="small">Loading devices...</p>
                   ) : (
-                    <div className="products-grid">{filtered.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                    <>
+                      <div className="products-grid">{categoryDevices.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                      {totalCategoryPages > 1 ? (
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
+                          <button className="ghost-btn" disabled={safeCategoryPage <= 1} onClick={() => setCategoryPage((p) => Math.max(1, p - 1))}>Prev</button>
+                          <span className="small" style={{ alignSelf: "center" }}>Page {safeCategoryPage} / {totalCategoryPages}</span>
+                          <button className="ghost-btn" disabled={safeCategoryPage >= totalCategoryPages} onClick={() => setCategoryPage((p) => Math.min(totalCategoryPages, p + 1))}>Next</button>
+                        </div>
+                      ) : null}
+                    </>
                   )}
                 </section>
               </div>

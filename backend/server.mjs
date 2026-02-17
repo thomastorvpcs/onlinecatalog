@@ -313,6 +313,9 @@ function getDevices(url) {
   const modelFamilies = splitCsv(url.searchParams.get("modelFamily"));
   const regions = splitCsv(url.searchParams.get("region"));
   const storages = splitCsv(url.searchParams.get("storage"));
+  const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+  const pageSizeRaw = Number(url.searchParams.get("pageSize") || 0);
+  const pageSize = pageSizeRaw > 0 ? Math.min(200, pageSizeRaw) : 0;
 
   const filters = [];
   const params = {};
@@ -338,6 +341,7 @@ function getDevices(url) {
   addInFilter("d.storage_capacity", storages, "storage");
 
   const whereSql = filters.length ? `WHERE d.is_active = 1 AND ${filters.join(" AND ")}` : "WHERE d.is_active = 1";
+  const offset = (page - 1) * (pageSize || 1);
 
   const baseSql = `
     SELECT
@@ -362,7 +366,29 @@ function getDevices(url) {
     ORDER BY c.id, m.name, d.model_name
   `;
 
-  const devices = db.prepare(baseSql).all(params);
+  const countSql = `
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT d.id
+      FROM devices d
+      JOIN manufacturers m ON m.id = d.manufacturer_id
+      JOIN categories c ON c.id = d.category_id
+      LEFT JOIN locations dl ON dl.id = d.default_location_id
+      ${whereSql}
+      GROUP BY d.id
+    ) x
+  `;
+  const total = Number(db.prepare(countSql).get(params).count || 0);
+
+  const queryParams = { ...params };
+  const pagedSql = pageSize
+    ? `${baseSql} LIMIT $pageSize OFFSET $offset`
+    : baseSql;
+  if (pageSize) {
+    queryParams.$pageSize = pageSize;
+    queryParams.$offset = offset;
+  }
+  const devices = db.prepare(pagedSql).all(queryParams);
   const locationStmt = db.prepare(`
     SELECT
       l.name AS location,
@@ -374,7 +400,7 @@ function getDevices(url) {
     ORDER BY l.id
   `);
 
-  return devices.map((d) => {
+  const items = devices.map((d) => {
     const locationRows = locationStmt.all(d.id);
     const locations = {};
     for (const row of locationRows) {
@@ -395,6 +421,15 @@ function getDevices(url) {
       locations
     };
   });
+  if (!pageSize) {
+    return items;
+  }
+  return {
+    items,
+    total,
+    page,
+    pageSize
+  };
 }
 
 function getCategories() {
