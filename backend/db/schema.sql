@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS manufacturers (
 
 CREATE TABLE IF NOT EXISTS locations (
   id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  external_id TEXT UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -31,6 +32,11 @@ CREATE TABLE IF NOT EXISTS devices (
   color TEXT,
   kit_type TEXT,
   product_notes TEXT,
+  source_external_id TEXT UNIQUE,
+  source_sku TEXT,
+  currency_code TEXT,
+  country_code TEXT,
+  effective_date TEXT,
   default_location_id INTEGER REFERENCES locations(id),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -51,6 +57,25 @@ CREATE TABLE IF NOT EXISTS device_images (
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS boomi_inventory_raw (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_external_id TEXT,
+  sku TEXT,
+  manufacturer TEXT,
+  model TEXT,
+  color TEXT,
+  grade TEXT,
+  storage_capacity TEXT,
+  price REAL,
+  quantity_on_hand INTEGER,
+  carrier TEXT,
+  currency_code TEXT,
+  country TEXT,
+  effective_date TEXT,
+  source_location_id TEXT,
+  synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT NOT NULL UNIQUE,
@@ -66,6 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_devices_manufacturer ON devices(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_model_family ON devices(model_family);
 CREATE INDEX IF NOT EXISTS idx_inventory_location ON device_inventory(location_id);
 CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id);
+CREATE INDEX IF NOT EXISTS idx_boomi_raw_source_external_id ON boomi_inventory_raw(source_external_id);
 
 CREATE VIEW IF NOT EXISTS v_device_catalog AS
 SELECT

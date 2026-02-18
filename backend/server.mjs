@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import https from "node:https";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,6 +20,12 @@ const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
 const ADMIN_PASSWORD = "AdminPassword123!";
 const DEMO_RESET_CODE = "123456";
 const EXTRA_DEVICES_PER_CATEGORY = 1000;
+const BOOMI_INVENTORY_URL = process.env.BOOMI_INVENTORY_URL || "https://c01-usa-east-et.integrate-test.boomi.com/ws/rest/masterdealer/inventory/";
+const BOOMI_CUSTOMER_ID = process.env.BOOMI_CUSTOMER_ID || "";
+const BOOMI_BASIC_USERNAME = process.env.BOOMI_BASIC_USERNAME || "";
+const BOOMI_BASIC_PASSWORD = process.env.BOOMI_BASIC_PASSWORD || "";
+const BOOMI_EXTRA_AUTH = process.env.BOOMI_EXTRA_AUTH || "";
+const BOOMI_TLS_INSECURE = String(process.env.BOOMI_TLS_INSECURE || "false").toLowerCase() === "true";
 const sessions = new Map();
 
 const db = new DatabaseSync(dbPath);
@@ -27,6 +34,7 @@ function initDb() {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(schemaPath, "utf8"));
   ensureUsersColumns();
+  ensureLocationsSchema();
   ensureDeviceSchema();
   const countStmt = db.prepare("SELECT COUNT(*) AS count FROM categories");
   const count = Number(countStmt.get().count || 0);
@@ -95,6 +103,14 @@ function json(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function ensureLocationsSchema() {
+  const cols = db.prepare("PRAGMA table_info(locations)").all().map((c) => c.name);
+  if (!cols.includes("external_id")) {
+    db.exec("ALTER TABLE locations ADD COLUMN external_id TEXT");
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_external_id ON locations(external_id)");
+}
+
 function ensureDeviceSchema() {
   const cols = db.prepare("PRAGMA table_info(devices)").all().map((c) => c.name);
   if (!cols.includes("carrier")) db.exec("ALTER TABLE devices ADD COLUMN carrier TEXT");
@@ -103,12 +119,37 @@ function ensureDeviceSchema() {
   if (!cols.includes("color")) db.exec("ALTER TABLE devices ADD COLUMN color TEXT");
   if (!cols.includes("kit_type")) db.exec("ALTER TABLE devices ADD COLUMN kit_type TEXT");
   if (!cols.includes("product_notes")) db.exec("ALTER TABLE devices ADD COLUMN product_notes TEXT");
+  if (!cols.includes("source_external_id")) db.exec("ALTER TABLE devices ADD COLUMN source_external_id TEXT");
+  if (!cols.includes("source_sku")) db.exec("ALTER TABLE devices ADD COLUMN source_sku TEXT");
+  if (!cols.includes("currency_code")) db.exec("ALTER TABLE devices ADD COLUMN currency_code TEXT");
+  if (!cols.includes("country_code")) db.exec("ALTER TABLE devices ADD COLUMN country_code TEXT");
+  if (!cols.includes("effective_date")) db.exec("ALTER TABLE devices ADD COLUMN effective_date TEXT");
   db.exec(`
     CREATE TABLE IF NOT EXISTS device_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       image_url TEXT NOT NULL,
       sort_order INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS boomi_inventory_raw (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_external_id TEXT,
+      sku TEXT,
+      manufacturer TEXT,
+      model TEXT,
+      color TEXT,
+      grade TEXT,
+      storage_capacity TEXT,
+      price REAL,
+      quantity_on_hand INTEGER,
+      carrier TEXT,
+      currency_code TEXT,
+      country TEXT,
+      effective_date TEXT,
+      source_location_id TEXT,
+      synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
   db.exec(`
@@ -126,6 +167,8 @@ function ensureDeviceSchema() {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_source_external_id ON devices(source_external_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_boomi_raw_source_external_id ON boomi_inventory_raw(source_external_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_inventory_events_device ON inventory_events(device_id)");
 }
 
@@ -591,6 +634,332 @@ function getCategories() {
   return db.prepare("SELECT name FROM categories ORDER BY id").all().map((row) => row.name);
 }
 
+function clearCatalogData() {
+  const before = {
+    devices: Number(db.prepare("SELECT COUNT(*) AS count FROM devices").get().count || 0),
+    raw: Number(db.prepare("SELECT COUNT(*) AS count FROM boomi_inventory_raw").get().count || 0)
+  };
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.exec("DELETE FROM boomi_inventory_raw");
+    db.exec("DELETE FROM inventory_events");
+    db.exec("DELETE FROM devices");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return before;
+}
+
+function seedAdminTestDevicesPerCategory(countPerCategory) {
+  const categories = db.prepare("SELECT id, name FROM categories").all();
+  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
+  const locations = db.prepare("SELECT id FROM locations ORDER BY id").all().map((l) => l.id);
+  const manufacturerByName = new Map(
+    db.prepare("SELECT id, name FROM manufacturers").all().map((m) => [m.name, m.id])
+  );
+  const ensureManufacturer = db.prepare("INSERT INTO manufacturers (name) VALUES (?)");
+  const config = [
+    { name: "Smartphones", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["iPhone 15", "iPhone 15 Pro", "Galaxy S24", "Pixel 8"], storages: ["128GB", "256GB", "512GB"], colors: ["Black", "Blue", "Gray", "Silver"], basePrice: 420 },
+    { name: "Tablets", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["iPad Pro 11", "iPad Air 11", "Galaxy Tab S9", "Pixel Tablet"], storages: ["64GB", "128GB", "256GB"], colors: ["Gray", "Blue", "Silver"], basePrice: 260 },
+    { name: "Laptops", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["MacBook Air 13", "MacBook Pro 14", "Galaxy Book4 Pro", "ThinkPad X1 Carbon"], storages: ["256GB", "512GB", "1TB"], colors: ["Black", "Gray", "Silver"], basePrice: 740 },
+    { name: "Wearables", manufacturers: ["Apple", "Samsung", "Google"], models: ["Apple Watch Series 9", "Watch Ultra 2", "Galaxy Watch 6", "Pixel Watch 2"], storages: ["32GB", "64GB"], colors: ["Black", "Blue", "Silver"], basePrice: 180 },
+    { name: "Accessories", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["AirPods Pro", "Galaxy Buds2 Pro", "65W USB-C Charger", "Wireless Mouse"], storages: ["N/A"], colors: ["Black", "White", "Blue"], basePrice: 45 }
+  ];
+
+  const deviceInsert = db.prepare(`
+    INSERT INTO devices (
+      id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
+      image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+  const inventoryInsert = db.prepare(`
+    INSERT INTO device_inventory (device_id, location_id, quantity)
+    VALUES (?, ?, ?)
+  `);
+  const imageInsert = db.prepare(`
+    INSERT INTO device_images (device_id, image_url, sort_order)
+    VALUES (?, ?, ?)
+  `);
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.exec("DELETE FROM devices WHERE id LIKE 'admintest-%'");
+    for (const cfg of config) {
+      const categoryId = categoryByName.get(cfg.name);
+      if (!categoryId) continue;
+      for (let i = 0; i < countPerCategory; i += 1) {
+        const manufacturerName = cfg.manufacturers[i % cfg.manufacturers.length];
+        let manufacturerId = manufacturerByName.get(manufacturerName);
+        if (!manufacturerId) {
+          manufacturerId = Number(ensureManufacturer.run(manufacturerName).lastInsertRowid);
+          manufacturerByName.set(manufacturerName, manufacturerId);
+        }
+        const modelFamily = cfg.models[i % cfg.models.length];
+        const storage = cfg.storages[i % cfg.storages.length];
+        const color = cfg.colors[i % cfg.colors.length];
+        const defaultLocationId = locations[i % locations.length];
+        const id = `admintest-${cfg.name.toLowerCase()}-${String(i + 1).padStart(4, "0")}`;
+        const modelName = storage === "N/A" ? `${modelFamily} - ${color}` : `${modelFamily} ${storage} - ${color}`;
+        const price = Number((cfg.basePrice + (i % 15)).toFixed(2));
+        const carrier = cfg.name === "Accessories" ? "Bluetooth" : (cfg.name === "Laptops" || cfg.name === "Tablets" ? "WiFi" : "Unlocked");
+        const screenSize = cfg.name === "Wearables" ? "47 mm" : cfg.name === "Tablets" ? "11 inches" : cfg.name === "Laptops" ? "14 inches" : (cfg.name === "Accessories" ? "N/A" : "6.1 inches");
+        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
+
+        deviceInsert.run(
+          id,
+          manufacturerId,
+          categoryId,
+          modelName,
+          modelFamily,
+          storage,
+          "A",
+          price,
+          carrier,
+          screenSize,
+          "No",
+          color,
+          kitType,
+          `Admin test device for ${cfg.name}.`,
+          defaultLocationId
+        );
+
+        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
+          const qty = 10 + ((i * 7 + locIdx * 11) % 120);
+          inventoryInsert.run(id, locations[locIdx], qty);
+        }
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-1/900/700`, 1);
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-2/900/700`, 2);
+        imageInsert.run(id, `https://picsum.photos/seed/${id}-3/900/700`, 3);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    categoriesSeeded: config.length,
+    countPerCategory
+  };
+}
+
+function toTitleCase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (m) => m.toUpperCase());
+}
+
+function inferCategoryFromBoomi(row) {
+  const text = `${row.sku || ""} ${row.model || ""}`.toUpperCase();
+  if (/(AIRPODS|BUDS|CHARGER|CABLE|KEYBOARD|MOUSE|SPEAKER|HEADPHONE|POWER BANK|POWERBANK|ACCESSORY)/.test(text)) return "Accessories";
+  if (/(WATCH|ULTRA WATCH|SMARTWATCH)/.test(text)) return "Wearables";
+  if (/(IPAD|TABLET|TAB)/.test(text)) return "Tablets";
+  if (/(MACBOOK|LAPTOP|NOTEBOOK|THINKPAD|YOGA|CHROMEBOOK|GALAXY BOOK)/.test(text)) return "Laptops";
+  return "Smartphones";
+}
+
+function buildBoomiHeaders() {
+  const headers = {
+    customerid: BOOMI_CUSTOMER_ID,
+    Authorization: `Basic ${Buffer.from(`${BOOMI_BASIC_USERNAME}:${BOOMI_BASIC_PASSWORD}`).toString("base64")}`,
+    Accept: "application/json"
+  };
+  if (BOOMI_EXTRA_AUTH) {
+    headers["X-Authorization"] = BOOMI_EXTRA_AUTH;
+  }
+  return headers;
+}
+
+async function fetchBoomiInventory() {
+  if (!BOOMI_CUSTOMER_ID || !BOOMI_BASIC_USERNAME || !BOOMI_BASIC_PASSWORD) {
+    throw new Error("Boomi credentials are not configured. Set BOOMI_CUSTOMER_ID, BOOMI_BASIC_USERNAME, and BOOMI_BASIC_PASSWORD.");
+  }
+  const payload = await new Promise((resolve, reject) => {
+    const req = https.request(BOOMI_INVENTORY_URL, {
+      method: "GET",
+      headers: buildBoomiHeaders(),
+      rejectUnauthorized: !BOOMI_TLS_INSECURE
+    }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        const status = Number(res.statusCode || 0);
+        if (status < 200 || status >= 300) {
+          reject(new Error(`Boomi inventory request failed (${status}): ${String(data || "").slice(0, 300)}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(data || "[]"));
+        } catch {
+          reject(new Error("Boomi inventory response was not valid JSON."));
+        }
+      });
+    });
+    req.on("error", (error) => {
+      reject(new Error(`Boomi request error: ${error.message}`));
+    });
+    req.end();
+  });
+
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.inventory)) return payload.inventory;
+  if (Array.isArray(payload?.content)) return payload.content;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  throw new Error("Unexpected Boomi payload format.");
+}
+
+function syncBoomiInventoryRows(rows) {
+  const getCategoryId = db.prepare("SELECT id FROM categories WHERE name = ?");
+  const insertCategory = db.prepare("INSERT INTO categories (name) VALUES (?)");
+  const getManufacturerId = db.prepare("SELECT id FROM manufacturers WHERE name = ?");
+  const insertManufacturer = db.prepare("INSERT INTO manufacturers (name) VALUES (?)");
+  const getLocationByExternal = db.prepare("SELECT id FROM locations WHERE external_id = ?");
+  const insertLocation = db.prepare("INSERT INTO locations (name, external_id) VALUES (?, ?)");
+  const getDeviceBySourceId = db.prepare("SELECT id FROM devices WHERE source_external_id = ?");
+  const upsertDevice = db.prepare(`
+    INSERT INTO devices (
+      id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
+      image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active,
+      source_external_id, source_sku, currency_code, country_code, effective_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      manufacturer_id = excluded.manufacturer_id,
+      category_id = excluded.category_id,
+      model_name = excluded.model_name,
+      model_family = excluded.model_family,
+      storage_capacity = excluded.storage_capacity,
+      grade = excluded.grade,
+      base_price = excluded.base_price,
+      carrier = excluded.carrier,
+      color = excluded.color,
+      source_sku = excluded.source_sku,
+      currency_code = excluded.currency_code,
+      country_code = excluded.country_code,
+      effective_date = excluded.effective_date,
+      default_location_id = excluded.default_location_id,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  const upsertInventory = db.prepare(`
+    INSERT INTO device_inventory (device_id, location_id, quantity)
+    VALUES (?, ?, ?)
+    ON CONFLICT(device_id, location_id)
+    DO UPDATE SET quantity = excluded.quantity
+  `);
+  const insertImage = db.prepare(`
+    INSERT INTO device_images (device_id, image_url, sort_order) VALUES (?, ?, ?)
+  `);
+  const imageCountByDevice = db.prepare("SELECT COUNT(*) AS count FROM device_images WHERE device_id = ?");
+  const insertRaw = db.prepare(`
+    INSERT INTO boomi_inventory_raw (
+      source_external_id, sku, manufacturer, model, color, grade, storage_capacity,
+      price, quantity_on_hand, carrier, currency_code, country, effective_date, source_location_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  let processed = 0;
+  let skipped = 0;
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (const row of rows) {
+      const sourceExternalId = String(row.id || "").trim();
+      const sku = String(row.sku || "").trim();
+      const manufacturerRaw = String(row.manufacturer || "").trim();
+      const modelRaw = String(row.model || "").trim();
+      const colorRaw = String(row.color || "").trim();
+      const grade = String(row.grade || "A").trim() || "A";
+      const storage = String(row.storage_capacity || "N/A").trim() || "N/A";
+      const carrier = String(row.carrier || "Unlocked").trim() || "Unlocked";
+      const currencyCode = String(row.currency_code || "USD").trim() || "USD";
+      const countryCode = String(row.country || "US").trim() || "US";
+      const effectiveDate = String(row.effective_date || "").trim() || null;
+      const sourceLocationId = String(row.location_id || "").trim();
+      const price = Number(row.price || 0);
+      const quantity = Math.max(0, Number(row.quantity_on_hand || 0));
+
+      if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
+        skipped += 1;
+        continue;
+      }
+
+      insertRaw.run(
+        sourceExternalId, sku, manufacturerRaw, modelRaw, colorRaw || null, grade, storage, price, quantity, carrier,
+        currencyCode, countryCode, effectiveDate, sourceLocationId
+      );
+
+      const manufacturerName = toTitleCase(manufacturerRaw);
+      let manufacturerId = getManufacturerId.get(manufacturerName)?.id;
+      if (!manufacturerId) {
+        manufacturerId = Number(insertManufacturer.run(manufacturerName).lastInsertRowid);
+      }
+
+      const categoryName = inferCategoryFromBoomi(row);
+      let categoryId = getCategoryId.get(categoryName)?.id;
+      if (!categoryId) {
+        categoryId = Number(insertCategory.run(categoryName).lastInsertRowid);
+      }
+
+      let locationId = getLocationByExternal.get(sourceLocationId)?.id;
+      if (!locationId) {
+        locationId = Number(insertLocation.run(`${countryCode} Location ${sourceLocationId}`, sourceLocationId).lastInsertRowid);
+      }
+
+      const modelFamily = modelRaw;
+      const modelUpper = modelRaw.toUpperCase();
+      const storageUpper = storage.toUpperCase();
+      const hasStorageInModel = storageUpper !== "N/A" && modelUpper.includes(storageUpper);
+      const modelWithStorage = hasStorageInModel || storageUpper === "N/A" ? modelRaw : `${modelRaw} ${storage}`;
+      const modelName = colorRaw ? `${modelWithStorage} - ${toTitleCase(colorRaw)}` : modelWithStorage;
+      const existingDeviceId = getDeviceBySourceId.get(sourceExternalId)?.id;
+      const deviceId = existingDeviceId || `boomi-${sourceExternalId}`;
+
+      upsertDevice.run(
+        deviceId,
+        manufacturerId,
+        categoryId,
+        modelName,
+        modelFamily,
+        storage,
+        grade,
+        price,
+        carrier,
+        categoryName === "Wearables" ? "47 mm" : categoryName === "Tablets" ? "11 inches" : categoryName === "Laptops" ? "14 inches" : "6.1 inches",
+        "No",
+        colorRaw ? toTitleCase(colorRaw) : "N/A",
+        categoryName === "Accessories" ? "Retail Pack" : "Full Kit",
+        `Imported from Boomi inventory feed. SKU: ${sku || "N/A"}`,
+        locationId,
+        sourceExternalId,
+        sku || null,
+        currencyCode,
+        countryCode,
+        effectiveDate
+      );
+      upsertInventory.run(deviceId, locationId, quantity);
+
+      const imageCount = Number(imageCountByDevice.get(deviceId).count || 0);
+      if (imageCount === 0) {
+        insertImage.run(deviceId, `https://picsum.photos/seed/${deviceId}-1/900/700`, 1);
+        insertImage.run(deviceId, `https://picsum.photos/seed/${deviceId}-2/900/700`, 2);
+        insertImage.run(deviceId, `https://picsum.photos/seed/${deviceId}-3/900/700`, 3);
+      }
+
+      processed += 1;
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return { processed, skipped };
+}
+
 function isInteger(value) {
   return Number.isInteger(value);
 }
@@ -942,6 +1311,38 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(res, 200, getDevices(url));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/integrations/boomi/inventory/sync") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const rows = await fetchBoomiInventory();
+      const { processed, skipped } = syncBoomiInventoryRows(rows);
+      json(res, 200, {
+        ok: true,
+        fetched: rows.length,
+        processed,
+        skipped
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/catalog/clear") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const before = clearCatalogData();
+      json(res, 200, { ok: true, removedDevices: before.devices, removedRawRows: before.raw });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/catalog/seed-test") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      const countPerCategory = Math.max(1, Math.min(5000, Number(body.countPerCategory || 500)));
+      const result = seedAdminTestDevicesPerCategory(countPerCategory);
+      json(res, 200, { ok: true, ...result });
       return;
     }
 
