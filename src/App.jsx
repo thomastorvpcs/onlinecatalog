@@ -404,6 +404,7 @@ export default function App() {
   const [adminCatalogLoading, setAdminCatalogLoading] = useState(false);
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
+  const [expandedFilters, setExpandedFilters] = useState({});
 
   const companyKey = user ? user.company.toLowerCase().trim() : "anon";
   const requestsKey = `pcs.requests.${companyKey}`;
@@ -597,6 +598,7 @@ export default function App() {
     setProductsView("category");
     setSearch("");
     setFilters({});
+    setExpandedFilters({});
     setCategoryPage(1);
   };
 
@@ -867,7 +869,10 @@ export default function App() {
 
           {route === "products" && productsView === "home" && (
             <>
-              <h1 className="page-title">Products</h1>
+              <div className="products-home-top">
+                <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
+                <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
+              </div>
               <section className="panel home-hero">
                 <div><h2 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>Categories</h2><p className="muted" style={{ marginTop: 6 }}>Browse device classes and open a filtered catalog view.</p></div>
                 {productsLoading ? (
@@ -891,7 +896,6 @@ export default function App() {
 
           {route === "products" && productsView === "category" && (
             <>
-              <h1 className="page-title">Products</h1>
               <div className="products-shell">
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
@@ -899,10 +903,12 @@ export default function App() {
                     <FilterSkeleton />
                   ) : fields.map((f) => {
                     const options = filterOptions[f.key] || [];
+                    const isExpanded = expandedFilters[f.key] === true;
+                    const visibleOptions = isExpanded ? options : options.slice(0, 10);
                     return (
                       <div key={f.key} className="filter-row">
                         <h4>{f.title}</h4>
-                        {options.map((option) => (
+                        {visibleOptions.map((option) => (
                           <label key={option.value} className={`checkbox-item${option.isEnabled ? "" : " disabled"}`}>
                             <input
                               type="checkbox"
@@ -917,6 +923,15 @@ export default function App() {
                             <span>{option.value}</span>
                           </label>
                         ))}
+                        {options.length > 10 ? (
+                          <button
+                            type="button"
+                            className="filter-show-more-btn"
+                            onClick={() => setExpandedFilters((prev) => ({ ...prev, [f.key]: !isExpanded }))}
+                          >
+                            {isExpanded ? "Show less" : `Show more (${options.length - 10})`}
+                          </button>
+                        ) : null}
                       </div>
                     );
                   })}

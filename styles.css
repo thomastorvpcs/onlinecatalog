@@ -384,6 +384,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   cursor: not-allowed;
 }
 
+.filter-show-more-btn {
+  margin-top: 6px;
+  width: auto;
+  background: transparent;
+  border: none;
+  color: #256fd6;
+  padding: 0;
+  font-size: 0.82rem;
+  text-decoration: underline;
+}
+
 .filter-head {
   display: flex;
   justify-content: space-between;
@@ -462,6 +473,13 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .products-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.products-home-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1108,6 +1126,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   }
 
   .products-top { flex-direction: column; align-items: flex-start; }
+  .products-home-top { flex-direction: column; align-items: flex-start; }
   .right-actions {
     width: 100%;
     flex-wrap: wrap;
