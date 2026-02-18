@@ -99,6 +99,45 @@ paths:
                     $ref: "#/components/schemas/PublicUser"
         "401":
           $ref: "#/components/responses/Error401"
+  /api/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate refresh token and issue a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Refreshed tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginSuccessResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout and revoke current refresh token
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
   /api/auth/request-password-reset:
     post:
       tags: [Auth]
@@ -607,8 +646,24 @@ components:
       properties:
         token:
           type: string
+        refreshToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
         user:
           $ref: "#/components/schemas/PublicUser"
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
     LoginPendingApprovalResponse:
       type: object
       properties:

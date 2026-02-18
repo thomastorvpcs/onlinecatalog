@@ -1,6 +1,6 @@
-import { createServer } from "node:http";
+﻿import { createServer } from "node:http";
 import https from "node:https";
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,17 @@ const BOOMI_BASIC_USERNAME = process.env.BOOMI_BASIC_USERNAME || "";
 const BOOMI_BASIC_PASSWORD = process.env.BOOMI_BASIC_PASSWORD || "";
 const BOOMI_EXTRA_AUTH = process.env.BOOMI_EXTRA_AUTH || "";
 const BOOMI_TLS_INSECURE = String(process.env.BOOMI_TLS_INSECURE || "false").toLowerCase() === "true";
+const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
+const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
+const CORS_ALLOWED_ORIGINS = (() => {
+  const defaults = ["http://localhost:5173", "http://127.0.0.1:5173"];
+  const fromEnv = String(process.env.CORS_ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const origins = new Set([...defaults, ...fromEnv]);
+  if (process.env.RENDER_EXTERNAL_URL) {
+    origins.add(process.env.RENDER_EXTERNAL_URL);
+  }
+  return origins;
+})();
 const sessions = new Map();
 
 const db = new DatabaseSync(dbPath);
@@ -53,6 +64,19 @@ function ensureUsersColumns() {
   if (!cols.includes("reset_code_expires_at")) {
     db.exec("ALTER TABLE users ADD COLUMN reset_code_expires_at TEXT");
   }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      replaced_by_hash TEXT
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)");
 }
 
 function normalizeEmail(value) {
@@ -93,12 +117,29 @@ function splitCsv(value) {
     .filter(Boolean);
 }
 
-function json(res, statusCode, payload) {
+function getCorsHeaders(req) {
+  const requestOrigin = String(req.headers.origin || "").trim();
+  const allowAny = CORS_ALLOWED_ORIGINS.has("*");
+  let allowOrigin = "null";
+  if (allowAny) {
+    allowOrigin = "*";
+  } else if (requestOrigin && CORS_ALLOWED_ORIGINS.has(requestOrigin)) {
+    allowOrigin = requestOrigin;
+  } else if (!requestOrigin) {
+    allowOrigin = [...CORS_ALLOWED_ORIGINS][0] || "http://localhost:5173";
+  }
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    Vary: "Origin"
+  };
+}
+
+function json(req, res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    ...getCorsHeaders(req)
   });
   res.end(JSON.stringify(payload));
 }
@@ -457,25 +498,108 @@ function makePublicUser(row) {
 
 function createSession(user) {
   const token = randomBytes(32).toString("hex");
-  sessions.set(token, makePublicUser(user));
+  const expiresAt = Date.now() + (ACCESS_TOKEN_TTL_MINUTES * 60 * 1000);
+  sessions.set(token, {
+    user: makePublicUser(user),
+    expiresAt
+  });
+  return { token, expiresAt };
+}
+
+function hashRefreshToken(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function issueRefreshToken(userId) {
+  const refreshToken = randomBytes(48).toString("hex");
+  const tokenHash = hashRefreshToken(refreshToken);
+  const expiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+  db.prepare(`
+    INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+  `).run(userId, tokenHash, expiresAt);
+  return refreshToken;
+}
+
+function revokeRefreshToken(refreshToken, replacedByToken) {
+  const tokenHash = hashRefreshToken(refreshToken);
+  const replacedByHash = replacedByToken ? hashRefreshToken(replacedByToken) : null;
+  db.prepare(`
+    UPDATE refresh_tokens
+    SET revoked_at = CURRENT_TIMESTAMP,
+        replaced_by_hash = COALESCE(?, replaced_by_hash),
+        last_used_at = CURRENT_TIMESTAMP
+    WHERE token_hash = ?
+      AND revoked_at IS NULL
+  `).run(replacedByHash, tokenHash);
+}
+
+function rotateRefreshToken(refreshToken) {
+  const tokenHash = hashRefreshToken(refreshToken);
+  const row = db.prepare(`
+    SELECT id, user_id, expires_at, revoked_at
+    FROM refresh_tokens
+    WHERE token_hash = ?
+  `).get(tokenHash);
+  if (!row?.id) return null;
+  if (row.revoked_at) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    db.prepare("UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?").run(row.id);
+    return null;
+  }
+
+  const newRefreshToken = randomBytes(48).toString("hex");
+  const newRefreshHash = hashRefreshToken(newRefreshToken);
+  const newExpiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.prepare(`
+      UPDATE refresh_tokens
+      SET revoked_at = CURRENT_TIMESTAMP,
+          replaced_by_hash = ?,
+          last_used_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newRefreshHash, row.id);
+    db.prepare(`
+      INSERT INTO refresh_tokens (user_id, token_hash, expires_at, last_used_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(row.user_id, newRefreshHash, newExpiresAt);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { userId: row.user_id, refreshToken: newRefreshToken };
+}
+
+function getAuthToken(req) {
+  const auth = req.headers.authorization || "";
+  const [scheme, token] = auth.split(" ");
+  if (scheme !== "Bearer" || !token) return null;
   return token;
 }
 
 function getAuthUser(req) {
-  const auth = req.headers.authorization || "";
-  const [scheme, token] = auth.split(" ");
-  if (scheme !== "Bearer" || !token) return null;
-  return sessions.get(token) || null;
+  const token = getAuthToken(req);
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (!session.expiresAt || session.expiresAt < Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session.user || null;
 }
 
 function requireAdmin(req, res) {
   const user = getAuthUser(req);
   if (!user) {
-    json(res, 401, { error: "Unauthorized" });
+    json(req, res, 401, { error: "Unauthorized" });
     return null;
   }
   if (user.role !== "admin") {
-    json(res, 403, { error: "Forbidden" });
+    json(req, res, 403, { error: "Forbidden" });
     return null;
   }
   return user;
@@ -1032,12 +1156,12 @@ initDb();
 const server = createServer(async (req, res) => {
   try {
     if (!req.url) {
-      json(res, 400, { error: "Bad request" });
+      json(req, res, 400, { error: "Bad request" });
       return;
     }
 
     if (req.method === "OPTIONS") {
-      json(res, 204, {});
+      json(req, res, 204, {});
       return;
     }
 
@@ -1048,13 +1172,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, { ok: true });
+      json(req, res, 200, { ok: true });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/openapi.yaml") {
       if (!existsSync(openApiPath)) {
-        json(res, 404, { error: "OpenAPI spec not found." });
+        json(req, res, 404, { error: "OpenAPI spec not found." });
         return;
       }
       serveFile(res, openApiPath);
@@ -1099,25 +1223,25 @@ const server = createServer(async (req, res) => {
       const company = String(body.company || "").trim();
 
       if (!email || !company || !password) {
-        json(res, 400, { error: "Email, company and password are required." });
+        json(req, res, 400, { error: "Email, company and password are required." });
         return;
       }
 
       if (!isPasswordValid(password)) {
-        json(res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
+        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
         return;
       }
 
       const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
       if (existing?.id) {
-        json(res, 409, { error: "User already exists." });
+        json(req, res, 409, { error: "User already exists." });
         return;
       }
 
       const passwordHash = hashPassword(password);
       db.prepare("INSERT INTO users (email, company, role, password_hash, is_active) VALUES (?, ?, 'buyer', ?, 0)")
         .run(email, company, passwordHash);
-      json(res, 201, { ok: true });
+      json(req, res, 201, { ok: true });
       return;
     }
 
@@ -1130,16 +1254,58 @@ const server = createServer(async (req, res) => {
       ).get(email);
 
       if (!row || !verifyPassword(password, row.password_hash)) {
-        json(res, 401, { error: "Invalid email or password." });
+        json(req, res, 401, { error: "Invalid email or password." });
         return;
       }
       if (Number(row.is_active) !== 1) {
-        json(res, 200, { pendingApproval: true, email: row.email, company: row.company });
+        json(req, res, 200, { pendingApproval: true, email: row.email, company: row.company });
         return;
       }
 
-      const token = createSession(row);
-      json(res, 200, { token, user: makePublicUser(row) });
+      const issued = createSession(row);
+      const refreshToken = issueRefreshToken(row.id);
+      json(req, res, 200, { token: issued.token, refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/refresh") {
+      const body = await parseBody(req);
+      const refreshToken = String(body.refreshToken || "").trim();
+      if (!refreshToken) {
+        json(req, res, 400, { error: "Refresh token is required." });
+        return;
+      }
+
+      const rotated = rotateRefreshToken(refreshToken);
+      if (!rotated?.userId) {
+        json(req, res, 401, { error: "Invalid or expired refresh token." });
+        return;
+      }
+
+      const row = db.prepare(
+        "SELECT id, email, company, role, is_active, created_at FROM users WHERE id = ?"
+      ).get(rotated.userId);
+      if (!row?.id || Number(row.is_active) !== 1) {
+        json(req, res, 401, { error: "User is not active." });
+        return;
+      }
+
+      const issued = createSession(row);
+      json(req, res, 200, { token: issued.token, refreshToken: rotated.refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+      const token = getAuthToken(req);
+      if (token) {
+        sessions.delete(token);
+      }
+      const body = await parseBody(req);
+      const refreshToken = String(body.refreshToken || "").trim();
+      if (refreshToken) {
+        revokeRefreshToken(refreshToken);
+      }
+      json(req, res, 200, { ok: true });
       return;
     }
 
@@ -1147,7 +1313,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const email = normalizeEmail(body.email);
       if (!email) {
-        json(res, 400, { error: "Email is required." });
+        json(req, res, 400, { error: "Email is required." });
         return;
       }
       const row = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
@@ -1156,7 +1322,7 @@ const server = createServer(async (req, res) => {
         db.prepare("UPDATE users SET reset_code = ?, reset_code_expires_at = ? WHERE id = ?")
           .run(DEMO_RESET_CODE, expiresAt, row.id);
       }
-      json(res, 200, {
+      json(req, res, 200, {
         ok: true,
         message: "If the email exists, a verification code has been sent.",
         demoCode: DEMO_RESET_CODE
@@ -1170,15 +1336,15 @@ const server = createServer(async (req, res) => {
       const code = String(body.code || "").trim();
       const newPassword = String(body.newPassword || "");
       if (!email || !code || !newPassword) {
-        json(res, 400, { error: "Email, verification code and new password are required." });
+        json(req, res, 400, { error: "Email, verification code and new password are required." });
         return;
       }
       if (!/^\d{6}$/.test(code)) {
-        json(res, 400, { error: "Verification code must be 6 digits." });
+        json(req, res, 400, { error: "Verification code must be 6 digits." });
         return;
       }
       if (!isPasswordValid(newPassword)) {
-        json(res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
+        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
         return;
       }
 
@@ -1186,28 +1352,28 @@ const server = createServer(async (req, res) => {
         "SELECT id, reset_code, reset_code_expires_at FROM users WHERE email = ?"
       ).get(email);
       if (!row?.id || !row.reset_code || row.reset_code !== code) {
-        json(res, 400, { error: "Invalid verification code." });
+        json(req, res, 400, { error: "Invalid verification code." });
         return;
       }
       if (!row.reset_code_expires_at || new Date(row.reset_code_expires_at).getTime() < Date.now()) {
-        json(res, 400, { error: "Verification code expired. Please request a new code." });
+        json(req, res, 400, { error: "Verification code expired. Please request a new code." });
         return;
       }
 
       const passwordHash = hashPassword(newPassword);
       db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?")
         .run(passwordHash, row.id);
-      json(res, 200, { ok: true });
+      json(req, res, 200, { ok: true });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/auth/me") {
       const user = getAuthUser(req);
       if (!user) {
-        json(res, 401, { error: "Unauthorized" });
+        json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(res, 200, { user });
+      json(req, res, 200, { user });
       return;
     }
 
@@ -1217,7 +1383,7 @@ const server = createServer(async (req, res) => {
       const users = db.prepare(
         "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
       ).all().map(makePublicUser);
-      json(res, 200, users);
+      json(req, res, 200, users);
       return;
     }
 
@@ -1232,16 +1398,16 @@ const server = createServer(async (req, res) => {
       const isAdmin = body.isAdmin === true;
 
       if (!email || !company || !password) {
-        json(res, 400, { error: "Email, company and password are required." });
+        json(req, res, 400, { error: "Email, company and password are required." });
         return;
       }
       if (!isPasswordValid(password)) {
-        json(res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
+        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
         return;
       }
       const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
       if (existing?.id) {
-        json(res, 409, { error: "User already exists." });
+        json(req, res, 409, { error: "User already exists." });
         return;
       }
 
@@ -1249,7 +1415,7 @@ const server = createServer(async (req, res) => {
       const hash = hashPassword(password);
       db.prepare("INSERT INTO users (email, company, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?)")
         .run(email, company, role, hash, isActive ? 1 : 0);
-      json(res, 201, { ok: true });
+      json(req, res, 201, { ok: true });
       return;
     }
 
@@ -1271,12 +1437,12 @@ const server = createServer(async (req, res) => {
         params.push(body.isAdmin ? "admin" : "buyer");
       }
       if (!updates.length) {
-        json(res, 400, { error: "No valid fields to update." });
+        json(req, res, 400, { error: "No valid fields to update." });
         return;
       }
       params.push(userId);
       db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...params);
-      json(res, 200, { ok: true });
+      json(req, res, 200, { ok: true });
       return;
     }
 
@@ -1286,31 +1452,31 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const userId = Number(userDeleteMatch[1]);
       if (user.id === userId) {
-        json(res, 400, { error: "You cannot delete your own admin user." });
+        json(req, res, 400, { error: "You cannot delete your own admin user." });
         return;
       }
       db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-      json(res, 200, { ok: true });
+      json(req, res, 200, { ok: true });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/categories") {
       const user = getAuthUser(req);
       if (!user) {
-        json(res, 401, { error: "Unauthorized" });
+        json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(res, 200, getCategories());
+      json(req, res, 200, getCategories());
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/devices") {
       const user = getAuthUser(req);
       if (!user) {
-        json(res, 401, { error: "Unauthorized" });
+        json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(res, 200, getDevices(url));
+      json(req, res, 200, getDevices(url));
       return;
     }
 
@@ -1319,7 +1485,7 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const rows = await fetchBoomiInventory();
       const { processed, skipped } = syncBoomiInventoryRows(rows);
-      json(res, 200, {
+      json(req, res, 200, {
         ok: true,
         fetched: rows.length,
         processed,
@@ -1332,7 +1498,7 @@ const server = createServer(async (req, res) => {
       const user = requireAdmin(req, res);
       if (!user) return;
       const before = clearCatalogData();
-      json(res, 200, { ok: true, removedDevices: before.devices, removedRawRows: before.raw });
+      json(req, res, 200, { ok: true, removedDevices: before.devices, removedRawRows: before.raw });
       return;
     }
 
@@ -1342,7 +1508,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const countPerCategory = Math.max(1, Math.min(5000, Number(body.countPerCategory || 500)));
       const result = seedAdminTestDevicesPerCategory(countPerCategory);
-      json(res, 200, { ok: true, ...result });
+      json(req, res, 200, { ok: true, ...result });
       return;
     }
 
@@ -1353,10 +1519,10 @@ const server = createServer(async (req, res) => {
       const deviceId = decodeURIComponent(inventoryByDeviceMatch[1]);
       const inventory = getInventoryByDeviceId(deviceId);
       if (!inventory) {
-        json(res, 404, { error: "Device not found." });
+        json(req, res, 404, { error: "Device not found." });
         return;
       }
-      json(res, 200, inventory);
+      json(req, res, 200, inventory);
       return;
     }
 
@@ -1371,15 +1537,15 @@ const server = createServer(async (req, res) => {
       const reason = String(body.reason || "").trim();
 
       if (!isInteger(quantity) || quantity < 0) {
-        json(res, 400, { error: "Quantity must be an integer >= 0." });
+        json(req, res, 400, { error: "Quantity must be an integer >= 0." });
         return;
       }
       if (!getDeviceExists(deviceId)) {
-        json(res, 404, { error: "Device not found." });
+        json(req, res, 404, { error: "Device not found." });
         return;
       }
       if (!getLocationExists(locationId)) {
-        json(res, 404, { error: "Location not found." });
+        json(req, res, 404, { error: "Location not found." });
         return;
       }
 
@@ -1396,7 +1562,7 @@ const server = createServer(async (req, res) => {
         changedByUserId: user.id
       });
 
-      json(res, 200, { ok: true, deviceId, locationId, quantity });
+      json(req, res, 200, { ok: true, deviceId, locationId, quantity });
       return;
     }
 
@@ -1411,22 +1577,22 @@ const server = createServer(async (req, res) => {
       const reason = String(body.reason || "").trim();
 
       if (!isInteger(delta) || delta === 0) {
-        json(res, 400, { error: "Delta must be a non-zero integer." });
+        json(req, res, 400, { error: "Delta must be a non-zero integer." });
         return;
       }
       if (!getDeviceExists(deviceId)) {
-        json(res, 404, { error: "Device not found." });
+        json(req, res, 404, { error: "Device not found." });
         return;
       }
       if (!getLocationExists(locationId)) {
-        json(res, 404, { error: "Location not found." });
+        json(req, res, 404, { error: "Location not found." });
         return;
       }
 
       const previousQuantity = getInventoryQuantity(deviceId, locationId);
       const newQuantity = previousQuantity + delta;
       if (newQuantity < 0) {
-        json(res, 400, { error: "Adjustment would result in negative quantity." });
+        json(req, res, 400, { error: "Adjustment would result in negative quantity." });
         return;
       }
 
@@ -1442,7 +1608,7 @@ const server = createServer(async (req, res) => {
         changedByUserId: user.id
       });
 
-      json(res, 200, { ok: true, deviceId, locationId, previousQuantity, newQuantity, delta });
+      json(req, res, 200, { ok: true, deviceId, locationId, previousQuantity, newQuantity, delta });
       return;
     }
 
@@ -1455,11 +1621,11 @@ const server = createServer(async (req, res) => {
       const updates = Array.isArray(body.updates) ? body.updates : [];
 
       if (!["set", "adjust"].includes(mode)) {
-        json(res, 400, { error: "Mode must be 'set' or 'adjust'." });
+        json(req, res, 400, { error: "Mode must be 'set' or 'adjust'." });
         return;
       }
       if (!updates.length) {
-        json(res, 400, { error: "Updates array is required." });
+        json(req, res, 400, { error: "Updates array is required." });
         return;
       }
 
@@ -1500,7 +1666,7 @@ const server = createServer(async (req, res) => {
         }
       }
       if (errors.length) {
-        json(res, 400, { error: "Validation failed", details: errors });
+        json(req, res, 400, { error: "Validation failed", details: errors });
         return;
       }
 
@@ -1545,16 +1711,17 @@ const server = createServer(async (req, res) => {
         throw error;
       }
 
-      json(res, 200, { ok: true, processed: updates.length, failed: 0 });
+      json(req, res, 200, { ok: true, processed: updates.length, failed: 0 });
       return;
     }
 
-    json(res, 404, { error: "Not found" });
+    json(req, res, 404, { error: "Not found" });
   } catch (error) {
-    json(res, 500, { error: error.message || "Internal server error" });
+    json(req, res, 500, { error: error.message || "Internal server error" });
   }
 });
 
 server.listen(port, () => {
   console.log(`API running on http://127.0.0.1:${port}`);
 });
+

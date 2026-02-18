@@ -71,6 +71,10 @@ const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostnam
 const DEMO_VERIFICATION_CODE = "123456";
 const DEMO_USERS_KEY = "pcs.demo.users";
 const DEMO_SESSIONS_KEY = "pcs.demo.sessions";
+const DEMO_REFRESH_TOKENS_KEY = "pcs.demo.refreshTokens";
+const DEMO_ACCESS_TTL_MS = 30 * 60 * 1000;
+const DEMO_REFRESH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const SESSION_WARNING_MS = 5 * 60 * 1000;
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -97,6 +101,10 @@ function initDemoState() {
   if (!sessions) {
     writeJson(localStorage, DEMO_SESSIONS_KEY, {});
   }
+  const refreshTokens = readJson(localStorage, DEMO_REFRESH_TOKENS_KEY, null);
+  if (!refreshTokens) {
+    writeJson(localStorage, DEMO_REFRESH_TOKENS_KEY, {});
+  }
 }
 
 function getDemoUsers() {
@@ -115,6 +123,15 @@ function getDemoSessions() {
 
 function setDemoSessions(sessions) {
   writeJson(localStorage, DEMO_SESSIONS_KEY, sessions);
+}
+
+function getDemoRefreshTokens() {
+  initDemoState();
+  return readJson(localStorage, DEMO_REFRESH_TOKENS_KEY, {});
+}
+
+function setDemoRefreshTokens(tokens) {
+  writeJson(localStorage, DEMO_REFRESH_TOKENS_KEY, tokens);
 }
 
 function makeDemoPublicUser(user) {
@@ -141,11 +158,19 @@ async function demoApiRequest(path, options = {}) {
   const pathname = url.pathname;
   const users = getDemoUsers();
   const sessions = getDemoSessions();
-  const authUserId = token ? sessions[token] : null;
+  const refreshTokens = getDemoRefreshTokens();
+  const session = token ? sessions[token] : null;
+  const authUserId = session?.userId || null;
   const authUser = authUserId ? users.find((u) => u.id === authUserId) : null;
 
   const requireAuth = () => {
-    if (!authUser) throwApiError("Unauthorized", 401);
+    if (!authUser || !session || Number(session.expiresAt || 0) < Date.now()) {
+      if (token && sessions[token]) {
+        delete sessions[token];
+        setDemoSessions(sessions);
+      }
+      throwApiError("Unauthorized", 401);
+    }
     return authUser;
   };
   const requireAdmin = () => {
@@ -189,9 +214,50 @@ async function demoApiRequest(path, options = {}) {
     if (!user) throwApiError("Invalid email or password.", 401);
     if (!user.isActive) return { pendingApproval: true, email: user.email, company: user.company };
     const nextToken = crypto.randomUUID();
-    sessions[nextToken] = user.id;
+    const nextRefreshToken = crypto.randomUUID();
+    const accessExpiresAt = Date.now() + DEMO_ACCESS_TTL_MS;
+    sessions[nextToken] = { userId: user.id, expiresAt: accessExpiresAt };
+    refreshTokens[nextRefreshToken] = { userId: user.id, expiresAt: Date.now() + DEMO_REFRESH_TTL_MS };
     setDemoSessions(sessions);
-    return { token: nextToken, user: makeDemoPublicUser(user) };
+    setDemoRefreshTokens(refreshTokens);
+    return { token: nextToken, refreshToken: nextRefreshToken, accessTokenExpiresAt: new Date(accessExpiresAt).toISOString(), user: makeDemoPublicUser(user) };
+  }
+
+  if (method === "POST" && pathname === "/api/auth/refresh") {
+    const providedRefreshToken = String(body.refreshToken || "").trim();
+    if (!providedRefreshToken) throwApiError("Refresh token is required.", 400);
+    const entry = refreshTokens[providedRefreshToken];
+    if (!entry || Number(entry.expiresAt || 0) < Date.now()) {
+      if (entry) {
+        delete refreshTokens[providedRefreshToken];
+        setDemoRefreshTokens(refreshTokens);
+      }
+      throwApiError("Invalid or expired refresh token.", 401);
+    }
+    const user = users.find((u) => u.id === entry.userId && u.isActive);
+    if (!user) throwApiError("Unauthorized", 401);
+    delete refreshTokens[providedRefreshToken];
+    const nextRefreshToken = crypto.randomUUID();
+    const nextToken = crypto.randomUUID();
+    refreshTokens[nextRefreshToken] = { userId: user.id, expiresAt: Date.now() + DEMO_REFRESH_TTL_MS };
+    const accessExpiresAt = Date.now() + DEMO_ACCESS_TTL_MS;
+    sessions[nextToken] = { userId: user.id, expiresAt: accessExpiresAt };
+    setDemoRefreshTokens(refreshTokens);
+    setDemoSessions(sessions);
+    return { token: nextToken, refreshToken: nextRefreshToken, accessTokenExpiresAt: new Date(accessExpiresAt).toISOString(), user: makeDemoPublicUser(user) };
+  }
+
+  if (method === "POST" && pathname === "/api/auth/logout") {
+    if (token && sessions[token]) {
+      delete sessions[token];
+      setDemoSessions(sessions);
+    }
+    const providedRefreshToken = String(body.refreshToken || "").trim();
+    if (providedRefreshToken && refreshTokens[providedRefreshToken]) {
+      delete refreshTokens[providedRefreshToken];
+      setDemoRefreshTokens(refreshTokens);
+    }
+    return { ok: true };
   }
 
   if (method === "POST" && pathname === "/api/auth/request-password-reset") {
@@ -322,7 +388,7 @@ async function apiRequest(path, options = {}) {
   if (IS_GITHUB_PAGES) {
     return demoApiRequest(path, options);
   }
-  const { token, method = "GET", body } = options;
+  const { token, method = "GET", body, refreshToken, onAuthUpdate, onAuthFail, skipRefresh = false } = options;
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -332,6 +398,29 @@ async function apiRequest(path, options = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined
   });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && !skipRefresh && refreshToken && path !== "/api/auth/refresh" && path !== "/api/auth/login" && path !== "/api/auth/register") {
+    try {
+      const refreshed = await apiRequest("/api/auth/refresh", {
+        method: "POST",
+        body: { refreshToken },
+        skipRefresh: true
+      });
+      if (typeof onAuthUpdate === "function") {
+        onAuthUpdate(refreshed);
+      }
+      return apiRequest(path, {
+        ...options,
+        token: refreshed.token,
+        refreshToken: refreshed.refreshToken,
+        skipRefresh: true
+      });
+    } catch (refreshErr) {
+      if (typeof onAuthFail === "function") {
+        onAuthFail();
+      }
+      throw refreshErr;
+    }
+  }
   if (!response.ok) {
     const err = new Error(payload.error || `Request failed (${response.status})`);
     err.code = payload.code;
@@ -366,6 +455,10 @@ function PhoneNavIcon() {
 export default function App() {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
+  const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem("pcs.refreshToken") || "");
+  const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState(() => localStorage.getItem("pcs.accessTokenExpiresAt") || "");
+  const [sessionTimeLeftMs, setSessionTimeLeftMs] = useState(null);
+  const [refreshingSession, setRefreshingSession] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [products, setProducts] = useState(productsSeed.map(normalizeDevice));
@@ -410,23 +503,70 @@ export default function App() {
   const requestsKey = `pcs.requests.${companyKey}`;
   const requests = useMemo(() => readJson(localStorage, requestsKey, []), [requestsKey, cart, requestStatusFilter, requestSearch, activeRequestId]);
 
+  const applyAuthTokens = (data) => {
+    if (!data?.token || !data?.refreshToken) return;
+    localStorage.setItem("pcs.authToken", data.token);
+    localStorage.setItem("pcs.refreshToken", data.refreshToken);
+    if (data.accessTokenExpiresAt) {
+      localStorage.setItem("pcs.accessTokenExpiresAt", data.accessTokenExpiresAt);
+      setAccessTokenExpiresAt(data.accessTokenExpiresAt);
+    }
+    setAuthToken(data.token);
+    setRefreshToken(data.refreshToken);
+    if (data.user) {
+      setUser(data.user);
+    }
+  };
+
+  const clearAuthState = () => {
+    localStorage.removeItem("pcs.authToken");
+    localStorage.removeItem("pcs.refreshToken");
+    localStorage.removeItem("pcs.accessTokenExpiresAt");
+    setAuthToken("");
+    setRefreshToken("");
+    setAccessTokenExpiresAt("");
+    setSessionTimeLeftMs(null);
+    setUser(null);
+  };
+
+  const refreshSessionNow = async () => {
+    if (!refreshToken || refreshingSession) return;
+    try {
+      setRefreshingSession(true);
+      const refreshed = await apiRequest("/api/auth/refresh", {
+        method: "POST",
+        body: { refreshToken },
+        skipRefresh: true
+      });
+      applyAuthTokens(refreshed);
+    } catch {
+      clearAuthState();
+    } finally {
+      setRefreshingSession(false);
+    }
+  };
+
   useEffect(() => {
     let ignore = false;
     async function loadMe() {
-      if (!authToken) {
+      if (!authToken && !refreshToken) {
         setAuthLoading(false);
         setUser(null);
         return;
       }
       try {
-        const data = await apiRequest("/api/auth/me", { token: authToken });
+        const data = await apiRequest("/api/auth/me", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
         if (!ignore) {
           setUser(data.user);
         }
       } catch {
-        localStorage.removeItem("pcs.authToken");
+        clearAuthState();
         if (!ignore) {
-          setAuthToken("");
           setUser(null);
         }
       } finally {
@@ -439,7 +579,21 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken]);
+  }, [authToken, refreshToken]);
+
+  useEffect(() => {
+    if (!accessTokenExpiresAt) {
+      setSessionTimeLeftMs(null);
+      return;
+    }
+    const update = () => {
+      const ms = new Date(accessTokenExpiresAt).getTime() - Date.now();
+      setSessionTimeLeftMs(ms);
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [accessTokenExpiresAt]);
 
   useEffect(() => {
     let ignore = false;
@@ -451,7 +605,12 @@ export default function App() {
       try {
         setProductsLoading(true);
         setProductsError("");
-        const payload = await apiRequest("/api/devices", { token: authToken });
+        const payload = await apiRequest("/api/devices", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
         if (!Array.isArray(payload)) {
           throw new Error("Invalid payload");
         }
@@ -473,7 +632,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, user]);
+  }, [authToken, refreshToken, user]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -504,7 +663,12 @@ export default function App() {
         if (filters.modelFamily?.length) qs.set("modelFamily", filters.modelFamily.join(","));
         if (filters.region?.length) qs.set("region", filters.region.join(","));
         if (filters.storage?.length) qs.set("storage", filters.storage.join(","));
-        const payload = await apiRequest(`/api/devices?${qs.toString()}`, { token: authToken });
+        const payload = await apiRequest(`/api/devices?${qs.toString()}`, {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
         if (!payload || !Array.isArray(payload.items)) {
           throw new Error("Invalid paged payload");
         }
@@ -528,7 +692,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, productsView, selectedCategory, search, filters, categoryPage]);
+  }, [authToken, refreshToken, productsView, selectedCategory, search, filters, categoryPage]);
 
   useEffect(() => {
     setActiveImageIndex(0);
@@ -541,7 +705,12 @@ export default function App() {
       try {
         setUsersLoading(true);
         setUsersError("");
-        const payload = await apiRequest("/api/users", { token: authToken });
+        const payload = await apiRequest("/api/users", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
         if (!ignore) {
           setUsers(payload);
         }
@@ -559,14 +728,19 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, route, user]);
+  }, [authToken, refreshToken, route, user]);
 
   const refreshUsers = async () => {
     if (!user || user.role !== "admin") return;
     setUsersLoading(true);
     setUsersError("");
     try {
-      const payload = await apiRequest("/api/users", { token: authToken });
+      const payload = await apiRequest("/api/users", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
       setUsers(payload);
     } catch (error) {
       setUsersError(error.message);
@@ -621,9 +795,7 @@ export default function App() {
     if (data.pendingApproval) {
       return { pendingApproval: true, email: data.email };
     }
-    localStorage.setItem("pcs.authToken", data.token);
-    setAuthToken(data.token);
-    setUser(data.user);
+    applyAuthTokens(data);
     return { pendingApproval: false };
   };
 
@@ -640,9 +812,13 @@ export default function App() {
   };
 
   const logout = () => {
-    localStorage.removeItem("pcs.authToken");
-    setAuthToken("");
-    setUser(null);
+    apiRequest("/api/auth/logout", {
+      method: "POST",
+      token: authToken,
+      body: { refreshToken },
+      skipRefresh: true
+    }).catch(() => {});
+    clearAuthState();
     setRoute("products");
   };
 
@@ -655,6 +831,9 @@ export default function App() {
       await apiRequest("/api/users", {
         method: "POST",
         token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
         body: {
           email: newUserEmail.trim(),
           company: newUserCompany.trim(),
@@ -683,6 +862,9 @@ export default function App() {
       await apiRequest(`/api/users/${targetUser.id}`, {
         method: "PATCH",
         token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
         body: { [field]: value }
       });
       await refreshUsers();
@@ -699,7 +881,10 @@ export default function App() {
       setUsersError("");
       await apiRequest(`/api/users/${targetUser.id}`, {
         method: "DELETE",
-        token: authToken
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
       });
       await refreshUsers();
     } catch (error) {
@@ -760,7 +945,10 @@ export default function App() {
       setSyncResult(null);
       const payload = await apiRequest("/api/integrations/boomi/inventory/sync", {
         method: "POST",
-        token: authToken
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
       });
       setSyncResult(payload);
     } catch (error) {
@@ -777,7 +965,10 @@ export default function App() {
       setAdminCatalogResult("");
       const payload = await apiRequest("/api/admin/catalog/clear", {
         method: "POST",
-        token: authToken
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
       });
       setAdminCatalogResult(`Catalog cleared. Removed ${Number(payload.removedDevices || 0)} devices and ${Number(payload.removedRawRows || 0)} raw sync rows.`);
     } catch (error) {
@@ -795,6 +986,9 @@ export default function App() {
       const payload = await apiRequest("/api/admin/catalog/seed-test", {
         method: "POST",
         token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
         body: { countPerCategory: 500 }
       });
       setAdminCatalogResult(`Seed complete. Added ${Number(payload.countPerCategory || 0)} test devices per category (${Number(payload.categoriesSeeded || 0)} categories).`);
@@ -839,6 +1033,8 @@ export default function App() {
   const canCarousel = modalImages.length > 1;
   const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
   const modalProductUnavailable = activeProduct ? activeProduct.available < 1 : false;
+  const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
+  const sessionMinutesLeft = showSessionWarning ? Math.ceil(sessionTimeLeftMs / 60000) : 0;
 
   return (
     <div className="app-shell">
@@ -859,6 +1055,12 @@ export default function App() {
           <div className="brand-wrap"><span className="dot" /><strong>Gadget Crazy</strong></div>
           <div className="top-actions"><span className="muted">{user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
         </header>
+        {showSessionWarning ? (
+          <div className="session-warning">
+            <span>Your session expires in about {sessionMinutesLeft} minute{sessionMinutesLeft === 1 ? "" : "s"}.</span>
+            <button type="button" onClick={refreshSessionNow} disabled={refreshingSession}>{refreshingSession ? "Refreshing..." : "Stay signed in"}</button>
+          </div>
+        ) : null}
 
         <main className="view">
           {route === "products" && productsError && (

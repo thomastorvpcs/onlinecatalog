@@ -33,6 +33,8 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - Create user: `POST /api/auth/register`
   - Sign in: `POST /api/auth/login`
   - Current user: `GET /api/auth/me`
+  - Refresh token: `POST /api/auth/refresh`
+  - Logout: `POST /api/auth/logout`
   - Admin users list: `GET /api/users`
   - Seeded admin account:
     - Email: `thomas.torvund@pcsww.com`
@@ -47,6 +49,10 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - `sessionStorage` for in-session request builder state
   - `localStorage` for user session, saved filters, and submitted requests
 - In production, request/auth persistence should move fully server-side.
+- Token/session settings:
+  - `ACCESS_TOKEN_TTL_MINUTES` (default `30`)
+  - `REFRESH_TOKEN_TTL_DAYS` (default `14`)
+  - `CORS_ALLOWED_ORIGINS` (comma-separated allowlist)
 
 ## Run
 1. Start API:
