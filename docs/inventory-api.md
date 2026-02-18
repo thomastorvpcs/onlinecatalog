@@ -17,6 +17,68 @@ Authorization: Bearer <token>
 Role requirement:
 - `admin` only (recommended)
 
+## NetSuite/Boomi Sync
+Use this endpoint to fetch inventory from Boomi and map it into local tables (`devices`, `device_inventory`, `locations`).
+
+- Method: `POST`
+- Path: `/api/integrations/boomi/inventory/sync`
+- Auth: `admin` bearer token required
+
+### Response
+```json
+{
+  "ok": true,
+  "fetched": 1250,
+  "processed": 1247,
+  "skipped": 3
+}
+```
+
+### Environment variables used by backend
+- `BOOMI_INVENTORY_URL`
+- `BOOMI_CUSTOMER_ID`
+- `BOOMI_BASIC_USERNAME`
+- `BOOMI_BASIC_PASSWORD`
+- `BOOMI_EXTRA_AUTH` (optional; sent as `X-Authorization`)
+- `BOOMI_TLS_INSECURE` (`true`/`false`, default `true` in this test build for self-signed cert chains)
+
+## Admin Catalog Tools
+
+### Clear catalog data
+- Method: `POST`
+- Path: `/api/admin/catalog/clear`
+- Auth: admin
+
+Response example:
+```json
+{
+  "ok": true,
+  "removedDevices": 5200,
+  "removedRawRows": 190
+}
+```
+
+### Seed test catalog devices
+- Method: `POST`
+- Path: `/api/admin/catalog/seed-test`
+- Auth: admin
+
+Request body (optional):
+```json
+{
+  "countPerCategory": 500
+}
+```
+
+Response example:
+```json
+{
+  "ok": true,
+  "categoriesSeeded": 5,
+  "countPerCategory": 500
+}
+```
+
 ---
 
 ## 1) Get Inventory for a Device

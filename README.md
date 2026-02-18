@@ -80,4 +80,17 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - Raw spec endpoint: `/api/openapi.yaml`
 - Swagger UI endpoint: `/api/docs`
 
+## Boomi Inventory Sync
+- Trigger sync (admin): `POST /api/integrations/boomi/inventory/sync`
+- Config via env vars:
+  - `BOOMI_INVENTORY_URL`
+  - `BOOMI_CUSTOMER_ID`
+  - `BOOMI_BASIC_USERNAME`
+  - `BOOMI_BASIC_PASSWORD`
+  - `BOOMI_EXTRA_AUTH` (optional; sent as `X-Authorization`)
+  - `BOOMI_TLS_INSECURE` (`true`/`false`, default `true` for local test endpoint cert chain)
+- Admin catalog utility endpoints:
+  - Clear catalog: `POST /api/admin/catalog/clear`
+  - Seed test devices: `POST /api/admin/catalog/seed-test` (defaults to 500 per category)
+
 

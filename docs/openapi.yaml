@@ -448,6 +448,69 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
+  /api/integrations/boomi/inventory/sync:
+    post:
+      tags: [Inventory]
+      summary: Pull inventory feed from Boomi/NetSuite and map into local DB (admin only)
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BoomiSyncResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "500":
+          description: Upstream sync failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/admin/catalog/clear:
+    post:
+      tags: [Inventory]
+      summary: Clear catalog device data (admin only)
+      responses:
+        "200":
+          description: Catalog cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearCatalogResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+  /api/admin/catalog/seed-test:
+    post:
+      tags: [Inventory]
+      summary: Seed synthetic test devices by category (admin only)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                countPerCategory:
+                  type: integer
+                  minimum: 1
+                  maximum: 5000
+                  default: 500
+      responses:
+        "200":
+          description: Seed complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeedCatalogResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
 components:
   securitySchemes:
     bearerAuth:
@@ -766,4 +829,33 @@ components:
         processed:
           type: integer
         failed:
+          type: integer
+    BoomiSyncResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        fetched:
+          type: integer
+        processed:
+          type: integer
+        skipped:
+          type: integer
+    ClearCatalogResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        removedDevices:
+          type: integer
+        removedRawRows:
+          type: integer
+    SeedCatalogResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        categoriesSeeded:
+          type: integer
+        countPerCategory:
           type: integer
