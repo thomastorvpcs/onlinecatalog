@@ -699,6 +699,89 @@ export default function App() {
   }, [activeProduct?.id]);
 
   useEffect(() => {
+    if (productsView !== "home") return;
+
+    const rows = Array.from(document.querySelectorAll(".home-products-grid"));
+    const cleanups = [];
+
+    rows.forEach((row) => {
+      let isDragging = false;
+      let didDrag = false;
+      let startX = 0;
+      let startScrollLeft = 0;
+      let activePointerId = null;
+
+      const onPointerDown = (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest("button, input, a, textarea, label")) return;
+        isDragging = true;
+        didDrag = false;
+        startX = e.clientX;
+        startScrollLeft = row.scrollLeft;
+        activePointerId = e.pointerId;
+        row.classList.add("is-dragging");
+        try {
+          row.setPointerCapture(activePointerId);
+        } catch {
+          // no-op for browsers that do not support pointer capture here
+        }
+      };
+
+      const onPointerMove = (e) => {
+        if (!isDragging) return;
+        const deltaX = e.clientX - startX;
+        if (Math.abs(deltaX) > 3) {
+          didDrag = true;
+        }
+        row.scrollLeft = startScrollLeft - deltaX;
+        if (didDrag) {
+          e.preventDefault();
+        }
+      };
+
+      const stopDragging = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        row.classList.remove("is-dragging");
+        if (activePointerId !== null) {
+          try {
+            row.releasePointerCapture(activePointerId);
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      const onClickCapture = (e) => {
+        if (!didDrag) return;
+        e.preventDefault();
+        e.stopPropagation();
+        didDrag = false;
+      };
+
+      row.addEventListener("pointerdown", onPointerDown);
+      row.addEventListener("pointermove", onPointerMove);
+      row.addEventListener("pointerup", stopDragging);
+      row.addEventListener("pointercancel", stopDragging);
+      row.addEventListener("pointerleave", stopDragging);
+      row.addEventListener("click", onClickCapture, true);
+
+      cleanups.push(() => {
+        row.removeEventListener("pointerdown", onPointerDown);
+        row.removeEventListener("pointermove", onPointerMove);
+        row.removeEventListener("pointerup", stopDragging);
+        row.removeEventListener("pointercancel", stopDragging);
+        row.removeEventListener("pointerleave", stopDragging);
+        row.removeEventListener("click", onClickCapture, true);
+      });
+    });
+
+    return () => {
+      cleanups.forEach((fn) => fn());
+    };
+  }, [productsView, productsLoading, products]);
+
+  useEffect(() => {
     let ignore = false;
     async function loadUsers() {
       if (!user || user.role !== "admin" || route !== "users") return;
@@ -1548,12 +1631,13 @@ function UsersTableSkeleton() {
 
 function ProductCard({ p, image, onOpen, onAdd }) {
   const unavailable = p.available < 1;
+  const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
   return (
     <article className="card">
       <div className="thumb product-thumb" onClick={() => onOpen(p)}><img src={image} alt={p.model} loading="lazy" /></div>
       <div className="brand product-brand">{p.manufacturer}</div>
       <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
-      <div className="price">${p.price.toFixed(2)}</div>
+      <div className="price">${cardPrice}</div>
       <div className="product-meta">Device Grade {p.grade}</div>
       <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${p.available} items available`}</div>
       <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, 1, "")}>Add to request</button>
