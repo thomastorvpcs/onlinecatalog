@@ -391,6 +391,11 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true };
   }
 
+  if (method === "POST" && pathname === "/api/admin/catalog/apply-image-mapping") {
+    requireAdmin();
+    return { ok: true, mappedFamilies: 0, updatedFamilies: 0, updatedDeviceRows: 0, unmatchedFamilies: [] };
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/(\d+)$/);
   if (userMatch && method === "PATCH") {
     const actingUser = requireAdmin();
@@ -531,6 +536,7 @@ export default function App() {
   const [adminCatalogLoading, setAdminCatalogLoading] = useState(false);
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
+  const [adminImageMapLoading, setAdminImageMapLoading] = useState(false);
   const [expandedFilters, setExpandedFilters] = useState({});
   const [weeklyExpandedFilters, setWeeklyExpandedFilters] = useState({});
   const [weeklyBannerEnabled, setWeeklyBannerEnabled] = useState(false);
@@ -1134,6 +1140,36 @@ export default function App() {
       setAdminCatalogLoading(false);
     }
   };
+  const applyImageMappingForAdmin = async () => {
+    try {
+      setAdminImageMapLoading(true);
+      setAdminCatalogError("");
+      setAdminCatalogResult("");
+      const payload = await apiRequest("/api/admin/catalog/apply-image-mapping", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setAdminCatalogResult(
+        `Image mapping applied. Updated ${Number(payload.updatedDeviceRows || 0)} devices across ${Number(payload.updatedFamilies || 0)} families.`
+      );
+      const refreshed = await apiRequest("/api/devices", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      if (Array.isArray(refreshed)) {
+        setProducts(refreshed.map(normalizeDevice));
+      }
+    } catch (error) {
+      setAdminCatalogError(error.message || "Failed to apply image mapping.");
+    } finally {
+      setAdminImageMapLoading(false);
+    }
+  };
   const updateWeeklyBannerForAdmin = async (enabled) => {
     try {
       setWeeklyBannerSaving(true);
@@ -1494,6 +1530,9 @@ export default function App() {
                   </button>
                   <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedTestDevicesForAdmin}>
                     {adminCatalogLoading ? "Working..." : "Add 500 Test Devices/Category"}
+                  </button>
+                  <button type="button" style={{ width: "auto" }} disabled={adminImageMapLoading} onClick={applyImageMappingForAdmin}>
+                    {adminImageMapLoading ? "Working..." : "Apply Product Image Mapping"}
                   </button>
                 </div>
                 {adminCatalogResult ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{adminCatalogResult}</p> : null}

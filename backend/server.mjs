@@ -20,6 +20,30 @@ const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
 const ADMIN_PASSWORD = "AdminPassword123!";
 const DEMO_RESET_CODE = "123456";
 const EXTRA_DEVICES_PER_CATEGORY = 1000;
+const MODEL_IMAGE_MAP = {
+  "iPhone 15": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15.jpg",
+  "iPhone 15 Pro": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+  "iPhone 15 Pro Max": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+  "Galaxy S24": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-5g-sm-s921.jpg",
+  "Galaxy Z Flip5": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-z-flip5-5g.jpg",
+  "Pixel 8": "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8.jpg",
+  "Pixel 8 Pro": "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8-pro.jpg",
+  "Motorola Edge 50": "https://fdn2.gsmarena.com/vv/bigpic/motorola-edge-50-pro.jpg",
+  "iPad Pro 11": "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-pro-11-2024.jpg",
+  "iPad Air 11": "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-air-11-2024.jpg",
+  "Galaxy Tab S9": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-tab-s9.jpg",
+  "Galaxy Tab A9+": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-tab-a9-plus.jpg",
+  "Pixel Tablet": "https://lh3.googleusercontent.com/VRPfQml16IJp9tjEr70sOmNcu3eqtRe-LXoOxWJ32CNkOic-wf-TuY5TPIUZ2EO6cpHACrQZsryh_kzb9UD4RbeTchIGMTHwxA=rw-e365-w1200",
+  "Lenovo Tab P12": "https://fdn2.gsmarena.com/vv/bigpic/lenovo-tab-p12.jpg",
+  "Apple Watch Series 9": "https://www.apple.com/assets-www/en_WW/watch/og/watch_og_1ff2ee953.png",
+  "Watch Ultra 2": "https://www.apple.com/assets-www/en_WW/watch/og/watch_og_1ff2ee953.png",
+  "Galaxy Watch 6": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-watch6.jpg",
+  "Pixel Watch 2": "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-watch-2.jpg",
+  "AirPods Pro": "https://store.storeimages.cdn-apple.com/1/as-images.apple.com/is/airpods-pro-2-hero-select-202409?wid=890&hei=890&fmt=jpeg&qlt=90&.v=1724041668836",
+  "Galaxy Buds2 Pro": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-buds2-pro.jpg",
+  "MacBook Air 13": "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
+  "MacBook Pro 14": "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526"
+};
 const BOOMI_INVENTORY_URL = process.env.BOOMI_INVENTORY_URL || "https://c01-usa-east-et.integrate-test.boomi.com/ws/rest/masterdealer/inventory/";
 const BOOMI_CUSTOMER_ID = process.env.BOOMI_CUSTOMER_ID || "";
 const BOOMI_BASIC_USERNAME = process.env.BOOMI_BASIC_USERNAME || "";
@@ -803,6 +827,48 @@ function clearCatalogData() {
   return before;
 }
 
+function applyCatalogImageMappings() {
+  const familyRows = db.prepare("SELECT model_family, COUNT(*) AS count FROM devices GROUP BY model_family ORDER BY model_family").all();
+  const existingFamilies = new Set(familyRows.map((r) => r.model_family));
+  const mappedFamilies = Object.keys(MODEL_IMAGE_MAP).filter((family) => existingFamilies.has(family));
+  const unmatchedFamilies = [...existingFamilies].filter((family) => !MODEL_IMAGE_MAP[family]);
+
+  const updateDevice = db.prepare("UPDATE devices SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE model_family = ?");
+  const selectIds = db.prepare("SELECT id FROM devices WHERE model_family = ?");
+  const deleteImages = db.prepare("DELETE FROM device_images WHERE device_id = ?");
+  const insertImage = db.prepare("INSERT INTO device_images (device_id, image_url, sort_order) VALUES (?, ?, 0)");
+
+  let updatedFamilies = 0;
+  let updatedDeviceRows = 0;
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (const family of mappedFamilies) {
+      const imageUrl = MODEL_IMAGE_MAP[family];
+      const updateResult = updateDevice.run(imageUrl, family);
+      if (!updateResult.changes) continue;
+      updatedFamilies += 1;
+      const ids = selectIds.all(family);
+      for (const row of ids) {
+        deleteImages.run(row.id);
+        insertImage.run(row.id, imageUrl);
+        updatedDeviceRows += 1;
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    mappedFamilies: mappedFamilies.length,
+    updatedFamilies,
+    updatedDeviceRows,
+    unmatchedFamilies
+  };
+}
+
 function seedAdminTestDevicesPerCategory(countPerCategory) {
   const categories = db.prepare("SELECT id, name FROM categories").all();
   const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
@@ -1578,6 +1644,14 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const countPerCategory = Math.max(1, Math.min(5000, Number(body.countPerCategory || 500)));
       const result = seedAdminTestDevicesPerCategory(countPerCategory);
+      json(req, res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/catalog/apply-image-mapping") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const result = applyCatalogImageMappings();
       json(req, res, 200, { ok: true, ...result });
       return;
     }
