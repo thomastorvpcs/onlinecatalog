@@ -398,6 +398,12 @@ export default function App() {
   const [newUserIsActive, setNewUserIsActive] = useState(false);
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
   const [userActionLoading, setUserActionLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [syncError, setSyncError] = useState("");
+  const [adminCatalogLoading, setAdminCatalogLoading] = useState(false);
+  const [adminCatalogResult, setAdminCatalogResult] = useState("");
+  const [adminCatalogError, setAdminCatalogError] = useState("");
 
   const companyKey = user ? user.company.toLowerCase().trim() : "anon";
   const requestsKey = `pcs.requests.${companyKey}`;
@@ -744,6 +750,58 @@ export default function App() {
     }
     return true;
   };
+
+  const triggerBoomiSync = async () => {
+    try {
+      setSyncLoading(true);
+      setSyncError("");
+      setSyncResult(null);
+      const payload = await apiRequest("/api/integrations/boomi/inventory/sync", {
+        method: "POST",
+        token: authToken
+      });
+      setSyncResult(payload);
+    } catch (error) {
+      setSyncError(error.message || "Sync failed.");
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const clearCatalogForAdmin = async () => {
+    try {
+      setAdminCatalogLoading(true);
+      setAdminCatalogError("");
+      setAdminCatalogResult("");
+      const payload = await apiRequest("/api/admin/catalog/clear", {
+        method: "POST",
+        token: authToken
+      });
+      setAdminCatalogResult(`Catalog cleared. Removed ${Number(payload.removedDevices || 0)} devices and ${Number(payload.removedRawRows || 0)} raw sync rows.`);
+    } catch (error) {
+      setAdminCatalogError(error.message || "Failed to clear catalog.");
+    } finally {
+      setAdminCatalogLoading(false);
+    }
+  };
+
+  const seedTestDevicesForAdmin = async () => {
+    try {
+      setAdminCatalogLoading(true);
+      setAdminCatalogError("");
+      setAdminCatalogResult("");
+      const payload = await apiRequest("/api/admin/catalog/seed-test", {
+        method: "POST",
+        token: authToken,
+        body: { countPerCategory: 500 }
+      });
+      setAdminCatalogResult(`Seed complete. Added ${Number(payload.countPerCategory || 0)} test devices per category (${Number(payload.categoriesSeeded || 0)} categories).`);
+    } catch (error) {
+      setAdminCatalogError(error.message || "Failed to seed test devices.");
+    } finally {
+      setAdminCatalogLoading(false);
+    }
+  };
   const filterOptions = (() => {
     const optionsByField = {};
     for (const field of fields) {
@@ -911,6 +969,33 @@ export default function App() {
             <section className="panel">
               <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>User Management</h2>
               {usersError ? <p className="small" style={{ color: "#b91c1c" }}>{usersError}</p> : null}
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Inventory Sync</h3>
+                <p className="small" style={{ marginTop: 0 }}>Fetch and map inventory from Boomi/NetSuite into the local database.</p>
+                <button type="button" style={{ width: "auto" }} disabled={syncLoading} onClick={triggerBoomiSync}>
+                  {syncLoading ? "Syncing..." : "Sync Boomi Inventory"}
+                </button>
+                {syncResult ? (
+                  <p className="small" style={{ marginTop: 8, color: "#166534" }}>
+                    Sync complete. Fetched: {Number(syncResult.fetched || 0)}, Processed: {Number(syncResult.processed || 0)}, Skipped: {Number(syncResult.skipped || 0)}.
+                  </p>
+                ) : null}
+                {syncError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{syncError}</p> : null}
+              </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Catalog Admin Tools</h3>
+                <p className="small" style={{ marginTop: 0 }}>Clear current catalog data or seed 500 test devices per category.</p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="delete-btn" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={clearCatalogForAdmin}>
+                    {adminCatalogLoading ? "Working..." : "Clear Catalog DB"}
+                  </button>
+                  <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedTestDevicesForAdmin}>
+                    {adminCatalogLoading ? "Working..." : "Add 500 Test Devices/Category"}
+                  </button>
+                </div>
+                {adminCatalogResult ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{adminCatalogResult}</p> : null}
+                {adminCatalogError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{adminCatalogError}</p> : null}
+              </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">
                   <input type="email" placeholder="Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
