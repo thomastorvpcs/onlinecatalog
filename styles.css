@@ -437,6 +437,28 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 6px;
 }
 
+.weekly-device-list {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.weekly-device-item {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e4e8ef;
+}
+
+.weekly-device-item:last-child {
+  border-bottom: none;
+}
+
 .products-shell {
   display: grid;
   grid-template-columns: 240px 1fr;
@@ -615,6 +637,11 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 12px;
+}
+
+.weekly-special-banner {
+  border-color: #c7d8ff;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
 }
 
 .card {

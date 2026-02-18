@@ -63,7 +63,8 @@ function normalizeDevice(p) {
     modular: p.modular || "No",
     color: p.color || "N/A",
     kitType: p.kitType || "Full Kit",
-    productNotes: p.productNotes || ""
+    productNotes: p.productNotes || "",
+    weeklySpecial: p.weeklySpecial === true
   };
 }
 
@@ -75,6 +76,8 @@ const DEMO_REFRESH_TOKENS_KEY = "pcs.demo.refreshTokens";
 const DEMO_ACCESS_TTL_MS = 30 * 60 * 1000;
 const DEMO_REFRESH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const SESSION_WARNING_MS = 5 * 60 * 1000;
+const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
+const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -309,7 +312,11 @@ async function demoApiRequest(path, options = {}) {
     const regions = csv("region");
     const storages = csv("storage");
 
-    const all = productsSeed.map((p) => normalizeDevice(p));
+    const weeklyFlags = readJson(localStorage, DEMO_WEEKLY_FLAGS_KEY, {});
+    const all = productsSeed.map((p) => normalizeDevice({
+      ...p,
+      weeklySpecial: Boolean(weeklyFlags[p.id]) || p.weeklySpecial === true
+    }));
     const filtered = all.filter((p) => {
       const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
       if (search && !text.includes(search)) return false;
@@ -326,6 +333,31 @@ async function demoApiRequest(path, options = {}) {
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize);
     return { items, total, page, pageSize };
+  }
+
+  if (method === "GET" && pathname === "/api/weekly-special-banner") {
+    requireAuth();
+    return { enabled: readJson(localStorage, DEMO_WEEKLY_BANNER_KEY, false) === true };
+  }
+
+  if (method === "PUT" && pathname === "/api/admin/weekly-special-banner") {
+    requireAdmin();
+    if (typeof body.enabled !== "boolean") throwApiError("enabled must be boolean.", 400);
+    writeJson(localStorage, DEMO_WEEKLY_BANNER_KEY, body.enabled);
+    return { ok: true, enabled: body.enabled };
+  }
+
+  const demoWeeklySpecialMatch = pathname.match(/^\/api\/admin\/devices\/([^/]+)\/weekly-special$/);
+  if (method === "PATCH" && demoWeeklySpecialMatch) {
+    requireAdmin();
+    if (typeof body.weeklySpecial !== "boolean") throwApiError("weeklySpecial must be boolean.", 400);
+    const deviceId = decodeURIComponent(demoWeeklySpecialMatch[1]);
+    const exists = productsSeed.some((p) => p.id === deviceId);
+    if (!exists) throwApiError("Device not found.", 404);
+    const weeklyFlags = readJson(localStorage, DEMO_WEEKLY_FLAGS_KEY, {});
+    weeklyFlags[deviceId] = body.weeklySpecial;
+    writeJson(localStorage, DEMO_WEEKLY_FLAGS_KEY, weeklyFlags);
+    return { ok: true, deviceId, weeklySpecial: body.weeklySpecial };
   }
 
   if (method === "GET" && pathname === "/api/users") {
@@ -472,6 +504,8 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("Smartphones");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({});
+  const [weeklySearch, setWeeklySearch] = useState("");
+  const [weeklyFilters, setWeeklyFilters] = useState({});
   const [categoryPage, setCategoryPage] = useState(1);
   const [cart, setCart] = useState(() => readJson(sessionStorage, "pcs.cart", []));
   const [requestStatusFilter, setRequestStatusFilter] = useState("All");
@@ -498,6 +532,13 @@ export default function App() {
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
   const [expandedFilters, setExpandedFilters] = useState({});
+  const [weeklyExpandedFilters, setWeeklyExpandedFilters] = useState({});
+  const [weeklyBannerEnabled, setWeeklyBannerEnabled] = useState(false);
+  const [weeklyBannerSaving, setWeeklyBannerSaving] = useState(false);
+  const [weeklyBannerError, setWeeklyBannerError] = useState("");
+  const [weeklyDeviceSavingId, setWeeklyDeviceSavingId] = useState("");
+  const [weeklyDeviceError, setWeeklyDeviceError] = useState("");
+  const [weeklySpecialSearch, setWeeklySpecialSearch] = useState("");
 
   const companyKey = user ? user.company.toLowerCase().trim() : "anon";
   const requestsKey = `pcs.requests.${companyKey}`;
@@ -629,6 +670,34 @@ export default function App() {
     }
 
     loadProducts();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, refreshToken, user]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadWeeklyBannerSetting() {
+      if (!user || !authToken) return;
+      try {
+        const payload = await apiRequest("/api/weekly-special-banner", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        if (!ignore) {
+          setWeeklyBannerEnabled(payload.enabled === true);
+          setWeeklyBannerError("");
+        }
+      } catch (error) {
+        if (!ignore) {
+          setWeeklyBannerEnabled(false);
+          setWeeklyBannerError(error.message || "Failed to load weekly special banner setting.");
+        }
+      }
+    }
+    loadWeeklyBannerSetting();
     return () => {
       ignore = true;
     };
@@ -987,13 +1056,17 @@ export default function App() {
     if (aOrder !== bOrder) return aOrder - bOrder;
     return a.localeCompare(b);
   });
+  const weeklySpecialDevices = products.filter((p) => p.weeklySpecial === true);
+  const weeklySpecialAdminDevices = products
+    .filter((p) => `${p.manufacturer} ${p.model}`.toLowerCase().includes(weeklySpecialSearch.toLowerCase()))
+    .slice(0, 120);
   const source = products.filter((p) => p.category === selectedCategory);
   const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
   const valueForField = (device, fieldKey) => (fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey]);
-  const matchesOtherFilters = (device, excludedField) => {
+  const matchesOtherFilters = (device, excludedField, activeFilters) => {
     for (const field of fields) {
       if (field.key === excludedField) continue;
-      const selected = filters[field.key] || [];
+      const selected = activeFilters[field.key] || [];
       if (!selected.length) continue;
       const value = valueForField(device, field.key);
       if (!selected.includes(value)) return false;
@@ -1061,14 +1134,54 @@ export default function App() {
       setAdminCatalogLoading(false);
     }
   };
-  const filterOptions = (() => {
+  const updateWeeklyBannerForAdmin = async (enabled) => {
+    try {
+      setWeeklyBannerSaving(true);
+      setWeeklyBannerError("");
+      const payload = await apiRequest("/api/admin/weekly-special-banner", {
+        method: "PUT",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { enabled }
+      });
+      setWeeklyBannerEnabled(payload.enabled === true);
+    } catch (error) {
+      setWeeklyBannerError(error.message || "Failed updating weekly special banner.");
+    } finally {
+      setWeeklyBannerSaving(false);
+    }
+  };
+
+  const setDeviceWeeklySpecialForAdmin = async (device, weeklySpecial) => {
+    try {
+      setWeeklyDeviceSavingId(device.id);
+      setWeeklyDeviceError("");
+      await apiRequest(`/api/admin/devices/${encodeURIComponent(device.id)}/weekly-special`, {
+        method: "PATCH",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { weeklySpecial }
+      });
+      setProducts((prev) => prev.map((p) => (p.id === device.id ? { ...p, weeklySpecial } : p)));
+      setCategoryDevices((prev) => prev.map((p) => (p.id === device.id ? { ...p, weeklySpecial } : p)));
+    } catch (error) {
+      setWeeklyDeviceError(error.message || "Failed updating weekly special device flag.");
+    } finally {
+      setWeeklyDeviceSavingId("");
+    }
+  };
+  const buildFilterOptions = (devices, activeFilters) => {
     const optionsByField = {};
     for (const field of fields) {
-      const selected = filters[field.key] || [];
-      const allValues = [...new Set(source.map((p) => valueForField(p, field.key)))].sort((a, b) => String(a).localeCompare(String(b)));
+      const selected = activeFilters[field.key] || [];
+      const allValues = [...new Set(devices.map((p) => valueForField(p, field.key)))].sort((a, b) => String(a).localeCompare(String(b)));
       const enabledValues = new Set(
-        source
-          .filter((p) => matchesOtherFilters(p, field.key))
+        devices
+          .filter((p) => matchesOtherFilters(p, field.key, activeFilters))
           .map((p) => valueForField(p, field.key))
       );
       optionsByField[field.key] = allValues
@@ -1083,7 +1196,21 @@ export default function App() {
         });
     }
     return optionsByField;
-  })();
+  };
+  const filterOptions = buildFilterOptions(source, filters);
+  const weeklySource = weeklySpecialDevices;
+  const weeklyFilterOptions = buildFilterOptions(weeklySource, weeklyFilters);
+  const weeklyFilteredDevices = weeklySource.filter((p) => {
+    const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
+    if (weeklySearch && !text.includes(weeklySearch.toLowerCase())) return false;
+    for (const field of fields) {
+      const selected = weeklyFilters[field.key] || [];
+      if (!selected.length) continue;
+      const value = valueForField(p, field.key);
+      if (!selected.includes(value)) return false;
+    }
+    return true;
+  });
   const totalCategoryPages = Math.max(1, Math.ceil(categoryTotal / CATEGORY_PAGE_SIZE));
   const safeCategoryPage = Math.min(categoryPage, totalCategoryPages);
   const categoryStartIndex = (safeCategoryPage - 1) * CATEGORY_PAGE_SIZE;
@@ -1146,6 +1273,29 @@ export default function App() {
                   <div className="category-strip">{categories.map((c) => <button key={c} className="category-btn" onClick={() => openCategory(c)}><span className="cat-icon">{iconForCategory(c)}</span><span className="cat-label">{c}</span></button>)}</div>
                 )}
               </section>
+              {!productsLoading && weeklyBannerEnabled && weeklySpecialDevices.length > 0 ? (
+                <section className="panel weekly-special-banner">
+                  <div className="category-header">
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>Weekly Special</h3>
+                      <p className="muted" style={{ margin: "6px 0 0" }}>Featured devices flagged by admin for this week.</p>
+                    </div>
+                    <button
+                      className="ghost-btn"
+                      onClick={() => {
+                        setProductsView("weekly");
+                      }}
+                    >
+                      Browse specials
+                    </button>
+                  </div>
+                  <div className="products-grid home-products-grid">
+                    {weeklySpecialDevices.slice(0, 8).map((p) => (
+                      <ProductCard key={`weekly-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
               {(productsLoading ? CATEGORY_ORDER : categories).map((cat) => (
                 <section key={cat} className="panel">
                   <div className="category-header"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>{cat}</h3><button className="ghost-btn" onClick={() => openCategory(cat)}>View all</button></div>
@@ -1228,6 +1378,79 @@ export default function App() {
             </>
           )}
 
+          {route === "products" && productsView === "weekly" && (
+            <>
+              <div className="products-shell">
+                <aside className="filters-panel">
+                  <div className="filter-head">
+                    <h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3>
+                    <button className="pill-clear" onClick={() => { setWeeklyFilters({}); setWeeklySearch(""); }}>Clear</button>
+                  </div>
+                  {fields.map((f) => {
+                    const options = weeklyFilterOptions[f.key] || [];
+                    const isExpanded = weeklyExpandedFilters[f.key] === true;
+                    const visibleOptions = isExpanded ? options : options.slice(0, 10);
+                    return (
+                      <div key={`weekly-${f.key}`} className="filter-row">
+                        <h4>{f.title}</h4>
+                        {visibleOptions.map((option) => (
+                          <label key={`weekly-${f.key}-${option.value}`} className={`checkbox-item${option.isEnabled ? "" : " disabled"}`}>
+                            <input
+                              type="checkbox"
+                              disabled={!option.isEnabled}
+                              checked={(weeklyFilters[f.key] || []).includes(option.value)}
+                              onChange={(e) => {
+                                const set = new Set(weeklyFilters[f.key] || []);
+                                if (e.target.checked) set.add(option.value); else set.delete(option.value);
+                                setWeeklyFilters({ ...weeklyFilters, [f.key]: [...set] });
+                              }}
+                            />
+                            <span>{option.value}</span>
+                          </label>
+                        ))}
+                        {options.length > 10 ? (
+                          <button
+                            type="button"
+                            className="filter-show-more-btn"
+                            onClick={() => setWeeklyExpandedFilters((prev) => ({ ...prev, [f.key]: !isExpanded }))}
+                          >
+                            {isExpanded ? "Show less" : `Show more (${options.length - 10})`}
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </aside>
+                <section className="products-main">
+                  <div className="products-top">
+                    <div>
+                      <p className="small">
+                        <span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; Weekly Special
+                      </p>
+                      <h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>Weekly Special</h2>
+                    </div>
+                    <div className="right-actions">
+                      <input className="catalog-search-input" value={weeklySearch} onChange={(e) => setWeeklySearch(e.target.value)} placeholder="Search by model" />
+                      <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
+                    </div>
+                  </div>
+                  <div className="small" style={{ marginBottom: 8 }}>
+                    Showing {weeklyFilteredDevices.length} weekly special devices
+                  </div>
+                  {weeklyFilteredDevices.length ? (
+                    <div className="products-grid">
+                      {weeklyFilteredDevices.map((p) => (
+                        <ProductCard key={`weekly-page-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="small" style={{ marginTop: 8 }}>No weekly special devices match your filters.</p>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
+
           {route === "requests" && (
             <>
               <section className="panel">
@@ -1275,6 +1498,42 @@ export default function App() {
                 </div>
                 {adminCatalogResult ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{adminCatalogResult}</p> : null}
                 {adminCatalogError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{adminCatalogError}</p> : null}
+              </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Weekly Special Banner</h3>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+                  <input
+                    type="checkbox"
+                    checked={weeklyBannerEnabled}
+                    disabled={weeklyBannerSaving}
+                    onChange={(e) => updateWeeklyBannerForAdmin(e.target.checked)}
+                  />
+                  <span>Show weekly special banner on products home page</span>
+                </label>
+                <p className="small" style={{ marginTop: 0 }}>
+                  Flag devices as weekly special. Active flagged devices: {weeklySpecialDevices.length}
+                </p>
+                <input
+                  placeholder="Search devices to flag"
+                  value={weeklySpecialSearch}
+                  onChange={(e) => setWeeklySpecialSearch(e.target.value)}
+                />
+                <div className="weekly-device-list">
+                  {weeklySpecialAdminDevices.map((device) => (
+                    <label key={`weekly-flag-${device.id}`} className="weekly-device-item">
+                      <input
+                        type="checkbox"
+                        checked={device.weeklySpecial === true}
+                        disabled={weeklyDeviceSavingId === device.id}
+                        onChange={(e) => setDeviceWeeklySpecialForAdmin(device, e.target.checked)}
+                      />
+                      <span>{device.manufacturer} {device.model}</span>
+                    </label>
+                  ))}
+                  {!weeklySpecialAdminDevices.length ? <p className="small" style={{ margin: 0 }}>No devices match your search.</p> : null}
+                </div>
+                {weeklyBannerError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{weeklyBannerError}</p> : null}
+                {weeklyDeviceError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{weeklyDeviceError}</p> : null}
               </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">

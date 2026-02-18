@@ -165,6 +165,7 @@ function ensureDeviceSchema() {
   if (!cols.includes("currency_code")) db.exec("ALTER TABLE devices ADD COLUMN currency_code TEXT");
   if (!cols.includes("country_code")) db.exec("ALTER TABLE devices ADD COLUMN country_code TEXT");
   if (!cols.includes("effective_date")) db.exec("ALTER TABLE devices ADD COLUMN effective_date TEXT");
+  if (!cols.includes("weekly_special")) db.exec("ALTER TABLE devices ADD COLUMN weekly_special INTEGER NOT NULL DEFAULT 0 CHECK (weekly_special IN (0, 1))");
   db.exec(`
     CREATE TABLE IF NOT EXISTS device_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,10 +208,34 @@ function ensureDeviceSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id)");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_source_external_id ON devices(source_external_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_boomi_raw_source_external_id ON boomi_inventory_raw(source_external_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_inventory_events_device ON inventory_events(device_id)");
+}
+
+function getBooleanAppSetting(key, defaultValue = false) {
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key);
+  if (!row) return defaultValue;
+  const normalized = String(row.value || "").trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") return true;
+  if (normalized === "0" || normalized === "false") return false;
+  return defaultValue;
+}
+
+function setBooleanAppSetting(key, value) {
+  db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `).run(key, value ? "1" : "0");
 }
 
 function ensureLargeCatalog() {
@@ -660,6 +685,7 @@ function getDevices(url) {
       d.color AS color,
       d.kit_type AS kitType,
       d.product_notes AS productNotes,
+      d.weekly_special AS weeklySpecial,
       COALESCE(SUM(di.quantity), 0) AS available
     FROM devices d
     JOIN manufacturers m ON m.id = d.manufacturer_id
@@ -667,7 +693,7 @@ function getDevices(url) {
     LEFT JOIN locations dl ON dl.id = d.default_location_id
     LEFT JOIN device_inventory di ON di.device_id = d.id
     ${whereSql}
-    GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes
+    GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes, d.weekly_special
     ORDER BY c.id, m.name, d.model_name
   `;
 
@@ -739,6 +765,7 @@ function getDevices(url) {
       color: d.color || "N/A",
       kitType: d.kitType || "Full Kit",
       productNotes: d.productNotes || "",
+      weeklySpecial: Number(d.weeklySpecial || 0) === 1,
       available: Number(d.available || 0),
       locations
     };
@@ -1477,6 +1504,49 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(req, res, 200, getDevices(url));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/weekly-special-banner") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      json(req, res, 200, { enabled: getBooleanAppSetting("weekly_special_banner_enabled", false) });
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/admin/weekly-special-banner") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      if (typeof body.enabled !== "boolean") {
+        json(req, res, 400, { error: "enabled must be boolean." });
+        return;
+      }
+      setBooleanAppSetting("weekly_special_banner_enabled", body.enabled);
+      json(req, res, 200, { ok: true, enabled: body.enabled });
+      return;
+    }
+
+    const weeklySpecialMatch = url.pathname.match(/^\/api\/admin\/devices\/([^/]+)\/weekly-special$/);
+    if (req.method === "PATCH" && weeklySpecialMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      if (typeof body.weeklySpecial !== "boolean") {
+        json(req, res, 400, { error: "weeklySpecial must be boolean." });
+        return;
+      }
+      const deviceId = decodeURIComponent(weeklySpecialMatch[1]);
+      const result = db.prepare("UPDATE devices SET weekly_special = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(body.weeklySpecial ? 1 : 0, deviceId);
+      if (!result.changes) {
+        json(req, res, 404, { error: "Device not found." });
+        return;
+      }
+      json(req, res, 200, { ok: true, deviceId, weeklySpecial: body.weeklySpecial });
       return;
     }
 

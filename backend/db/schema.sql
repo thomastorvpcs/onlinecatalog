@@ -37,9 +37,16 @@ CREATE TABLE IF NOT EXISTS devices (
   currency_code TEXT,
   country_code TEXT,
   effective_date TEXT,
+  weekly_special INTEGER NOT NULL DEFAULT 0 CHECK (weekly_special IN (0, 1)),
   default_location_id INTEGER REFERENCES locations(id),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
