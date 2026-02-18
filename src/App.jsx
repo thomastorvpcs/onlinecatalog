@@ -1423,8 +1423,15 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
               <div className="auth-input-wrap">
                 <span className="auth-input-icon">⌨</span>
                 <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Password" />
-                <button type="button" className="auth-toggle-btn" onClick={() => setShowPassword((v) => !v)}>{showPassword ? "Hide" : "Show"}</button>
+                <button type="button" className="auth-toggle-btn" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>
+                  {showPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                </button>
               </div>
+              {mode === "login" ? (
+                <div className="auth-inline-link-row">
+                  <button type="button" className="link-btn" onClick={() => { setMode("reset-request"); setError(""); setNotice(""); }}>Forgot password?</button>
+                </div>
+              ) : null}
             </>
           ) : null}
           {mode === "register" ? (
@@ -1440,25 +1447,44 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
               <div className="auth-input-wrap">
                 <span className="auth-input-icon">⌨</span>
                 <input type={showResetPassword ? "text" : "password"} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required placeholder="New password" />
-                <button type="button" className="auth-toggle-btn" onClick={() => setShowResetPassword((v) => !v)}>{showResetPassword ? "Hide" : "Show"}</button>
+                <button type="button" className="auth-toggle-btn" onClick={() => setShowResetPassword((v) => !v)} aria-label={showResetPassword ? "Hide password" : "Show password"} title={showResetPassword ? "Hide password" : "Show password"}>
+                  {showResetPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                </button>
               </div>
               <p className="small">Code must be 6 digits. Password policy still applies.</p>
               {demoCodeHint ? <p className="small">Demo verification code: {demoCodeHint}</p> : null}
             </>
           ) : null}
-          <button type="submit" disabled={loading}>
+          <button type="submit" className="auth-submit-btn" disabled={loading}>
             {loading ? "Please wait..." : mode === "login" ? "Sign In" : mode === "register" ? "Create User" : mode === "reset-request" ? "Send verification code" : "Reset password"}
           </button>
         </form>
         <div className="auth-links">
-          {mode === "login" ? <button type="button" className="link-btn" onClick={() => { setMode("register"); setError(""); setNotice(""); }}>Create user</button> : null}
-          {mode === "login" ? <button type="button" className="link-btn" onClick={() => { setMode("reset-request"); setError(""); setNotice(""); }}>Reset password</button> : null}
+          {mode === "login" ? <p className="auth-link-text">Don&apos;t have an account? <button type="button" className="link-btn auth-inline-link" onClick={() => { setMode("register"); setError(""); setNotice(""); }}>Create user</button></p> : null}
           {(mode === "register" || mode === "reset-request" || mode === "reset-confirm") ? <button type="button" className="link-btn" onClick={() => { setMode("login"); setError(""); setNotice(""); }}>Back to sign in</button> : null}
         </div>
           </>
         )}
       </div>
     </div>
+  );
+}
+
+function EyeOpenIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function EyeClosedIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M2 12s3.5-6 10-6c2 0 3.8.6 5.3 1.5M22 12s-3.5 6-10 6c-2 0-3.8-.6-5.3-1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
   );
 }
 
