@@ -1348,6 +1348,8 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -1394,8 +1396,7 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
   return (
     <div className="auth-shell">
       <div className="auth-card">
-        <h1>PCS Catalog</h1>
-        <p className="muted">B2B inventory prototype</p>
+        <h1 className="auth-title">{mode === "register" ? "Create Account" : mode === "reset-confirm" ? "Reset Password" : mode === "reset-request" ? "Forgot Password" : "Login"}</h1>
         {mode === "approval" ? (
           <>
             <h3 style={{ marginBottom: 6 }}>Waiting for approval</h3>
@@ -1411,10 +1412,19 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
         {error ? <p className="auth-error">{error}</p> : null}
         {notice ? <p className="auth-notice">{notice}</p> : null}
         <form onSubmit={submit}>
-          <label>Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="buyer@company.com" />
+          <label>Email Address *</label>
+          <div className="auth-input-wrap">
+            <span className="auth-input-icon">✉</span>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="buyer@company.com" />
+          </div>
           {(mode === "login" || mode === "register") ? (
             <>
-              <label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Password" />
+              <label>Password *</label>
+              <div className="auth-input-wrap">
+                <span className="auth-input-icon">⌨</span>
+                <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Password" />
+                <button type="button" className="auth-toggle-btn" onClick={() => setShowPassword((v) => !v)}>{showPassword ? "Hide" : "Show"}</button>
+              </div>
             </>
           ) : null}
           {mode === "register" ? (
@@ -1426,7 +1436,12 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
           {mode === "reset-confirm" ? (
             <>
               <label>Verification code</label><input type="text" inputMode="numeric" maxLength={6} value={resetCode} onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
-              <label>New password</label><input type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required placeholder="New password" />
+              <label>New password</label>
+              <div className="auth-input-wrap">
+                <span className="auth-input-icon">⌨</span>
+                <input type={showResetPassword ? "text" : "password"} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required placeholder="New password" />
+                <button type="button" className="auth-toggle-btn" onClick={() => setShowResetPassword((v) => !v)}>{showResetPassword ? "Hide" : "Show"}</button>
+              </div>
               <p className="small">Code must be 6 digits. Password policy still applies.</p>
               {demoCodeHint ? <p className="small">Demo verification code: {demoCodeHint}</p> : null}
             </>
