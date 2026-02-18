@@ -709,47 +709,31 @@ export default function App() {
       let didDrag = false;
       let startX = 0;
       let startScrollLeft = 0;
-      let activePointerId = null;
 
-      const onPointerDown = (e) => {
+      const onMouseDown = (e) => {
         if (e.button !== 0) return;
         if (e.target.closest("button, input, a, textarea, label")) return;
         isDragging = true;
         didDrag = false;
         startX = e.clientX;
         startScrollLeft = row.scrollLeft;
-        activePointerId = e.pointerId;
         row.classList.add("is-dragging");
-        try {
-          row.setPointerCapture(activePointerId);
-        } catch {
-          // no-op for browsers that do not support pointer capture here
-        }
       };
 
-      const onPointerMove = (e) => {
+      const onMouseMove = (e) => {
         if (!isDragging) return;
         const deltaX = e.clientX - startX;
-        if (Math.abs(deltaX) > 3) {
+        if (Math.abs(deltaX) > 6) {
           didDrag = true;
         }
         row.scrollLeft = startScrollLeft - deltaX;
-        if (didDrag) {
-          e.preventDefault();
-        }
+        if (didDrag) e.preventDefault();
       };
 
       const stopDragging = () => {
         if (!isDragging) return;
         isDragging = false;
         row.classList.remove("is-dragging");
-        if (activePointerId !== null) {
-          try {
-            row.releasePointerCapture(activePointerId);
-          } catch {
-            // ignore
-          }
-        }
       };
 
       const onClickCapture = (e) => {
@@ -759,19 +743,15 @@ export default function App() {
         didDrag = false;
       };
 
-      row.addEventListener("pointerdown", onPointerDown);
-      row.addEventListener("pointermove", onPointerMove);
-      row.addEventListener("pointerup", stopDragging);
-      row.addEventListener("pointercancel", stopDragging);
-      row.addEventListener("pointerleave", stopDragging);
+      row.addEventListener("mousedown", onMouseDown);
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", stopDragging);
       row.addEventListener("click", onClickCapture, true);
 
       cleanups.push(() => {
-        row.removeEventListener("pointerdown", onPointerDown);
-        row.removeEventListener("pointermove", onPointerMove);
-        row.removeEventListener("pointerup", stopDragging);
-        row.removeEventListener("pointercancel", stopDragging);
-        row.removeEventListener("pointerleave", stopDragging);
+        row.removeEventListener("mousedown", onMouseDown);
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", stopDragging);
         row.removeEventListener("click", onClickCapture, true);
       });
     });
