@@ -652,13 +652,20 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   box-shadow: 0 1px 0 rgba(16, 24, 40, 0.03);
 }
 
+.product-card {
+  border-radius: 12px;
+  padding: 10px 10px 12px;
+  min-height: 352px;
+}
+
 .thumb {
-  height: 92px;
+  height: 118px;
   border-radius: 8px;
   background: #edf1f7;
   border: 1px solid #d8e0eb;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-weight: 700;
   color: #4b5563;
   cursor: pointer;
@@ -666,14 +673,36 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .thumb img {
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
+  object-position: center center;
+  transform: none;
   display: block;
 }
 
 .product-thumb img {
-  padding: 8px 10px;
+  padding: 0;
+}
+
+.product-card .product-thumb {
+  height: 188px;
+  border-radius: 10px;
+  background: #f4f6fa;
+  border-color: #d7dfea;
+}
+
+.product-card .product-thumb img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center center;
+  padding: 0;
+  transform: none;
 }
 
 .brand {
@@ -683,11 +712,11 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .product-brand {
-  margin-top: 7px;
-  font-size: 0.63rem;
+  margin-top: 10px;
+  font-size: 0.75rem;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: #96a0af;
+  color: #8f99a8;
   font-weight: 700;
 }
 
@@ -699,35 +728,36 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .product-name {
-  margin: 1px 0 2px;
-  font-size: 0.98rem;
-  line-height: 1.18;
-  min-height: 2.35em;
+  margin: 4px 0 6px;
+  font-size: 1.08rem;
+  line-height: 1.25;
+  min-height: 2.5em;
 }
 
 .price {
-  margin: 2px 0 3px;
-  font-size: 0.98rem;
+  margin: 2px 0 8px;
+  font-size: 1.02rem;
   font-weight: 700;
   letter-spacing: -0.2px;
 }
 
 .product-meta {
-  font-size: 0.77rem;
+  font-size: 0.9rem;
   color: #4f5c6b;
   margin-top: 1px;
 }
 
-.avail { font-size: 0.82rem; }
+.avail { font-size: 0.92rem; margin-top: 2px; }
 .avail.ok { color: var(--green); }
 .avail.bad { color: var(--red); }
 
 .add-btn {
-  margin-top: 8px;
+  margin-top: 10px;
   background: var(--blue-2);
   border-color: var(--blue-2);
-  font-size: 0.84rem;
-  padding-block: 7px;
+  font-size: 0.98rem;
+  padding-block: 10px;
+  border-radius: 10px;
 }
 
 .add-btn:disabled {
@@ -780,6 +810,35 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 24px;
   background: rgba(17, 24, 39, 0.5);
   backdrop-filter: blur(1.5px);
+}
+
+.session-expiry-overlay {
+  z-index: 1400;
+}
+
+.session-expiry-modal {
+  width: min(440px, 92vw);
+  border-radius: 12px;
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.3);
+}
+
+.session-expiry-countdown {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #b45309;
+}
+
+.session-expiry-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.session-expiry-actions .ghost-btn,
+.session-expiry-actions button {
+  width: auto;
 }
 
 .product-modal {
@@ -1383,5 +1442,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .users-skeleton-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+}
+
+@media (min-width: 2100px) {
+  .products-main .products-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1700px) and (max-width: 1900px) {
+  .products-main .products-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 }

@@ -643,6 +643,14 @@ export default function App() {
   }, [accessTokenExpiresAt]);
 
   useEffect(() => {
+    if (!user) return;
+    if (sessionTimeLeftMs === null) return;
+    if (sessionTimeLeftMs <= 0) {
+      clearAuthState();
+    }
+  }, [sessionTimeLeftMs, user]);
+
+  useEffect(() => {
     let ignore = false;
     async function loadProducts() {
       if (!user || !authToken) {
@@ -1260,7 +1268,10 @@ export default function App() {
   const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
   const modalProductUnavailable = activeProduct ? activeProduct.available < 1 : false;
   const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
-  const sessionMinutesLeft = showSessionWarning ? Math.ceil(sessionTimeLeftMs / 60000) : 0;
+  const sessionSecondsLeft = showSessionWarning ? Math.max(0, Math.ceil(sessionTimeLeftMs / 1000)) : 0;
+  const sessionCountdown = showSessionWarning
+    ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
+    : "0:00";
 
   return (
     <div className="app-shell">
@@ -1281,13 +1292,6 @@ export default function App() {
           <div className="brand-wrap"><span className="dot" /><strong>Gadget Crazy</strong></div>
           <div className="top-actions"><span className="muted">{user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
         </header>
-        {showSessionWarning ? (
-          <div className="session-warning">
-            <span>Your session expires in about {sessionMinutesLeft} minute{sessionMinutesLeft === 1 ? "" : "s"}.</span>
-            <button type="button" onClick={refreshSessionNow} disabled={refreshingSession}>{refreshingSession ? "Refreshing..." : "Stay signed in"}</button>
-          </div>
-        ) : null}
-
         <main className="view">
           {route === "products" && productsError && (
             <section className="panel" style={{ marginBottom: 10 }}>
@@ -1612,6 +1616,25 @@ export default function App() {
         </main>
       </div>
 
+      {showSessionWarning ? (
+        <div className="app-overlay session-expiry-overlay">
+          <article className="modal session-expiry-modal">
+            <h3 style={{ margin: "0 0 8px", fontSize: "1.6rem" }}>Session expiring soon</h3>
+            <p className="muted" style={{ margin: "0 0 6px" }}>
+              Your session will expire in:
+            </p>
+            <div className="session-expiry-countdown">{sessionCountdown}</div>
+            <p className="small" style={{ marginTop: 8 }}>
+              Choose <strong>Stay signed in</strong> to refresh your session.
+            </p>
+            <div className="session-expiry-actions">
+              <button className="ghost-btn" type="button" onClick={logout} disabled={refreshingSession}>Log out now</button>
+              <button type="button" onClick={refreshSessionNow} disabled={refreshingSession}>{refreshingSession ? "Refreshing..." : "Stay signed in"}</button>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
       {activeProduct && (
         <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveProduct(null); }}>
           <article className="modal product-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -1911,7 +1934,7 @@ function ProductCard({ p, image, onOpen, onAdd }) {
   const unavailable = p.available < 1;
   const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
   return (
-    <article className="card">
+    <article className="card product-card">
       <div className="thumb product-thumb" onClick={() => onOpen(p)}><img src={image} alt={p.model} loading="lazy" /></div>
       <div className="brand product-brand">{p.manufacturer}</div>
       <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
