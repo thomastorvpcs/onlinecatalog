@@ -50,6 +50,10 @@ function modelFamilyOf(model) {
   return model.split(" ").filter((t) => !/^\d+(gb|tb)$/i.test(t)).join(" ");
 }
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function normalizeDevice(p) {
   const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
   const fallbackImage = p.image || (images.length ? images[0] : "");
@@ -79,15 +83,18 @@ const SESSION_WARNING_MS = 5 * 60 * 1000;
 const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
+const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
+const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
+const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
 }
 
 function initDemoState() {
-  const users = readJson(localStorage, DEMO_USERS_KEY, null);
+  let users = readJson(localStorage, DEMO_USERS_KEY, null);
   if (!users) {
-    writeJson(localStorage, DEMO_USERS_KEY, [
+    users = [
       {
         id: 1,
         email: "thomas.torvund@pcsww.com",
@@ -99,8 +106,23 @@ function initDemoState() {
         resetCode: null,
         resetCodeExpiresAt: null
       }
-    ]);
+    ];
   }
+  if (!users.some((u) => normalizeEmail(u.email) === normalizeEmail(DEFAULT_DEMO_BUYER_EMAIL))) {
+    const nextId = users.length ? Math.max(...users.map((u) => Number(u.id || 0))) + 1 : 1;
+    users.push({
+      id: nextId,
+      email: DEFAULT_DEMO_BUYER_EMAIL,
+      company: DEFAULT_DEMO_BUYER_COMPANY,
+      role: "buyer",
+      password: DEFAULT_DEMO_BUYER_PASSWORD,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      resetCode: null,
+      resetCodeExpiresAt: null
+    });
+  }
+  writeJson(localStorage, DEMO_USERS_KEY, users);
   const sessions = readJson(localStorage, DEMO_SESSIONS_KEY, null);
   if (!sessions) {
     writeJson(localStorage, DEMO_SESSIONS_KEY, {});
@@ -517,7 +539,7 @@ export default function App() {
     const n = Number(persistedViewState.categoryPage || 1);
     return Number.isFinite(n) && n > 0 ? n : 1;
   });
-  const [cart, setCart] = useState(() => readJson(sessionStorage, "pcs.cart", []));
+  const [cart, setCart] = useState([]);
   const [requestStatusFilter, setRequestStatusFilter] = useState("All");
   const [requestSearch, setRequestSearch] = useState("");
   const [activeRequestId, setActiveRequestId] = useState(null);
@@ -553,6 +575,7 @@ export default function App() {
   const skipInitialCategoryResetRef = useRef(true);
 
   const companyKey = user ? user.company.toLowerCase().trim() : "anon";
+  const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestsKey = `pcs.requests.${companyKey}`;
   const requests = useMemo(() => readJson(localStorage, requestsKey, []), [requestsKey, cart, requestStatusFilter, requestSearch, activeRequestId]);
 
@@ -594,6 +617,8 @@ export default function App() {
     setAccessTokenExpiresAt("");
     setSessionTimeLeftMs(null);
     setUser(null);
+    setCart([]);
+    setCartOpen(false);
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -709,6 +734,14 @@ export default function App() {
       ignore = true;
     };
   }, [authToken, refreshToken, user]);
+
+  useEffect(() => {
+    if (!cartKey) {
+      setCart([]);
+      return;
+    }
+    setCart(readJson(sessionStorage, cartKey, []));
+  }, [cartKey]);
 
   useEffect(() => {
     let ignore = false;
@@ -944,7 +977,9 @@ export default function App() {
 
   const updateCart = (next) => {
     setCart(next);
-    writeJson(sessionStorage, "pcs.cart", next);
+    if (cartKey) {
+      writeJson(sessionStorage, cartKey, next);
+    }
   };
 
   const imageFor = (p) => p.image || p.images?.[0] || categoryImagePlaceholders[p.category] || "";

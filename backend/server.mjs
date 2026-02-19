@@ -18,6 +18,9 @@ const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 
 const ADMIN_EMAIL = "thomas.torvund@pcsww.com";
 const ADMIN_PASSWORD = "AdminPassword123!";
+const DEFAULT_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
+const DEFAULT_BUYER_COMPANY = "PCSWW";
+const DEFAULT_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_RESET_CODE = "123456";
 const EXTRA_DEVICES_PER_CATEGORY = 1000;
 const MODEL_IMAGE_MAP = {
@@ -77,7 +80,7 @@ function initDb() {
     db.exec(readFileSync(seedPath, "utf8"));
   }
   ensureLargeCatalog();
-  ensureAdminUser();
+  ensureDefaultUsers();
 }
 
 function ensureUsersColumns() {
@@ -124,13 +127,18 @@ function verifyPassword(password, stored) {
   return timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(calculated, "hex"));
 }
 
-function ensureAdminUser() {
-  const email = normalizeEmail(ADMIN_EMAIL);
-  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
-  if (existing?.id) return;
-  const passwordHash = hashPassword(ADMIN_PASSWORD);
-  db.prepare("INSERT INTO users (email, company, role, password_hash) VALUES (?, ?, ?, ?)")
-    .run(email, "PCSWW", "admin", passwordHash);
+function ensureDefaultUsers() {
+  const ensureUser = (emailRaw, company, role, plainPassword, isActive = true) => {
+    const email = normalizeEmail(emailRaw);
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (existing?.id) return;
+    const passwordHash = hashPassword(plainPassword);
+    db.prepare("INSERT INTO users (email, company, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?)")
+      .run(email, company, role, passwordHash, isActive ? 1 : 0);
+  };
+
+  ensureUser(ADMIN_EMAIL, "PCSWW", "admin", ADMIN_PASSWORD, true);
+  ensureUser(DEFAULT_BUYER_EMAIL, DEFAULT_BUYER_COMPANY, "buyer", DEFAULT_BUYER_PASSWORD, true);
 }
 
 function splitCsv(value) {
