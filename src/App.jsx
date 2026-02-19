@@ -22,12 +22,8 @@ const categoryImagePlaceholders = {
 };
 
 const baseNavItems = [
-  { key: "dashboard", label: "Dashboard", icon: "D" },
-  { key: "orders", label: "Orders", icon: "O" },
   { key: "products", label: "Products", icon: "phone" },
-  { key: "requests", label: "Requests", icon: "R" },
-  { key: "feedback", label: "Feedback", icon: "F" },
-  { key: "settings", label: "Settings", icon: "S" }
+  { key: "requests", label: "Requests", icon: "R" }
 ];
 
 const CATEGORY_ORDER = ["Smartphones", "Tablets", "Laptops", "Wearables", "Accessories"];
@@ -791,7 +787,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    if (user.role !== "admin" && route === "users") {
+    const allowedRoutes = user.role === "admin"
+      ? new Set(["products", "requests", "users"])
+      : new Set(["products", "requests"]);
+    if (!allowedRoutes.has(route)) {
       setRoute("products");
       setProductsView("home");
     }
