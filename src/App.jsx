@@ -571,6 +571,20 @@ export default function App() {
     }
   };
 
+  const resetViewStateToHome = () => {
+    setRoute("products");
+    setProductsView("home");
+    setSelectedCategory("Smartphones");
+    setSearch("");
+    setFilters({});
+    setWeeklySearch("");
+    setWeeklyFilters({});
+    setExpandedFilters({});
+    setWeeklyExpandedFilters({});
+    setCategoryPage(1);
+    localStorage.removeItem(UI_VIEW_STATE_KEY);
+  };
+
   const clearAuthState = () => {
     localStorage.removeItem("pcs.authToken");
     localStorage.removeItem("pcs.refreshToken");
@@ -580,6 +594,7 @@ export default function App() {
     setAccessTokenExpiresAt("");
     setSessionTimeLeftMs(null);
     setUser(null);
+    localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
   const refreshSessionNow = async () => {
@@ -974,6 +989,7 @@ export default function App() {
       return { pendingApproval: true, email: data.email };
     }
     applyAuthTokens(data);
+    resetViewStateToHome();
     return { pendingApproval: false };
   };
 
@@ -997,7 +1013,7 @@ export default function App() {
       skipRefresh: true
     }).catch(() => {});
     clearAuthState();
-    setRoute("products");
+    resetViewStateToHome();
   };
 
   const createUserAsAdmin = async (e) => {
