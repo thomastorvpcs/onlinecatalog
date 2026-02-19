@@ -328,6 +328,7 @@ async function demoApiRequest(path, options = {}) {
     const categories = csv("category");
     const manufacturers = csv("manufacturer");
     const modelFamilies = csv("modelFamily");
+    const grades = csv("grade");
     const regions = csv("region");
     const storages = csv("storage");
 
@@ -342,6 +343,7 @@ async function demoApiRequest(path, options = {}) {
       if (categories.length && !categories.includes(p.category)) return false;
       if (manufacturers.length && !manufacturers.includes(p.manufacturer)) return false;
       if (modelFamilies.length && !modelFamilies.includes(p.modelFamily)) return false;
+      if (grades.length && !grades.includes(p.grade)) return false;
       if (regions.length && !regions.includes(p.region)) return false;
       if (storages.length && !storages.includes(p.storage)) return false;
       return true;
@@ -823,6 +825,7 @@ export default function App() {
         if (search.trim()) qs.set("search", search.trim());
         if (filters.manufacturer?.length) qs.set("manufacturer", filters.manufacturer.join(","));
         if (filters.modelFamily?.length) qs.set("modelFamily", filters.modelFamily.join(","));
+        if (filters.grade?.length) qs.set("grade", filters.grade.join(","));
         if (filters.region?.length) qs.set("region", filters.region.join(","));
         if (filters.storage?.length) qs.set("storage", filters.storage.join(","));
         const payload = await apiRequest(`/api/devices?${qs.toString()}`, {
@@ -1157,7 +1160,7 @@ export default function App() {
     .filter((p) => `${p.manufacturer} ${p.model}`.toLowerCase().includes(weeklySpecialSearch.toLowerCase()))
     .slice(0, 120);
   const source = products.filter((p) => p.category === selectedCategory);
-  const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
+  const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "grade", title: "Grade" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
   const valueForField = (device, fieldKey) => (fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey]);
   const matchesOtherFilters = (device, excludedField, activeFilters) => {
     for (const field of fields) {
@@ -1770,8 +1773,8 @@ export default function App() {
       )}
 
       {cartOpen && (
-        <dialog className="app-dialog cart-dialog" open>
-          <article className="modal">
+        <div className="app-overlay cart-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setCartOpen(false); }}>
+          <article className="modal cart-dialog" onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 500 }}>Requested items</h3><button className="close-btn" onClick={() => setCartOpen(false)}>X</button></div>
             <div className="cart-scroll">
               <table className="table cart-table">
@@ -1796,7 +1799,7 @@ export default function App() {
             </div>
             <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])}>Delete all</button><button className="submit-btn" disabled={!cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>Submit request</button></div></div>
           </article>
-        </dialog>
+        </div>
       )}
     </div>
   );

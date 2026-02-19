@@ -667,6 +667,7 @@ function getDevices(url) {
   const categories = splitCsv(url.searchParams.get("category"));
   const manufacturers = splitCsv(url.searchParams.get("manufacturer"));
   const modelFamilies = splitCsv(url.searchParams.get("modelFamily"));
+  const grades = splitCsv(url.searchParams.get("grade"));
   const regions = splitCsv(url.searchParams.get("region"));
   const storages = splitCsv(url.searchParams.get("storage"));
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
@@ -693,6 +694,7 @@ function getDevices(url) {
   addInFilter("c.name", categories, "category");
   addInFilter("m.name", manufacturers, "manufacturer");
   addInFilter("d.model_family", modelFamilies, "modelFamily");
+  addInFilter("d.grade", grades, "grade");
   addInFilter("dl.name", regions, "region");
   addInFilter("d.storage_capacity", storages, "storage");
 

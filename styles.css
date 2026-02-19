@@ -1054,21 +1054,18 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 0;
   border-left: 1px solid var(--line);
   overflow: hidden;
-}
-
-.cart-dialog::backdrop {
-  background: rgba(17, 24, 39, 0.48);
-}
-
-.cart-dialog[open] {
-  display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
   animation: cart-sheet-in 180ms ease-out;
 }
 
-.cart-dialog .modal {
-  width: 100%;
+.cart-overlay {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.cart-dialog.modal {
+  width: min(700px, 96vw);
   height: 100dvh;
   padding: 14px 16px 12px;
   display: flex;
