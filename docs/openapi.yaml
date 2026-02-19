@@ -490,7 +490,7 @@ paths:
   /api/integrations/boomi/inventory/sync:
     post:
       tags: [Inventory]
-      summary: Pull inventory feed from Boomi/NetSuite and map into local DB (admin only)
+      summary: Pull inventory feed from ERP integration and map into local DB (admin only)
       responses:
         "200":
           description: Sync result

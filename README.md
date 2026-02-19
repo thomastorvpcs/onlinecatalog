@@ -88,13 +88,21 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 
 ## Boomi Inventory Sync
 - Trigger sync (admin): `POST /api/integrations/boomi/inventory/sync`
-- Config via env vars:
+- Preferred config via env vars (OAuth2 + subscription key):
+  - `INVENTORY_API_URL` (for example: `https://api-test.pcsww.com/v1/md/inventory`)
+  - `INVENTORY_SUBSCRIPTION_KEY`
+  - `INVENTORY_OAUTH_TOKEN_URL`
+  - `INVENTORY_OAUTH_CLIENT_ID`
+  - `INVENTORY_OAUTH_CLIENT_SECRET`
+  - `INVENTORY_OAUTH_SCOPE`
+- Backward-compatible fallback (legacy basic auth):
   - `BOOMI_INVENTORY_URL`
   - `BOOMI_CUSTOMER_ID`
   - `BOOMI_BASIC_USERNAME`
   - `BOOMI_BASIC_PASSWORD`
   - `BOOMI_EXTRA_AUTH` (optional; sent as `X-Authorization`)
-  - `BOOMI_TLS_INSECURE` (`true`/`false`, default `true` for local test endpoint cert chain)
+- TLS toggle:
+  - `BOOMI_TLS_INSECURE` (`true`/`false`, default `false`)
 - Admin catalog utility endpoints:
   - Clear catalog: `POST /api/admin/catalog/clear`
   - Seed test devices: `POST /api/admin/catalog/seed-test` (defaults to 500 per category)

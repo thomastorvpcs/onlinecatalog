@@ -5,3 +5,5 @@ dist/
 vite.out.log
 vite.err.log
 backend/db/catalog.sqlite
+.env
+.env.local

@@ -7,12 +7,46 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = join(__dirname, "..");
+
+function stripEnvValue(value) {
+  const trimmed = String(value || "").trim();
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function loadLocalEnvFile(filePath) {
+  if (!existsSync(filePath)) return;
+  const raw = readFileSync(filePath, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const normalized = trimmed.startsWith("export ") ? trimmed.slice(7) : trimmed;
+    const eqIndex = normalized.indexOf("=");
+    if (eqIndex <= 0) continue;
+    const key = normalized.slice(0, eqIndex).trim();
+    if (!key) continue;
+    if (process.env[key] !== undefined) continue;
+    const value = normalized.slice(eqIndex + 1);
+    process.env[key] = stripEnvValue(value);
+  }
+}
+
+function loadLocalEnv(rootDir) {
+  loadLocalEnvFile(join(rootDir, ".env"));
+  loadLocalEnvFile(join(rootDir, ".env.local"));
+}
+
+loadLocalEnv(projectRoot);
+
 const dbDir = join(__dirname, "db");
 const dbPath = join(dbDir, "catalog.sqlite");
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
-const distDir = join(__dirname, "..", "dist");
-const docsDir = join(__dirname, "..", "docs");
+const distDir = join(projectRoot, "dist");
+const docsDir = join(projectRoot, "docs");
 const openApiPath = join(docsDir, "openapi.yaml");
 const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 
@@ -53,6 +87,12 @@ const BOOMI_BASIC_USERNAME = process.env.BOOMI_BASIC_USERNAME || "";
 const BOOMI_BASIC_PASSWORD = process.env.BOOMI_BASIC_PASSWORD || "";
 const BOOMI_EXTRA_AUTH = process.env.BOOMI_EXTRA_AUTH || "";
 const BOOMI_TLS_INSECURE = String(process.env.BOOMI_TLS_INSECURE || "false").toLowerCase() === "true";
+const INVENTORY_API_URL = process.env.INVENTORY_API_URL || "";
+const INVENTORY_SUBSCRIPTION_KEY = process.env.INVENTORY_SUBSCRIPTION_KEY || "";
+const INVENTORY_OAUTH_TOKEN_URL = process.env.INVENTORY_OAUTH_TOKEN_URL || "";
+const INVENTORY_OAUTH_CLIENT_ID = process.env.INVENTORY_OAUTH_CLIENT_ID || "";
+const INVENTORY_OAUTH_CLIENT_SECRET = process.env.INVENTORY_OAUTH_CLIENT_SECRET || "";
+const INVENTORY_OAUTH_SCOPE = process.env.INVENTORY_OAUTH_SCOPE || "";
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -1000,14 +1040,16 @@ function buildBoomiHeaders() {
   return headers;
 }
 
-async function fetchBoomiInventory() {
-  if (!BOOMI_CUSTOMER_ID || !BOOMI_BASIC_USERNAME || !BOOMI_BASIC_PASSWORD) {
-    throw new Error("Boomi credentials are not configured. Set BOOMI_CUSTOMER_ID, BOOMI_BASIC_USERNAME, and BOOMI_BASIC_PASSWORD.");
-  }
+async function requestJson(url, options = {}) {
+  const method = options.method || "GET";
+  const headers = options.headers || {};
+  const body = options.body || null;
+  const contentType = options.contentType || null;
+
   const payload = await new Promise((resolve, reject) => {
-    const req = https.request(BOOMI_INVENTORY_URL, {
-      method: "GET",
-      headers: buildBoomiHeaders(),
+    const req = https.request(url, {
+      method,
+      headers: contentType ? { ...headers, "Content-Type": contentType } : headers,
       rejectUnauthorized: !BOOMI_TLS_INSECURE
     }, (res) => {
       let data = "";
@@ -1017,21 +1059,86 @@ async function fetchBoomiInventory() {
       res.on("end", () => {
         const status = Number(res.statusCode || 0);
         if (status < 200 || status >= 300) {
-          reject(new Error(`Boomi inventory request failed (${status}): ${String(data || "").slice(0, 300)}`));
+          reject(new Error(`External inventory request failed (${status}): ${String(data || "").slice(0, 300)}`));
           return;
         }
         try {
-          resolve(JSON.parse(data || "[]"));
+          resolve(JSON.parse(data || "{}"));
         } catch {
-          reject(new Error("Boomi inventory response was not valid JSON."));
+          reject(new Error("External inventory response was not valid JSON."));
         }
       });
     });
     req.on("error", (error) => {
-      reject(new Error(`Boomi request error: ${error.message}`));
+      reject(new Error(`External inventory request error: ${error.message}`));
     });
+    if (body) req.write(body);
     req.end();
   });
+
+  return payload;
+}
+
+async function fetchInventoryOAuthToken() {
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: INVENTORY_OAUTH_CLIENT_ID,
+    client_secret: INVENTORY_OAUTH_CLIENT_SECRET,
+    scope: INVENTORY_OAUTH_SCOPE
+  }).toString();
+
+  const tokenPayload = await requestJson(INVENTORY_OAUTH_TOKEN_URL, {
+    method: "POST",
+    contentType: "application/x-www-form-urlencoded",
+    body,
+    headers: { Accept: "application/json" }
+  });
+
+  const accessToken = String(tokenPayload?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error("OAuth token response did not include access_token.");
+  }
+  return accessToken;
+}
+
+async function fetchBoomiInventory() {
+  const oauthConfig = {
+    INVENTORY_API_URL,
+    INVENTORY_SUBSCRIPTION_KEY,
+    INVENTORY_OAUTH_TOKEN_URL,
+    INVENTORY_OAUTH_CLIENT_ID,
+    INVENTORY_OAUTH_CLIENT_SECRET,
+    INVENTORY_OAUTH_SCOPE
+  };
+  const oauthKeys = Object.keys(oauthConfig);
+  const hasAnyOAuthConfig = oauthKeys.some((k) => String(oauthConfig[k] || "").trim().length > 0);
+  const missingOAuthKeys = oauthKeys.filter((k) => !String(oauthConfig[k] || "").trim());
+  const hasOAuthConfig = missingOAuthKeys.length === 0;
+
+  if (hasAnyOAuthConfig && !hasOAuthConfig) {
+    throw new Error(`Incomplete inventory OAuth configuration. Missing: ${missingOAuthKeys.join(", ")}`);
+  }
+
+  let payload;
+  if (hasOAuthConfig) {
+    const accessToken = await fetchInventoryOAuthToken();
+    payload = await requestJson(INVENTORY_API_URL, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "subscription-key": INVENTORY_SUBSCRIPTION_KEY
+      }
+    });
+  } else {
+    if (!BOOMI_CUSTOMER_ID || !BOOMI_BASIC_USERNAME || !BOOMI_BASIC_PASSWORD) {
+      throw new Error("Inventory credentials are not configured. Set INVENTORY_* OAuth values (preferred) or BOOMI_* basic-auth values.");
+    }
+    payload = await requestJson(BOOMI_INVENTORY_URL, {
+      method: "GET",
+      headers: buildBoomiHeaders()
+    });
+  }
 
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.inventory)) return payload.inventory;

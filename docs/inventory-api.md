@@ -18,7 +18,7 @@ Role requirement:
 - `admin` only (recommended)
 
 ## NetSuite/Boomi Sync
-Use this endpoint to fetch inventory from Boomi and map it into local tables (`devices`, `device_inventory`, `locations`).
+Use this endpoint to fetch inventory from the ERP integration API and map it into local tables (`devices`, `device_inventory`, `locations`).
 
 - Method: `POST`
 - Path: `/api/integrations/boomi/inventory/sync`
@@ -35,12 +35,23 @@ Use this endpoint to fetch inventory from Boomi and map it into local tables (`d
 ```
 
 ### Environment variables used by backend
+Preferred (OAuth2 + subscription key):
+- `INVENTORY_API_URL`
+- `INVENTORY_SUBSCRIPTION_KEY`
+- `INVENTORY_OAUTH_TOKEN_URL`
+- `INVENTORY_OAUTH_CLIENT_ID`
+- `INVENTORY_OAUTH_CLIENT_SECRET`
+- `INVENTORY_OAUTH_SCOPE`
+
+Fallback (legacy basic auth):
 - `BOOMI_INVENTORY_URL`
 - `BOOMI_CUSTOMER_ID`
 - `BOOMI_BASIC_USERNAME`
 - `BOOMI_BASIC_PASSWORD`
 - `BOOMI_EXTRA_AUTH` (optional; sent as `X-Authorization`)
-- `BOOMI_TLS_INSECURE` (`true`/`false`, default `true` in this test build for self-signed cert chains)
+
+TLS:
+- `BOOMI_TLS_INSECURE` (`true`/`false`, default `false`)
 
 ## Admin Catalog Tools
 
