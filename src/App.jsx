@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const productsSeed = [
   { id: "p1", manufacturer: "Apple", model: "iPhone 15 Pro Max 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 100, available: 100, image: "images/iphone_15_Pro.png", locations: { Miami: 40, Dubai: 20, "Hong Kong": 25, Japan: 15 } },
@@ -78,6 +78,7 @@ const DEMO_REFRESH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const SESSION_WARNING_MS = 5 * 60 * 1000;
 const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
+const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -490,6 +491,7 @@ function PhoneNavIcon() {
 }
 
 export default function App() {
+  const persistedViewState = readJson(localStorage, UI_VIEW_STATE_KEY, {});
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
   const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem("pcs.refreshToken") || "");
@@ -504,14 +506,17 @@ export default function App() {
   const [categoryDevices, setCategoryDevices] = useState([]);
   const [categoryTotal, setCategoryTotal] = useState(0);
   const [categoryLoading, setCategoryLoading] = useState(false);
-  const [route, setRoute] = useState("products");
-  const [productsView, setProductsView] = useState("home");
-  const [selectedCategory, setSelectedCategory] = useState("Smartphones");
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState({});
-  const [weeklySearch, setWeeklySearch] = useState("");
-  const [weeklyFilters, setWeeklyFilters] = useState({});
-  const [categoryPage, setCategoryPage] = useState(1);
+  const [route, setRoute] = useState(() => persistedViewState.route || "products");
+  const [productsView, setProductsView] = useState(() => persistedViewState.productsView || "home");
+  const [selectedCategory, setSelectedCategory] = useState(() => persistedViewState.selectedCategory || "Smartphones");
+  const [search, setSearch] = useState(() => persistedViewState.search || "");
+  const [filters, setFilters] = useState(() => (persistedViewState.filters && typeof persistedViewState.filters === "object" ? persistedViewState.filters : {}));
+  const [weeklySearch, setWeeklySearch] = useState(() => persistedViewState.weeklySearch || "");
+  const [weeklyFilters, setWeeklyFilters] = useState(() => (persistedViewState.weeklyFilters && typeof persistedViewState.weeklyFilters === "object" ? persistedViewState.weeklyFilters : {}));
+  const [categoryPage, setCategoryPage] = useState(() => {
+    const n = Number(persistedViewState.categoryPage || 1);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  });
   const [cart, setCart] = useState(() => readJson(sessionStorage, "pcs.cart", []));
   const [requestStatusFilter, setRequestStatusFilter] = useState("All");
   const [requestSearch, setRequestSearch] = useState("");
@@ -545,6 +550,7 @@ export default function App() {
   const [weeklyDeviceSavingId, setWeeklyDeviceSavingId] = useState("");
   const [weeklyDeviceError, setWeeklyDeviceError] = useState("");
   const [weeklySpecialSearch, setWeeklySpecialSearch] = useState("");
+  const skipInitialCategoryResetRef = useRef(true);
 
   const companyKey = user ? user.company.toLowerCase().trim() : "anon";
   const requestsKey = `pcs.requests.${companyKey}`;
@@ -726,10 +732,36 @@ export default function App() {
   }, [products, selectedCategory]);
 
   useEffect(() => {
+    if (skipInitialCategoryResetRef.current) {
+      skipInitialCategoryResetRef.current = false;
+      return;
+    }
     if (productsView === "category") {
       setCategoryPage(1);
     }
   }, [selectedCategory, search, filters, productsView]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== "admin" && route === "users") {
+      setRoute("products");
+      setProductsView("home");
+    }
+  }, [user, route]);
+
+  useEffect(() => {
+    if (!user) return;
+    writeJson(localStorage, UI_VIEW_STATE_KEY, {
+      route,
+      productsView,
+      selectedCategory,
+      search,
+      filters,
+      weeklySearch,
+      weeklyFilters,
+      categoryPage
+    });
+  }, [user, route, productsView, selectedCategory, search, filters, weeklySearch, weeklyFilters, categoryPage]);
 
   useEffect(() => {
     let ignore = false;
@@ -1405,10 +1437,10 @@ export default function App() {
                     <>
                       <div className="products-grid">{categoryDevices.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
                       {totalCategoryPages > 1 ? (
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
-                          <button className="ghost-btn" disabled={safeCategoryPage <= 1} onClick={() => setCategoryPage((p) => Math.max(1, p - 1))}>Prev</button>
-                          <span className="small" style={{ alignSelf: "center" }}>Page {safeCategoryPage} / {totalCategoryPages}</span>
-                          <button className="ghost-btn" disabled={safeCategoryPage >= totalCategoryPages} onClick={() => setCategoryPage((p) => Math.min(totalCategoryPages, p + 1))}>Next</button>
+                        <div className="pagination-bar">
+                          <button className="ghost-btn pagination-btn" disabled={safeCategoryPage <= 1} onClick={() => setCategoryPage((p) => Math.max(1, p - 1))}>Prev</button>
+                          <span className="small pagination-status">Page {safeCategoryPage} / {totalCategoryPages}</span>
+                          <button className="ghost-btn pagination-btn" disabled={safeCategoryPage >= totalCategoryPages} onClick={() => setCategoryPage((p) => Math.min(totalCategoryPages, p + 1))}>Next</button>
                         </div>
                       ) : null}
                     </>
@@ -1721,6 +1753,7 @@ export default function App() {
 }
 
 function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword }) {
+  const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1779,7 +1812,15 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
 
   return (
     <div className="auth-shell">
-      <div className="auth-card">
+      <div className="auth-layout">
+        <aside className="auth-hero">
+          <div className="auth-hero-logo-wrap">
+            <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
+          </div>
+          <h2 className="auth-hero-title">PCS Online Catalog</h2>
+          <p className="auth-hero-text">PCS Wireless: powering smarter sourcing with trusted device lifecycle solutions.</p>
+        </aside>
+        <div className="auth-card">
         <h1 className="auth-title">{mode === "register" ? "Create Account" : mode === "reset-confirm" ? "Reset Password" : mode === "reset-request" ? "Forgot Password" : "Login"}</h1>
         {mode === "approval" ? (
           <>
@@ -1849,6 +1890,7 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
         </div>
           </>
         )}
+        </div>
       </div>
     </div>
   );
