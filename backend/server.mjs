@@ -297,7 +297,11 @@ function initDb() {
   if (count === 0) {
     db.exec(readFileSync(seedPath, "utf8"));
   }
-  ensureLargeCatalog();
+  if (AUTO_SEED_REAL_ON_STARTUP) {
+    db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
+  } else {
+    ensureLargeCatalog();
+  }
   ensureDeployRealSeed();
   ensureDefaultUsers();
 }
