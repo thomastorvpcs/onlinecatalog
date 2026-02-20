@@ -1,6 +1,7 @@
 name: Sync Confluence Docs
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
