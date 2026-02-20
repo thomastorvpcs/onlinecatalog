@@ -15,7 +15,6 @@ on:
 jobs:
   sync-confluence:
     runs-on: ubuntu-latest
-    if: ${{ secrets.CONFLUENCE_BASE_URL != '' && secrets.CONFLUENCE_EMAIL != '' && secrets.CONFLUENCE_API_TOKEN != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,6 +23,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Validate required Confluence secrets
+        env:
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+        run: |
+          if [ -z "$CONFLUENCE_BASE_URL" ] || [ -z "$CONFLUENCE_EMAIL" ] || [ -z "$CONFLUENCE_API_TOKEN" ]; then
+            echo "Missing required secrets: CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN"
+            exit 1
+          fi
 
       - name: Publish Functional + Technical page
         env:
@@ -48,4 +58,3 @@ jobs:
             --title "Test: AI Technical documentation" \
             --file docs/confluence-technical.storage.html \
             --parent 3109715969
-
