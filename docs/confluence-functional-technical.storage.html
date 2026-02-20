@@ -1,0 +1,48 @@
+<h1>PCS Online Catalog - Functional and Technical Documentation</h1>
+<p><strong>TEST COMMENT:</strong> Confluence automation validation update.</p>
+
+<h2>Repository</h2>
+<p><a href="https://github.com/thomastorvpcs/onlinecatalog">https://github.com/thomastorvpcs/onlinecatalog</a></p>
+
+<h2>1. Purpose and Scope</h2>
+<p>PCS Online Catalog is a web application used to browse live device inventory, filter by multiple criteria, build request carts, and submit inventory requests. It supports buyer and admin workflows and integrates with external inventory APIs for synchronization.</p>
+
+<h2>2. Functional Documentation</h2>
+<h3>2.1 User Roles</h3>
+<ul>
+  <li><strong>Buyer</strong>: sign in, browse catalog, filter/search, open device details, add to requested items, submit request.</li>
+  <li><strong>Admin</strong>: buyer capabilities plus user management, approvals, catalog utilities, weekly special controls, and external sync.</li>
+</ul>
+
+<h3>2.2 Key Flows</h3>
+<ul>
+  <li>Authentication: login, create account, forgot password, approval states.</li>
+  <li>Catalog browsing: category home, category detail pages, server-side pagination.</li>
+  <li>Device details modal: carousel, availability, specs, request add flow.</li>
+  <li>Requested items modal: editable price/qty, totals, submit action.</li>
+  <li>Admin tools: sync, clear, seed synthetic, seed realistic, apply image mapping.</li>
+</ul>
+
+<h2>3. Technical Documentation</h2>
+<h3>3.1 Architecture</h3>
+<ul>
+  <li>Frontend: React 18 + Vite 5 (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a>)</li>
+  <li>Backend: Node.js HTTP server (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a>)</li>
+  <li>Database: SQLite (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">schema</a>)</li>
+  <li>API docs: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">OpenAPI</a></li>
+</ul>
+
+<h3>3.2 External Inventory Sync</h3>
+<p>Preferred integration uses OAuth2 client credentials + subscription key; legacy Boomi basic-auth fallback is retained for backward compatibility.</p>
+
+<h2>4. GitHub References</h2>
+<ul>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/seed.sql">backend/db/seed.sql</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/styles.css">styles.css</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/vite.config.js">vite.config.js</a></li>
+</ul>

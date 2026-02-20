@@ -1,0 +1,46 @@
+<h1>PCS Online Catalog - Technical Documentation</h1>
+<p><strong>TEST COMMENT:</strong> Confluence automation validation update.</p>
+
+<h2>Repository</h2>
+<p><a href="https://github.com/thomastorvpcs/onlinecatalog">https://github.com/thomastorvpcs/onlinecatalog</a></p>
+
+<h2>1. Architecture</h2>
+<ul>
+  <li>Frontend: React + Vite (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a>)</li>
+  <li>Backend: Node.js HTTP server (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a>)</li>
+  <li>Database: SQLite (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">schema</a>)</li>
+</ul>
+
+<h2>2. API Documentation</h2>
+<ul>
+  <li>OpenAPI: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li>Inventory API: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+</ul>
+
+<h2>3. Authentication and Authorization</h2>
+<ul>
+  <li>Bearer access tokens + refresh tokens</li>
+  <li>Password hashing with scrypt</li>
+  <li>Role-based admin route protection</li>
+</ul>
+
+<h2>4. Inventory Integration</h2>
+<ul>
+  <li>Preferred: OAuth2 client credentials + subscription key</li>
+  <li>Fallback: legacy Boomi basic-auth flow</li>
+</ul>
+
+<h2>5. Local Run</h2>
+<ul>
+  <li><code>npm run api</code> (backend)</li>
+  <li><code>npm run dev</code> (frontend)</li>
+</ul>
+
+<h2>6. Key References</h2>
+<ul>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></li>
+</ul>

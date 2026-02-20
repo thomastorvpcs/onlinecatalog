@@ -86,6 +86,29 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - Raw spec endpoint: `/api/openapi.yaml`
 - Swagger UI endpoint: `/api/docs`
 
+## Confluence Publish Helper
+- Script: `scripts/confluence-upsert.mjs`
+- Storage HTML source template: `docs/confluence-functional-technical.storage.html`
+- Technical-only source template: `docs/confluence-technical.storage.html`
+- Required env vars:
+  - `CONFLUENCE_BASE_URL` (example: `https://your-org.atlassian.net`)
+  - `CONFLUENCE_EMAIL`
+  - `CONFLUENCE_API_TOKEN`
+- Example:
+  - `node scripts/confluence-upsert.mjs --space SAD --title "PCS Online Catalog - Functional and Technical Documentation" --file docs/confluence-functional-technical.storage.html`
+
+### Automatic publish on commit
+- Workflow: `.github/workflows/confluence-docs-sync.yml`
+- Trigger: push to `main` when documentation-related files change.
+- Publishes:
+  - `Test: AI functional and technical documentation`
+  - `Test: AI Technical documentation`
+- Parent page id: `3109715969`
+- Required GitHub repository secrets:
+  - `CONFLUENCE_BASE_URL`
+  - `CONFLUENCE_EMAIL`
+  - `CONFLUENCE_API_TOKEN`
+
 ## Boomi Inventory Sync
 - Trigger sync (admin): `POST /api/integrations/boomi/inventory/sync`
 - Preferred config via env vars (OAuth2 + subscription key):
