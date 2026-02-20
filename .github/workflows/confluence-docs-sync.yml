@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/confluence-functional-technical.storage.html"
       - "docs/confluence-technical.storage.html"
+      - "docs/confluence-setup-guide.storage.html"
       - "docs/inventory-api.md"
       - "docs/openapi.yaml"
       - "README.md"
@@ -58,4 +59,16 @@ jobs:
             --space SAD \
             --title "Test: AI Technical documentation" \
             --file docs/confluence-technical.storage.html \
+            --parent 3109715969
+
+      - name: Publish Setup Guide page
+        env:
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+        run: |
+          node scripts/confluence-upsert.mjs \
+            --space SAD \
+            --title "Test: AI GitHub to Confluence automation setup guide" \
+            --file docs/confluence-setup-guide.storage.html \
             --parent 3109715969
