@@ -550,6 +550,33 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
+  /api/admin/catalog/seed-real:
+    post:
+      tags: [Inventory]
+      summary: Seed realistic test devices by category with mapped model photos (admin only)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                countPerCategory:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  default: 100
+      responses:
+        "200":
+          description: Seed complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeedCatalogResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
 components:
   securitySchemes:
     bearerAuth:

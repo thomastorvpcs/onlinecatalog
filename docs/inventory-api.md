@@ -90,6 +90,27 @@ Response example:
 }
 ```
 
+### Seed realistic catalog devices
+- Method: `POST`
+- Path: `/api/admin/catalog/seed-real`
+- Auth: admin
+
+Request body (optional):
+```json
+{
+  "countPerCategory": 100
+}
+```
+
+Response example:
+```json
+{
+  "ok": true,
+  "categoriesSeeded": 5,
+  "countPerCategory": 100
+}
+```
+
 ---
 
 ## 1) Get Inventory for a Device

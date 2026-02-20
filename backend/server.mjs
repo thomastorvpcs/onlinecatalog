@@ -78,9 +78,185 @@ const MODEL_IMAGE_MAP = {
   "Pixel Watch 2": "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-watch-2.jpg",
   "AirPods Pro": "https://store.storeimages.cdn-apple.com/1/as-images.apple.com/is/airpods-pro-2-hero-select-202409?wid=890&hei=890&fmt=jpeg&qlt=90&.v=1724041668836",
   "Galaxy Buds2 Pro": "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-buds2-pro.jpg",
+  "Apple 20W USB-C Power Adapter": "https://store.storeimages.cdn-apple.com/1/as-images.apple.com/is/MU7T2?wid=890&hei=890&fmt=jpeg&qlt=90&.v=1542407168808",
+  "Sony WH-1000XM5": "https://fdn2.gsmarena.com/vv/bigpic/sony-wh-1000xm5.jpg",
   "MacBook Air 13": "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
-  "MacBook Pro 14": "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526"
+  "MacBook Pro 14": "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526",
+  "Galaxy Book4 Pro": "https://images.samsung.com/is/image/samsung/p6pim/uk/np940xgk-kg1uk/gallery/uk-galaxy-book4-pro-np940xgk-kg1uk-thumb-539526715?$216_216_PNG$",
+  "ThinkPad X1 Carbon": "https://p3-ofp.static.pub/fes/cms/2023/10/31/0k4ad9zpyhgh4hywj0v1wflsl58xq8157018.png"
 };
+const MODEL_VARIANT_IMAGE_POOLS = {
+  "iPhone 15": [
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-plus.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-plus.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro-max.jpg"
+  ],
+  "iPhone 15 Pro": [
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-12-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-12-pro-max-2.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-11-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-11-pro-max-.jpg"
+  ],
+  "iPhone 15 Pro Max": [
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro-max.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-12-pro-max-2.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-11-pro-max-.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-xs-max-new1.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16-pro-max.jpg"
+  ],
+  "Galaxy S24": [
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-5g-sm-s921.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-plus-5g-sm-s926.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-ultra-5g-sm-s928.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s23.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s23-plus-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s23-ultra-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s22-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s22-plus-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s22-ultra-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-a55.jpg"
+  ],
+  "Pixel 8": [
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7a-r.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6a.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-5.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-4-xl-.jpg"
+  ],
+  "Pixel 8 Pro": [
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-6a.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-5.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-4a-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-fold.jpg"
+  ],
+  "MacBook Air 13": [
+    "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
+    "https://commons.wikimedia.org/wiki/Special:FilePath/MacBook%20Air%20%2813-inch%2C%20M4%2C%20Silver%29.jpg",
+    "https://commons.wikimedia.org/wiki/Special:FilePath/MacBook%20Air%20%2815-inch%2C%20M4%2C%20Silver%29.jpg",
+    "https://images.unsplash.com/photo-1517336714739-489689fd1ca8?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1593642634367-d91a135587b5?auto=format&fit=crop&w=1200&q=80"
+  ],
+  "MacBook Pro 14": [
+    "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526",
+    "https://commons.wikimedia.org/wiki/Special:FilePath/MacBook%20Pro%20%2814-inch%2C%20M5%2C%20Space%20Black%29.jpg",
+    "https://commons.wikimedia.org/wiki/Special:FilePath/MacBook%20Pro%20%2816-inch%2C%20M4%20Pro%2C%20Silver%29.jpg",
+    "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1541807084-5c52b6b3adef?auto=format&fit=crop&w=1200&q=80"
+  ]
+};
+const IPHONE_IMAGE_POOL = [
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-plus.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-plus.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-14-pro-max.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13.jpg",
+  "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-13-pro-max.jpg"
+];
+const CATEGORY_SEED_IMAGE_POOLS = {
+  Smartphones: [
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-5g-sm-s921.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-plus-5g-sm-s926.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24-ultra-5g-sm-s928.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-8-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-7.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/motorola-edge-50-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/motorola-edge-40-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-z-flip5-5g.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-z-fold5.jpg"
+  ],
+  Tablets: [
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-pro-11-2024.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-pro-13-2024.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-air-11-2024.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-air-13-2024.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-10-2022.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-tab-s9.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-tab-s9-plus.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-tab-s9-ultra.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/lenovo-tab-p12.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-tablet.jpg"
+  ],
+  Laptops: [
+    "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
+    "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526",
+    "https://images.samsung.com/is/image/samsung/p6pim/uk/np940xgk-kg1uk/gallery/uk-galaxy-book4-pro-np940xgk-kg1uk-thumb-539526715?$216_216_PNG$",
+    "https://p3-ofp.static.pub/fes/cms/2023/10/31/0k4ad9zpyhgh4hywj0v1wflsl58xq8157018.png",
+    "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1517336714739-489689fd1ca8?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1541807084-5c52b6b3adef?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1593642634367-d91a135587b5?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1504707748692-419802cf939d?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80"
+  ],
+  Wearables: [
+    "https://www.apple.com/assets-www/en_WW/watch/og/watch_og_1ff2ee953.png",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-watch6.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-watch6-classic.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/google-pixel-watch-2.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-watch-series-9.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/apple-watch-ultra-2.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-watch5.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/huawei-watch-gt4.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/garmin-venu-3.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/amazfit-gtr-4.jpg"
+  ],
+  Accessories: [
+    "https://store.storeimages.cdn-apple.com/1/as-images.apple.com/is/airpods-pro-2-hero-select-202409?wid=890&hei=890&fmt=jpeg&qlt=90&.v=1724041668836",
+    "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-buds2-pro.jpg",
+    "https://fdn2.gsmarena.com/vv/bigpic/sony-wh-1000xm5.jpg",
+    "https://store.storeimages.cdn-apple.com/1/as-images.apple.com/is/MU7T2?wid=890&hei=890&fmt=jpeg&qlt=90&.v=1542407168808",
+    "https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1606220588913-b3aacb4d2f46?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1585298723682-7115561c51b7?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1545127398-14699f92334b?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1587033411391-5d9e51cce126?auto=format&fit=crop&w=1200&q=80"
+  ]
+};
+
+function getSeedImagePool(categoryName, modelFamily) {
+  const modelImage = MODEL_IMAGE_MAP[modelFamily];
+  const modelVariants = MODEL_VARIANT_IMAGE_POOLS[modelFamily] || [];
+  const basePool = CATEGORY_SEED_IMAGE_POOLS[categoryName] || [];
+  if (String(modelFamily || "").toLowerCase().includes("iphone")) {
+    return [...new Set([modelImage, ...modelVariants, ...IPHONE_IMAGE_POOL, ...basePool].filter(Boolean))];
+  }
+  return [...new Set([modelImage, ...modelVariants, ...basePool].filter(Boolean))];
+}
 const BOOMI_INVENTORY_URL = process.env.BOOMI_INVENTORY_URL || "https://c01-usa-east-et.integrate-test.boomi.com/ws/rest/masterdealer/inventory/";
 const BOOMI_CUSTOMER_ID = process.env.BOOMI_CUSTOMER_ID || "";
 const BOOMI_BASIC_USERNAME = process.env.BOOMI_BASIC_USERNAME || "";
@@ -1013,6 +1189,208 @@ function seedAdminTestDevicesPerCategory(countPerCategory) {
   };
 }
 
+function seedAdminRealDevicesPerCategory(countPerCategory) {
+  const categories = db.prepare("SELECT id, name FROM categories").all();
+  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
+  const locations = db.prepare("SELECT id FROM locations ORDER BY id").all().map((l) => l.id);
+  const manufacturerByName = new Map(
+    db.prepare("SELECT id, name FROM manufacturers").all().map((m) => [m.name, m.id])
+  );
+  const ensureManufacturer = db.prepare("INSERT INTO manufacturers (name) VALUES (?)");
+  const config = [
+    {
+      name: "Smartphones",
+      models: [
+        { family: "iPhone 15", manufacturer: "Apple" },
+        { family: "iPhone 15 Pro", manufacturer: "Apple" },
+        { family: "iPhone 15 Pro Max", manufacturer: "Apple" },
+        { family: "Galaxy S24", manufacturer: "Samsung" },
+        { family: "Pixel 8", manufacturer: "Google" },
+        { family: "Pixel 8 Pro", manufacturer: "Google" },
+        { family: "Motorola Edge 50", manufacturer: "Motorola" }
+      ],
+      storages: ["128GB", "256GB", "512GB", "1TB"],
+      colors: ["Black", "Blue", "Gray", "Silver", "Green", "Pink"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 420
+    },
+    {
+      name: "Tablets",
+      models: [
+        { family: "iPad Pro 11", manufacturer: "Apple" },
+        { family: "iPad Air 11", manufacturer: "Apple" },
+        { family: "Galaxy Tab S9", manufacturer: "Samsung" },
+        { family: "Galaxy Tab A9+", manufacturer: "Samsung" },
+        { family: "Pixel Tablet", manufacturer: "Google" },
+        { family: "Lenovo Tab P12", manufacturer: "Lenovo" }
+      ],
+      storages: ["64GB", "128GB", "256GB", "512GB"],
+      colors: ["Gray", "Blue", "Silver", "Black", "Gold"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 260
+    },
+    {
+      name: "Laptops",
+      models: [
+        { family: "MacBook Air 13", manufacturer: "Apple" },
+        { family: "MacBook Pro 14", manufacturer: "Apple" },
+        { family: "Galaxy Book4 Pro", manufacturer: "Samsung" },
+        { family: "ThinkPad X1 Carbon", manufacturer: "Lenovo" }
+      ],
+      storages: ["256GB", "512GB", "1TB", "2TB"],
+      colors: ["Black", "Gray", "Silver", "Blue", "White"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 740
+    },
+    {
+      name: "Wearables",
+      models: [
+        { family: "Apple Watch Series 9", manufacturer: "Apple" },
+        { family: "Watch Ultra 2", manufacturer: "Apple" },
+        { family: "Galaxy Watch 6", manufacturer: "Samsung" },
+        { family: "Pixel Watch 2", manufacturer: "Google" }
+      ],
+      storages: ["32GB", "64GB"],
+      colors: ["Black", "Blue", "Silver", "Gray", "White"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 180
+    },
+    {
+      name: "Accessories",
+      models: [
+        { family: "AirPods Pro", manufacturer: "Apple" },
+        { family: "Galaxy Buds2 Pro", manufacturer: "Samsung" },
+        { family: "Apple 20W USB-C Power Adapter", manufacturer: "Apple" },
+        { family: "Sony WH-1000XM5", manufacturer: "Sony" }
+      ],
+      storages: ["N/A"],
+      colors: ["Black", "White", "Blue", "Gray", "Silver", "Green", "Pink"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 45
+    }
+  ];
+
+  const deviceInsert = db.prepare(`
+    INSERT INTO devices (
+      id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
+      image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+  const inventoryInsert = db.prepare(`
+    INSERT INTO device_inventory (device_id, location_id, quantity)
+    VALUES (?, ?, ?)
+  `);
+  const imageInsert = db.prepare(`
+    INSERT INTO device_images (device_id, image_url, sort_order)
+    VALUES (?, ?, ?)
+  `);
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.exec("DELETE FROM devices WHERE id LIKE 'adminreal-%'");
+    for (const cfg of config) {
+      const categoryId = categoryByName.get(cfg.name);
+      if (!categoryId) continue;
+      const variants = [];
+      for (let modelIdx = 0; modelIdx < cfg.models.length; modelIdx += 1) {
+        const model = cfg.models[modelIdx];
+        for (let storageIdx = 0; storageIdx < cfg.storages.length; storageIdx += 1) {
+          const storage = cfg.storages[storageIdx];
+          for (let colorIdx = 0; colorIdx < cfg.colors.length; colorIdx += 1) {
+            const color = cfg.colors[colorIdx];
+            for (let gradeIdx = 0; gradeIdx < cfg.grades.length; gradeIdx += 1) {
+              const grade = cfg.grades[gradeIdx];
+              variants.push({
+                modelFamily: model.family,
+                manufacturerName: model.manufacturer,
+                storage,
+                color,
+                grade,
+                modelIdx,
+                storageIdx,
+                colorIdx,
+                gradeIdx
+              });
+            }
+          }
+        }
+      }
+      for (let i = 0; i < countPerCategory; i += 1) {
+        const variant = variants[i % variants.length];
+        const cycle = Math.floor(i / variants.length) + 1;
+        const manufacturerName = variant.manufacturerName;
+        let manufacturerId = manufacturerByName.get(manufacturerName);
+        if (!manufacturerId) {
+          manufacturerId = Number(ensureManufacturer.run(manufacturerName).lastInsertRowid);
+          manufacturerByName.set(manufacturerName, manufacturerId);
+        }
+        const modelFamily = variant.modelFamily;
+        const storage = variant.storage;
+        const color = variant.color;
+        const grade = variant.grade;
+        const defaultLocationId = locations[i % locations.length];
+        const id = `adminreal-${cfg.name.toLowerCase()}-${String(i + 1).padStart(4, "0")}`;
+        const modelNameBase = storage === "N/A" ? `${modelFamily} - ${color}` : `${modelFamily} ${storage} - ${color}`;
+        const modelName = cycle > 1 ? `${modelNameBase} v${cycle}` : modelNameBase;
+        const price = Number((cfg.basePrice + (variant.modelIdx * 9) + (variant.storageIdx * 14) + (variant.gradeIdx * 11) + (variant.colorIdx % 7)).toFixed(2));
+        const carrier = cfg.name === "Accessories" ? "Bluetooth" : (cfg.name === "Laptops" || cfg.name === "Tablets" ? "WiFi" : "Unlocked");
+        const screenSize = cfg.name === "Wearables" ? "47 mm" : cfg.name === "Tablets" ? "11 inches" : cfg.name === "Laptops" ? "14 inches" : (cfg.name === "Accessories" ? "N/A" : "6.1 inches");
+        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
+        const uniqueSeed = (variant.modelIdx * 11) + (variant.storageIdx * 7) + (variant.colorIdx * 5) + (variant.gradeIdx * 3) + cycle;
+        const seedImagePool = getSeedImagePool(cfg.name, modelFamily);
+        const heroImage = seedImagePool.length ? seedImagePool[uniqueSeed % seedImagePool.length] : MODEL_IMAGE_MAP["iPhone 15"];
+
+        deviceInsert.run(
+          id,
+          manufacturerId,
+          categoryId,
+          modelName,
+          modelFamily,
+          storage,
+          grade,
+          price,
+          heroImage,
+          carrier,
+          screenSize,
+          "No",
+          color,
+          kitType,
+          `Admin realistic test device for ${cfg.name}.`,
+          defaultLocationId
+        );
+
+        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
+          const qty = 10 + ((i * 7 + locIdx * 11) % 120);
+          inventoryInsert.run(id, locations[locIdx], qty);
+        }
+        const gallery = [heroImage];
+        if (seedImagePool.length > 1) {
+          const alt1 = seedImagePool[(uniqueSeed + 1) % seedImagePool.length];
+          if (alt1 && !gallery.includes(alt1)) gallery.push(alt1);
+        }
+        if (seedImagePool.length > 2) {
+          const alt2 = seedImagePool[(uniqueSeed + 2) % seedImagePool.length];
+          if (alt2 && !gallery.includes(alt2)) gallery.push(alt2);
+        }
+        if (seedImagePool.length > 3) {
+          const alt3 = seedImagePool[(uniqueSeed + 3) % seedImagePool.length];
+          if (alt3 && !gallery.includes(alt3)) gallery.push(alt3);
+        }
+        gallery.forEach((img, idx) => imageInsert.run(id, img, idx + 1));
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    categoriesSeeded: config.length,
+    countPerCategory
+  };
+}
+
 function toTitleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -1761,6 +2139,16 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const countPerCategory = Math.max(1, Math.min(5000, Number(body.countPerCategory || 500)));
       const result = seedAdminTestDevicesPerCategory(countPerCategory);
+      json(req, res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/catalog/seed-real") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      const countPerCategory = Math.max(1, Math.min(1000, Number(body.countPerCategory || 100)));
+      const result = seedAdminRealDevicesPerCategory(countPerCategory);
       json(req, res, 200, { ok: true, ...result });
       return;
     }

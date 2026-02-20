@@ -1233,6 +1233,27 @@ export default function App() {
       setAdminCatalogLoading(false);
     }
   };
+
+  const seedRealDevicesForAdmin = async () => {
+    try {
+      setAdminCatalogLoading(true);
+      setAdminCatalogError("");
+      setAdminCatalogResult("");
+      const payload = await apiRequest("/api/admin/catalog/seed-real", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { countPerCategory: 100 }
+      });
+      setAdminCatalogResult(`Realistic seed complete. Added ${Number(payload.countPerCategory || 0)} devices per category (${Number(payload.categoriesSeeded || 0)} categories).`);
+    } catch (error) {
+      setAdminCatalogError(error.message || "Failed to seed realistic devices.");
+    } finally {
+      setAdminCatalogLoading(false);
+    }
+  };
   const applyImageMappingForAdmin = async () => {
     try {
       setAdminImageMapLoading(true);
@@ -1620,6 +1641,9 @@ export default function App() {
                   <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedTestDevicesForAdmin}>
                     {adminCatalogLoading ? "Working..." : "Add 500 Test Devices/Category"}
                   </button>
+                  <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedRealDevicesForAdmin}>
+                    {adminCatalogLoading ? "Working..." : "Add 100 Real Devices/Category"}
+                  </button>
                   <button type="button" style={{ width: "auto" }} disabled={adminImageMapLoading} onClick={applyImageMappingForAdmin}>
                     {adminImageMapLoading ? "Working..." : "Apply Product Image Mapping"}
                   </button>
@@ -1728,7 +1752,7 @@ export default function App() {
               <div>
                 <div className="modal-box">
                   <div className="thumb modal-main-image" style={{ height: 230 }}>
-                    <img src={activeModalImage} alt={activeProduct.model} />
+                    <ImageWithFallback src={activeModalImage} alt={activeProduct.model} />
                     {canCarousel ? <button type="button" className="modal-image-nav left" onClick={() => setActiveImageIndex((i) => (i - 1 + modalImages.length) % modalImages.length)}>‹</button> : null}
                     {canCarousel ? <button type="button" className="modal-image-nav right" onClick={() => setActiveImageIndex((i) => (i + 1) % modalImages.length)}>›</button> : null}
                   </div>
@@ -1736,7 +1760,7 @@ export default function App() {
                     <div className="modal-thumbs">
                       {modalImages.map((img, idx) => (
                         <button type="button" key={`${activeProduct.id}-img-${idx}`} className={`modal-thumb-btn ${idx === activeImageIndex ? "active" : ""}`} onClick={() => setActiveImageIndex(idx)}>
-                          <img src={img} alt={`${activeProduct.model} ${idx + 1}`} />
+                          <ImageWithFallback src={img} alt={`${activeProduct.model} ${idx + 1}`} />
                         </button>
                       ))}
                     </div>
@@ -2025,12 +2049,33 @@ function UsersTableSkeleton() {
   );
 }
 
+function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) {
+  const fallback = `${import.meta.env.BASE_URL}device-fallback.png`;
+  const [resolvedSrc, setResolvedSrc] = useState(src || fallback);
+
+  useEffect(() => {
+    setResolvedSrc(src || fallback);
+  }, [src, fallback]);
+
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt}
+      className={className}
+      loading={loading}
+      onError={() => {
+        if (resolvedSrc !== fallback) setResolvedSrc(fallback);
+      }}
+    />
+  );
+}
+
 function ProductCard({ p, image, onOpen, onAdd }) {
   const unavailable = p.available < 1;
   const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
   return (
     <article className="card product-card">
-      <div className="thumb product-thumb" onClick={() => onOpen(p)}><img src={image} alt={p.model} loading="lazy" /></div>
+      <div className="thumb product-thumb" onClick={() => onOpen(p)}><ImageWithFallback src={image} alt={p.model} /></div>
       <div className="brand product-brand">{p.manufacturer}</div>
       <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
       <div className="price">${cardPrice}</div>
