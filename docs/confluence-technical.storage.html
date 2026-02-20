@@ -214,6 +214,12 @@
   <li>Push changes to GitHub (<code>main</code>).</li>
   <li>Ensure Render service points to correct repo/branch.</li>
   <li>Configure required <code>INVENTORY_*</code> environment variables.</li>
+  <li>Configure deploy startup seed behavior (optional):
+    <ul>
+      <li><code>AUTO_SEED_REAL_ON_STARTUP</code> (default <code>true</code>)</li>
+      <li><code>DEPLOY_REAL_SEED_COUNT</code> (default <code>100</code>, max <code>1000</code>)</li>
+    </ul>
+  </li>
   <li>Redeploy/restart service.</li>
 </ol>
 <p>Validate:</p>
@@ -235,6 +241,13 @@
 
 <h3>500 Inventory credentials are not configured</h3>
 <p>Missing required <code>INVENTORY_*</code> vars in running backend process.</p>
+
+<h3>Catalog appears empty after deploy</h3>
+<p>Verify startup seed settings:</p>
+<ul>
+  <li><code>AUTO_SEED_REAL_ON_STARTUP=true</code></li>
+  <li><code>DEPLOY_REAL_SEED_COUNT</code> set to desired value (e.g. <code>100</code>)</li>
+</ul>
 
 <h3>self-signed certificate in certificate chain</h3>
 <p>Upstream TLS chain issue in local testing; use local-only TLS bypass setting where appropriate.</p>

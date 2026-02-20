@@ -21,6 +21,7 @@
   <li>Device details modal: carousel, availability, specs, request add flow.</li>
   <li>Requested items modal: editable price/qty, totals, submit action.</li>
   <li>Admin tools: sync, clear, seed synthetic, seed realistic, apply image mapping.</li>
+  <li>Deploy startup behavior: backend can auto-seed realistic catalog rows (100 devices per category with images) so the catalog is populated immediately after deploy.</li>
 </ul>
 
 <h2>3. Technical Documentation</h2>
@@ -34,6 +35,12 @@
 
 <h3>3.2 External Inventory Sync</h3>
 <p>Preferred integration uses OAuth2 client credentials + subscription key; legacy Boomi basic-auth fallback is retained for backward compatibility.</p>
+<h3>3.3 Deploy Startup Seed</h3>
+<p>Startup seeding can auto-create realistic catalog rows on backend boot:</p>
+<ul>
+  <li><code>AUTO_SEED_REAL_ON_STARTUP</code> (default <code>true</code>)</li>
+  <li><code>DEPLOY_REAL_SEED_COUNT</code> (default <code>100</code>, max <code>1000</code>)</li>
+</ul>
 
 <h2>4. GitHub References</h2>
 <ul>
