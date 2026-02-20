@@ -1,90 +1,98 @@
 <h1>Setup Guide: GitHub to Confluence Documentation Automation</h1>
 
-<h2>1. Prerequisites</h2>
+<h2>1. What this automation does</h2>
+<p>This setup automatically publishes or updates Confluence pages whenever selected files are changed in GitHub.</p>
+<ul>
+  <li>If page exists: it updates the page content.</li>
+  <li>If page does not exist: it creates the page (optionally under a parent page).</li>
+</ul>
+
+<h2>2. Prerequisites</h2>
 <ol>
-  <li>Access to the GitHub repository (<code>admin</code> or maintainer).</li>
-  <li>Access to the Confluence space (create/edit pages).</li>
+  <li>GitHub repository admin/maintainer access.</li>
+  <li>Confluence access to create and edit pages in target space.</li>
   <li>Atlassian API token for the publishing user.</li>
 </ol>
 
-<h2>2. Generate Atlassian API Token</h2>
+<h2>3. Create Atlassian API token</h2>
 <ol>
-  <li>Open <a href="https://id.atlassian.com/manage-profile/security/api-tokens">Atlassian API tokens</a>.</li>
-  <li>Click <strong>Create API token</strong>.</li>
-  <li>Name it (example: <code>GitHub Confluence Sync</code>).</li>
-  <li>Copy token and store securely (shown once).</li>
+  <li>Open: <a href="https://id.atlassian.com/manage-profile/security/api-tokens">https://id.atlassian.com/manage-profile/security/api-tokens</a></li>
+  <li>Create a token and copy it (shown once).</li>
+  <li>Store it securely; do not commit it to source control.</li>
 </ol>
 
-<h2>3. Required Files in Repository</h2>
+<h2>4. Add required repository secrets</h2>
+<p>In GitHub repository settings:</p>
+<p><strong>Settings &gt; Secrets and variables &gt; Actions</strong></p>
+<p>Add these secrets:</p>
 <ul>
-  <li>Script: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/scripts/confluence-upsert.mjs">scripts/confluence-upsert.mjs</a></li>
-  <li>Functional + technical page source: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/confluence-functional-technical.storage.html">docs/confluence-functional-technical.storage.html</a></li>
-  <li>Technical-only page source: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/confluence-technical.storage.html">docs/confluence-technical.storage.html</a></li>
-  <li>Setup guide source: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/confluence-setup-guide.storage.html">docs/confluence-setup-guide.storage.html</a></li>
-  <li>Workflow: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/.github/workflows/confluence-docs-sync.yml">.github/workflows/confluence-docs-sync.yml</a></li>
+  <li><code>CONFLUENCE_BASE_URL</code> (example: <code>https://your-org.atlassian.net</code>)</li>
+  <li><code>CONFLUENCE_EMAIL</code> (publishing user email)</li>
+  <li><code>CONFLUENCE_API_TOKEN</code> (token from Step 3)</li>
 </ul>
 
-<h2>4. Configure GitHub Secrets</h2>
-<ol>
-  <li>Go to repository <strong>Settings &gt; Secrets and variables &gt; Actions</strong>.</li>
-  <li>Add repository secrets:
-    <ul>
-      <li><code>CONFLUENCE_BASE_URL</code> = <code>https://pcswireless.atlassian.net</code></li>
-      <li><code>CONFLUENCE_EMAIL</code> = publishing user email</li>
-      <li><code>CONFLUENCE_API_TOKEN</code> = Atlassian API token</li>
-    </ul>
-  </li>
-</ol>
-
-<h2>5. Verify Workflow</h2>
-<p>Workflow should include:</p>
+<h2>5. Prepare content source files</h2>
+<p>Create one HTML file per page using Confluence storage format.</p>
+<p>Example structure:</p>
 <ul>
-  <li><code>workflow_dispatch</code> for manual runs</li>
-  <li><code>push</code> trigger for automatic runs on relevant file changes</li>
-  <li>Parent page id: <code>3109715969</code></li>
+  <li><code>docs/confluence-page-1.storage.html</code></li>
+  <li><code>docs/confluence-page-2.storage.html</code></li>
 </ul>
 
-<h2>6. Manual Test</h2>
+<h2>6. Configure the workflow</h2>
+<p>Create a GitHub Actions workflow that:</p>
+<ul>
+  <li>runs on push to your main branch</li>
+  <li>supports manual trigger (<code>workflow_dispatch</code>)</li>
+  <li>runs an upsert script for each Confluence page</li>
+</ul>
+
+<p>For each page, pass:</p>
+<ul>
+  <li>Space key</li>
+  <li>Page title</li>
+  <li>Source file path</li>
+  <li>Optional parent page ID</li>
+</ul>
+
+<h2>7. First manual run</h2>
 <ol>
   <li>Open GitHub <strong>Actions</strong>.</li>
-  <li>Open workflow <strong>Sync Confluence Docs</strong>.</li>
-  <li>Click <strong>Run workflow</strong> and select <code>main</code>.</li>
-  <li>Confirm successful run and page updates in Confluence.</li>
+  <li>Select your Confluence sync workflow.</li>
+  <li>Click <strong>Run workflow</strong>.</li>
+  <li>Choose branch and run.</li>
+  <li>Confirm pages were created/updated in Confluence.</li>
 </ol>
 
-<h2>7. Automatic Behavior</h2>
-<p>On each push to <code>main</code>, workflow updates Confluence when watched files change.</p>
-
-<h2>8. Upsert Behavior</h2>
+<h2>8. Start using it</h2>
 <ol>
-  <li>Find page by <code>space + title</code>.</li>
-  <li>If found: update content and increment version.</li>
-  <li>If not found: create page under configured parent id.</li>
+  <li>Edit the source documentation HTML file(s).</li>
+  <li>Commit and push changes.</li>
+  <li>Workflow updates Confluence automatically.</li>
 </ol>
 
 <h2>9. Troubleshooting</h2>
 <h3>Missing required secrets</h3>
-<p>Ensure all three secrets are set exactly:</p>
+<p>Ensure these exist in GitHub Actions secrets:</p>
 <ul>
   <li><code>CONFLUENCE_BASE_URL</code></li>
   <li><code>CONFLUENCE_EMAIL</code></li>
   <li><code>CONFLUENCE_API_TOKEN</code></li>
 </ul>
 
-<h3>401/403 from Confluence</h3>
+<h3>401/403 from Confluence API</h3>
 <ul>
-  <li>Verify token is valid and not expired/revoked.</li>
-  <li>Verify user has edit rights in target Confluence space.</li>
-  <li>Ensure base URL is site root, not page URL.</li>
+  <li>Check token validity and user permissions in target Confluence space.</li>
+  <li>Confirm base URL is site root (<code>https://your-org.atlassian.net</code>), not a page URL.</li>
 </ul>
 
-<h3>No Run workflow button</h3>
-<p>Ensure workflow file includes <code>workflow_dispatch</code> on default branch.</p>
+<h3>No “Run workflow” button</h3>
+<p>Ensure workflow includes <code>workflow_dispatch</code>.</p>
 
-<h2>10. Security Best Practices</h2>
+<h2>10. Security best practices</h2>
 <ul>
-  <li>Never commit tokens into repository.</li>
-  <li>Store credentials only in GitHub secrets.</li>
-  <li>Rotate tokens regularly.</li>
-  <li>Rotate immediately if exposed in logs/chat.</li>
+  <li>Use secrets only; never hardcode credentials.</li>
+  <li>Rotate API tokens periodically.</li>
+  <li>Revoke and recreate token immediately if exposed.</li>
 </ul>
+
