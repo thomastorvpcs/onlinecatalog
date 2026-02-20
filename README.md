@@ -131,5 +131,12 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - Admin catalog utility endpoints:
   - Clear catalog: `POST /api/admin/catalog/clear`
   - Seed test devices: `POST /api/admin/catalog/seed-test` (defaults to 500 per category)
+  - Seed realistic devices: `POST /api/admin/catalog/seed-real` (defaults to 100 per category)
+
+## Deploy Startup Seed
+- By default, backend startup auto-seeds realistic catalog rows (`adminreal-*`) so deploys include 100 devices per category with images.
+- Optional env vars:
+  - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `true`)
+  - `DEPLOY_REAL_SEED_COUNT` (default `100`, max `1000`)
 
 

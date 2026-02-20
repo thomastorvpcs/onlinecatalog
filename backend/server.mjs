@@ -57,6 +57,8 @@ const DEFAULT_BUYER_COMPANY = "PCSWW";
 const DEFAULT_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_RESET_CODE = "123456";
 const EXTRA_DEVICES_PER_CATEGORY = 1000;
+const DEPLOY_REAL_SEED_COUNT = Math.max(1, Math.min(1000, Number(process.env.DEPLOY_REAL_SEED_COUNT || 100)));
+const AUTO_SEED_REAL_ON_STARTUP = String(process.env.AUTO_SEED_REAL_ON_STARTUP || "true").toLowerCase() !== "false";
 const MODEL_IMAGE_MAP = {
   "iPhone 15": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15.jpg",
   "iPhone 15 Pro": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
@@ -296,7 +298,13 @@ function initDb() {
     db.exec(readFileSync(seedPath, "utf8"));
   }
   ensureLargeCatalog();
+  ensureDeployRealSeed();
   ensureDefaultUsers();
+}
+
+function ensureDeployRealSeed() {
+  if (!AUTO_SEED_REAL_ON_STARTUP) return;
+  seedAdminRealDevicesPerCategory(DEPLOY_REAL_SEED_COUNT);
 }
 
 function ensureUsersColumns() {
