@@ -1,5 +1,4 @@
 <h1>PCS Online Catalog - Functional and Technical Documentation</h1>
-<p><strong>TEST COMMENT:</strong> Confluence automation validation update.</p>
 
 <h2>Repository</h2>
 <p><a href="https://github.com/thomastorvpcs/onlinecatalog">https://github.com/thomastorvpcs/onlinecatalog</a></p>
@@ -10,46 +9,293 @@
 <h2>2. Functional Documentation</h2>
 <h3>2.1 User Roles</h3>
 <ul>
-  <li><strong>Buyer</strong>: sign in, browse catalog, filter/search, open device details, add to requested items, submit request.</li>
-  <li><strong>Admin</strong>: buyer capabilities plus user management, approvals, catalog utilities, weekly special controls, and external sync.</li>
+  <li><strong>Buyer</strong>: sign in, browse catalog, search and filter devices, open device details, add requested items, and submit requests.</li>
+  <li><strong>Admin</strong>: all buyer capabilities plus user administration, approvals, catalog utilities, weekly special banner controls, and external inventory sync operations.</li>
 </ul>
 
-<h3>2.2 Key Flows</h3>
+<h3>2.2 Core User Flows</h3>
 <ul>
-  <li>Authentication: login, create account, forgot password, approval states.</li>
-  <li>Catalog browsing: category home, category detail pages, server-side pagination.</li>
-  <li>Device details modal: carousel, availability, specs, request add flow.</li>
-  <li>Requested items modal: editable price/qty, totals, submit action.</li>
-  <li>Admin tools: sync, clear, seed synthetic, seed realistic, apply image mapping.</li>
-  <li>Deploy startup behavior: backend can auto-seed realistic catalog rows (100 devices per category with images) so the catalog is populated immediately after deploy.</li>
+  <li><strong>Authentication</strong>: login, create account, forgot password with verification code, and approval-required account state.</li>
+  <li><strong>Catalog browsing</strong>: home page by category, category detail pages, dynamic filters, and server-side pagination.</li>
+  <li><strong>Device details</strong>: modal view with image carousel, availability by location, compact specs, and request creation controls.</li>
+  <li><strong>Requested items</strong>: slide-in request builder with editable price/quantity, per-line totals, grand total, and submit request action.</li>
+  <li><strong>Admin operations</strong>: user create/delete/approve, admin role toggles, catalog clear/seed endpoints, weekly special controls, and inventory sync trigger.</li>
+</ul>
+
+<h3>2.3 Business Rules (Current)</h3>
+<ul>
+  <li>Only approved users can fully access inventory APIs; unapproved users are redirected to a waiting-for-approval experience.</li>
+  <li>Admin role is required for user management and catalog/integration administrative actions.</li>
+  <li>Startup seeding can auto-populate realistic catalog rows for deploy/test readiness.</li>
+  <li>Category display order is fixed: Smartphones, Tablets, Laptops, Wearables, Accessories.</li>
 </ul>
 
 <h2>3. Technical Documentation</h2>
-<h3>3.1 Architecture</h3>
+<h2>1. System Architecture</h2>
+<h3>Frontend</h3>
 <ul>
-  <li>Frontend: React 18 + Vite 5 (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a>)</li>
-  <li>Backend: Node.js HTTP server (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a>)</li>
-  <li>Database: SQLite (<a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">schema</a>)</li>
-  <li>API docs: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">OpenAPI</a></li>
+  <li>React 18 SPA (Vite 5)</li>
+  <li>Main UI and state logic: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
+  <li>Frontend entrypoint: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/main.jsx">src/main.jsx</a></li>
+  <li>Styling: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/styles.css">styles.css</a></li>
 </ul>
 
-<h3>3.2 External Inventory Sync</h3>
-<p>Preferred integration uses OAuth2 client credentials + subscription key; legacy Boomi basic-auth fallback is retained for backward compatibility.</p>
-<h3>3.3 Deploy Startup Seed</h3>
-<p>Startup seeding can auto-create realistic catalog rows on backend boot:</p>
+<h3>Backend</h3>
 <ul>
-  <li><code>AUTO_SEED_REAL_ON_STARTUP</code> (default <code>true</code>)</li>
-  <li><code>DEPLOY_REAL_SEED_COUNT</code> (default <code>100</code>, max <code>1000</code>)</li>
+  <li>Node.js HTTP server (ES module, no Express): <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li>Serves API (<code>/api/*</code>) and production frontend build (<code>dist/</code>)</li>
 </ul>
 
-<h2>4. GitHub References</h2>
+<h3>Database</h3>
+<ul>
+  <li>SQLite via Node built-in <code>node:sqlite</code> (<code>DatabaseSync</code>)</li>
+  <li>Schema: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></li>
+  <li>Seed data: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/seed.sql">backend/db/seed.sql</a></li>
+</ul>
+
+<h3>Documentation</h3>
+<ul>
+  <li>OpenAPI spec: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li>Inventory API notes: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+  <li>Project overview: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/README.md">README.md</a></li>
+</ul>
+
+<h2>2. Runtime and Environment</h2>
+<h3>2.1 Local Ports</h3>
+<ul>
+  <li>Frontend dev: <a href="http://localhost:5173">http://localhost:5173</a></li>
+  <li>Backend API: <a href="http://127.0.0.1:8787">http://127.0.0.1:8787</a></li>
+</ul>
+
+<h3>2.2 Commands</h3>
+<ul>
+  <li><code>npm run dev</code> - starts Vite frontend dev server</li>
+  <li><code>npm run api</code> - starts backend API server</li>
+  <li><code>npm run build</code> - builds frontend</li>
+  <li><code>npm run preview</code> - previews built frontend</li>
+</ul>
+
+<h3>2.3 Environment Variable Loading</h3>
+<p>Backend loads configuration from:</p>
+<ul>
+  <li>OS environment variables</li>
+  <li><code>.env</code> in project root</li>
+  <li><code>.env.local</code> in project root</li>
+</ul>
+<p>(<code>.env</code> and <code>.env.local</code> are excluded from git.)</p>
+
+<h2>3. Authentication and Authorization</h2>
+<h3>3.1 Auth Model</h3>
+<ul>
+  <li>Bearer access token for API calls</li>
+  <li>Refresh-token rotation for session continuation</li>
+  <li>Passwords hashed with <code>scrypt</code> + salt (Node crypto)</li>
+</ul>
+<p>Implementation reference: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></p>
+
+<h3>3.2 Roles</h3>
+<ul>
+  <li><code>buyer</code></li>
+  <li><code>admin</code></li>
+</ul>
+
+<h3>3.3 Admin-only Capabilities</h3>
+<ul>
+  <li>User management</li>
+  <li>Catalog management endpoints</li>
+  <li>Weekly special controls</li>
+  <li>Inventory sync trigger</li>
+</ul>
+
+<h2>4. API Surface</h2>
+<h3>4.1 API Groups</h3>
+<ul>
+  <li><code>/api/auth/*</code> - login/register/me/refresh/logout/reset</li>
+  <li><code>/api/devices</code> - search/filter/pagination</li>
+  <li><code>/api/inventory/*</code> - inventory updates/events</li>
+  <li><code>/api/users</code> - admin user management</li>
+  <li><code>/api/admin/*</code> - admin controls</li>
+  <li><code>/api/integrations/boomi/inventory/sync</code> - external inventory pull</li>
+</ul>
+<p>Full schema and examples: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></p>
+
+<h3>4.2 Device Query Capabilities</h3>
+<p><code>GET /api/devices</code> supports:</p>
+<ul>
+  <li><code>search</code></li>
+  <li><code>category</code></li>
+  <li><code>manufacturer</code></li>
+  <li><code>modelFamily</code></li>
+  <li><code>grade</code></li>
+  <li><code>region</code></li>
+  <li><code>storage</code></li>
+  <li><code>page</code></li>
+  <li><code>pageSize</code></li>
+</ul>
+<p>Implementation reference: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></p>
+
+<h2>5. Database Model (High Level)</h2>
+<p>Primary tables:</p>
+<ul>
+  <li><code>users</code></li>
+  <li><code>refresh_tokens</code></li>
+  <li><code>categories</code></li>
+  <li><code>manufacturers</code></li>
+  <li><code>locations</code></li>
+  <li><code>devices</code></li>
+  <li><code>device_images</code></li>
+  <li><code>device_inventory</code></li>
+  <li><code>inventory_events</code></li>
+  <li><code>boomi_inventory_raw</code></li>
+</ul>
+<p>Relationships:</p>
+<ul>
+  <li><code>devices</code> references manufacturer/category/default location</li>
+  <li><code>device_images</code> and <code>device_inventory</code> are child sets for devices</li>
+  <li><code>inventory_events</code> records quantity changes/audit trail</li>
+</ul>
+<p>Schema reference: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></p>
+
+<h2>6. External Inventory Integration</h2>
+<h3>6.1 Preferred Integration (Current)</h3>
+<p>OAuth2 Client Credentials + subscription key</p>
+<p>Required env vars:</p>
+<ul>
+  <li><code>INVENTORY_API_URL</code></li>
+  <li><code>INVENTORY_SUBSCRIPTION_KEY</code></li>
+  <li><code>INVENTORY_OAUTH_TOKEN_URL</code></li>
+  <li><code>INVENTORY_OAUTH_CLIENT_ID</code></li>
+  <li><code>INVENTORY_OAUTH_CLIENT_SECRET</code></li>
+  <li><code>INVENTORY_OAUTH_SCOPE</code></li>
+</ul>
+<p>Flow:</p>
+<ol>
+  <li>Backend fetches OAuth access token.</li>
+  <li>Backend calls inventory endpoint with bearer token + subscription key.</li>
+  <li>Response is normalized and upserted into local catalog/inventory tables.</li>
+</ol>
+<p>Implementation reference:</p>
+<ul>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+</ul>
+
+<h3>6.2 Legacy Fallback</h3>
+<p>If OAuth config is absent, legacy Boomi basic-auth fallback can be used:</p>
+<ul>
+  <li><code>BOOMI_INVENTORY_URL</code></li>
+  <li><code>BOOMI_CUSTOMER_ID</code></li>
+  <li><code>BOOMI_BASIC_USERNAME</code></li>
+  <li><code>BOOMI_BASIC_PASSWORD</code></li>
+  <li><code>BOOMI_EXTRA_AUTH</code> (optional)</li>
+  <li><code>BOOMI_TLS_INSECURE</code> (local test only)</li>
+</ul>
+
+<h2>7. Admin Catalog Operations</h2>
+<p>Available admin endpoints:</p>
+<ul>
+  <li><code>POST /api/admin/catalog/clear</code></li>
+  <li><code>POST /api/admin/catalog/seed-test</code></li>
+  <li><code>POST /api/admin/catalog/seed-real</code></li>
+  <li><code>POST /api/admin/catalog/apply-image-mapping</code></li>
+</ul>
+
+<h3>7.1 Seed Modes</h3>
+<ul>
+  <li><code>seed-test</code>: synthetic bulk dataset</li>
+  <li><code>seed-real</code>: realistic model-family dataset with storage/color/grade variants and product-image pools</li>
+</ul>
+<p>Implementation: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></p>
+
+<h2>8. Frontend Technical Behavior</h2>
+<ul>
+  <li>SPA state-driven routing in <code>App.jsx</code> (no React Router currently)</li>
+  <li>Modal overlays for:
+    <ul>
+      <li>device details</li>
+      <li>requested-items side sheet</li>
+      <li>session-expiry warning</li>
+    </ul>
+  </li>
+  <li>Dynamic filters and server-side category pagination</li>
+  <li>Skeleton loading states for async fetches</li>
+  <li>Image fallback component to avoid broken product thumbnails</li>
+</ul>
+<p>Implementation:</p>
 <ul>
   <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/seed.sql">backend/db/seed.sql</a></li>
   <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/styles.css">styles.css</a></li>
-  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/vite.config.js">vite.config.js</a></li>
+</ul>
+
+<h2>9. Security and Operations</h2>
+<ul>
+  <li>Passwords are never stored in plaintext.</li>
+  <li>Role checks enforced server-side.</li>
+  <li>Secrets must be injected via environment variables.</li>
+  <li>Local-only insecure TLS toggle supported for test cert chains.</li>
+</ul>
+<p>Recommended:</p>
+<ul>
+  <li>Rotate exposed credentials immediately if shared in logs/chat.</li>
+  <li>Keep production with strict TLS validation.</li>
+</ul>
+
+<h2>10. Deployment Runbook (Render)</h2>
+<ol>
+  <li>Push changes to GitHub (<code>main</code>).</li>
+  <li>Ensure Render service points to correct repo/branch.</li>
+  <li>Configure required <code>INVENTORY_*</code> environment variables.</li>
+  <li>Configure deploy startup seed behavior (optional):
+    <ul>
+      <li><code>AUTO_SEED_REAL_ON_STARTUP</code> (default <code>true</code>)</li>
+      <li><code>DEPLOY_REAL_SEED_COUNT</code> (default <code>100</code>, max <code>1000</code>)</li>
+    </ul>
+  </li>
+  <li>Redeploy/restart service.</li>
+</ol>
+<p>Validate:</p>
+<ul>
+  <li>login</li>
+  <li><code>/api/auth/me</code></li>
+  <li><code>/api/devices</code></li>
+  <li><code>/api/integrations/boomi/inventory/sync</code> (admin)</li>
+</ul>
+<p>Related config/docs:</p>
+<ul>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/README.md">README.md</a></li>
+  <li><a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+</ul>
+
+<h2>11. Troubleshooting</h2>
+<h3>401 Unauthorized on API calls</h3>
+<p>Access token missing/expired; refresh or re-login.</p>
+
+<h3>500 Inventory credentials are not configured</h3>
+<p>Missing required <code>INVENTORY_*</code> vars in running backend process.</p>
+
+<h3>Catalog appears empty after deploy</h3>
+<p>Verify startup seed settings:</p>
+<ul>
+  <li><code>AUTO_SEED_REAL_ON_STARTUP=true</code></li>
+  <li><code>DEPLOY_REAL_SEED_COUNT</code> set to desired value (e.g. <code>100</code>)</li>
+</ul>
+
+<h3>self-signed certificate in certificate chain</h3>
+<p>Upstream TLS chain issue in local testing; use local-only TLS bypass setting where appropriate.</p>
+
+<h3>Frontend MIME/module errors</h3>
+<p>Ensure app is run with Vite (<code>npm run dev</code>) or built/previewed correctly; avoid static serving raw JSX entrypoints.</p>
+
+<h2>12. Reference Files (GitHub)</h2>
+<ul>
+  <li>Backend server: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li>Frontend app: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
+  <li>Frontend entry: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/main.jsx">src/main.jsx</a></li>
+  <li>Styles: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/styles.css">styles.css</a></li>
+  <li>OpenAPI: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li>Inventory API notes: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/inventory-api.md">docs/inventory-api.md</a></li>
+  <li>DB schema: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/schema.sql">backend/db/schema.sql</a></li>
+  <li>DB seed: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/db/seed.sql">backend/db/seed.sql</a></li>
+  <li>Project readme: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/README.md">README.md</a></li>
+  <li>Vite config: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/vite.config.js">vite.config.js</a></li>
 </ul>
