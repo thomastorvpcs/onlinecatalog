@@ -103,6 +103,7 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - Script: `scripts/confluence-upsert.mjs`
 - Storage HTML source template: `docs/confluence-functional-technical.storage.html`
 - Technical-only source template: `docs/confluence-technical.storage.html`
+- NetSuite sales estimate design template: `docs/confluence-netsuite-sales-estimate.storage.html`
 - Setup-guide source template: `docs/confluence-setup-guide.storage.html`
 - Required env vars:
   - `CONFLUENCE_BASE_URL` (example: `https://your-org.atlassian.net`)

@@ -1,0 +1,97 @@
+<h1>NetSuite Sales Estimate Integration Design</h1>
+
+<h2>Purpose</h2>
+<p>This page describes how PCS Online Catalog should create and track Sales Estimates in NetSuite from submitted buyer requests.</p>
+
+<h2>Scope</h2>
+<ul>
+  <li>Create NetSuite Sales Estimates from approved request data.</li>
+  <li>Store NetSuite identifiers and status in the Online Catalog backend.</li>
+  <li>Support status synchronization from NetSuite back to the request record.</li>
+  <li>Provide idempotent, auditable, and retry-safe integration behavior.</li>
+</ul>
+
+<h2>High-Level Flow</h2>
+<ol>
+  <li>Buyer submits request in Online Catalog.</li>
+  <li>Backend validates required quote/request fields.</li>
+  <li>Backend resolves NetSuite references (customer, items, tax, terms, etc.).</li>
+  <li>Backend creates a NetSuite <code>Estimate</code> record.</li>
+  <li>NetSuite internal id + estimate number are stored in local request table.</li>
+  <li>Status updates are received by webhook and reconciled by fallback polling.</li>
+</ol>
+
+<h2>Data Mapping (Request to NetSuite Estimate)</h2>
+<ul>
+  <li><code>request.id</code> -> <code>externalId</code> (idempotency key)</li>
+  <li><code>request.company/customer</code> -> <code>entity</code></li>
+  <li><code>request.createdAt</code> -> <code>trandate</code></li>
+  <li><code>request.lines[*].productId</code> -> <code>item.item</code></li>
+  <li><code>request.lines[*].quantity</code> -> <code>item.quantity</code></li>
+  <li><code>request.lines[*].offerPrice</code> -> <code>item.rate</code></li>
+  <li><code>request.lines[*].note</code> -> <code>item.description</code> (optional)</li>
+  <li>Derived total -> transaction total (NetSuite-calculated)</li>
+</ul>
+
+<h2>Status Model</h2>
+<p>Recommended normalized request lifecycle:</p>
+<ul>
+  <li><code>New</code></li>
+  <li><code>Received</code></li>
+  <li><code>Estimate Created</code></li>
+  <li><code>Completed</code></li>
+</ul>
+<p>Store both:</p>
+<ul>
+  <li>Raw NetSuite status text/code</li>
+  <li>Normalized app status for UI filtering and workflow control</li>
+</ul>
+
+<h2>Sync Strategy</h2>
+<h3>Primary: Push from NetSuite</h3>
+<ul>
+  <li>NetSuite User Event / integration callback posts status updates to Online Catalog webhook.</li>
+  <li>Webhook applies idempotent updates by <code>requestId/externalId</code>.</li>
+</ul>
+
+<h3>Fallback: Reconciliation Poll</h3>
+<ul>
+  <li>Scheduled sync (for example every 5-15 minutes) fetches recently changed estimates from NetSuite.</li>
+  <li>Updates any missed statuses/events.</li>
+</ul>
+
+<h2>Reliability and Security</h2>
+<ul>
+  <li>OAuth/token auth with dedicated integration role in NetSuite.</li>
+  <li>Idempotent create using <code>externalId</code> to avoid duplicates.</li>
+  <li>Retry with exponential backoff for transient failures (5xx/timeout/429).</li>
+  <li>Store error payloads for troubleshooting and support.</li>
+  <li>Use signed webhook payload verification (HMAC) where available.</li>
+</ul>
+
+<h2>Operational Data to Persist</h2>
+<ul>
+  <li><code>netsuite_estimate_id</code></li>
+  <li><code>netsuite_estimate_number</code></li>
+  <li><code>netsuite_status</code></li>
+  <li><code>netsuite_last_sync_at</code></li>
+  <li>Last sync source (<code>webhook</code> or <code>reconcile</code>)</li>
+  <li>Last sync error message/payload (if failed)</li>
+</ul>
+
+<h2>Implementation Approach in This Repo</h2>
+<ul>
+  <li>Current implementation uses dummy endpoints for estimate creation and status updates.</li>
+  <li>Dummy route pattern is designed to be replaced with real NetSuite calls without changing request UI contract.</li>
+  <li>Relevant backend file: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li>Relevant API contract: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+</ul>
+
+<h2>Rollout Plan</h2>
+<ol>
+  <li>Validate mapping in NetSuite sandbox.</li>
+  <li>Enable create-estimate flow for a pilot customer group.</li>
+  <li>Enable webhook status updates.</li>
+  <li>Enable reconciliation polling and monitoring dashboards.</li>
+  <li>Promote to production and monitor error rates/status lag.</li>
+</ol>

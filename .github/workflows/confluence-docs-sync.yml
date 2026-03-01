@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/confluence-functional-technical.storage.html"
       - "docs/confluence-technical.storage.html"
+      - "docs/confluence-netsuite-sales-estimate.storage.html"
       - "docs/confluence-setup-guide.storage.html"
       - "docs/inventory-api.md"
       - "docs/openapi.yaml"
@@ -71,4 +72,16 @@ jobs:
             --space SAD \
             --title "Test: AI GitHub to Confluence automation setup guide" \
             --file docs/confluence-setup-guide.storage.html \
+            --parent 3109715969
+
+      - name: Publish NetSuite Sales Estimate Design page
+        env:
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+        run: |
+          node scripts/confluence-upsert.mjs \
+            --space SAD \
+            --title "Test: AI NetSuite sales estimate integration design" \
+            --file docs/confluence-netsuite-sales-estimate.storage.html \
             --parent 3109715969
