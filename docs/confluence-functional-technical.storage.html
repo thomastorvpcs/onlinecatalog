@@ -19,7 +19,9 @@
   <li><strong>Catalog browsing</strong>: home page by category, category detail pages, dynamic filters, and server-side pagination.</li>
   <li><strong>Device details</strong>: modal view with image carousel, availability by location, compact specs, and request creation controls.</li>
   <li><strong>Requested items</strong>: slide-in request builder with editable price/quantity, per-line totals, grand total, and submit request action.</li>
+  <li><strong>Request submission and estimate simulation</strong>: request is persisted in backend and a dummy NetSuite estimate is created for workflow validation.</li>
   <li><strong>Admin operations</strong>: user create/delete/approve, admin role toggles, catalog clear/seed endpoints, weekly special controls, and inventory sync trigger.</li>
+  <li><strong>Admin request status controls</strong>: admin can set dummy estimate/request status (New, Received, Estimate Created, Completed) from the request details panel.</li>
 </ul>
 
 <h3>2.3 Business Rules (Current)</h3>
@@ -112,10 +114,13 @@
 <ul>
   <li><code>/api/auth/*</code> - login/register/me/refresh/logout/reset</li>
   <li><code>/api/devices</code> - search/filter/pagination</li>
+  <li><code>/api/requests</code> - create/list request quotes</li>
   <li><code>/api/inventory/*</code> - inventory updates/events</li>
   <li><code>/api/users</code> - admin user management</li>
   <li><code>/api/admin/*</code> - admin controls</li>
   <li><code>/api/integrations/boomi/inventory/sync</code> - external inventory pull</li>
+  <li><code>/api/integrations/netsuite/estimates/dummy</code> - dummy estimate creation</li>
+  <li><code>/api/integrations/netsuite/estimates/dummy/status</code> - dummy estimate status updates</li>
 </ul>
 <p>Full schema and examples: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></p>
 
@@ -147,6 +152,9 @@
   <li><code>device_inventory</code></li>
   <li><code>inventory_events</code></li>
   <li><code>boomi_inventory_raw</code></li>
+  <li><code>quote_requests</code></li>
+  <li><code>quote_request_lines</code></li>
+  <li><code>quote_request_events</code></li>
 </ul>
 <p>Relationships:</p>
 <ul>

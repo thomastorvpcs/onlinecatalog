@@ -93,12 +93,52 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS quote_requests (
+  id TEXT PRIMARY KEY,
+  request_number TEXT NOT NULL UNIQUE,
+  company TEXT NOT NULL,
+  created_by_user_id INTEGER REFERENCES users(id),
+  created_by_email TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'New',
+  total_amount REAL NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+  currency_code TEXT NOT NULL DEFAULT 'USD',
+  netsuite_estimate_id TEXT,
+  netsuite_estimate_number TEXT,
+  netsuite_status TEXT,
+  netsuite_last_sync_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS quote_request_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT NOT NULL REFERENCES quote_requests(id) ON DELETE CASCADE,
+  device_id TEXT,
+  model TEXT NOT NULL,
+  grade TEXT NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity >= 1),
+  offer_price REAL NOT NULL CHECK (offer_price >= 0),
+  note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS quote_request_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT NOT NULL REFERENCES quote_requests(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  payload_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_devices_category ON devices(category_id);
 CREATE INDEX IF NOT EXISTS idx_devices_manufacturer ON devices(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_model_family ON devices(model_family);
 CREATE INDEX IF NOT EXISTS idx_inventory_location ON device_inventory(location_id);
 CREATE INDEX IF NOT EXISTS idx_device_images_device ON device_images(device_id);
 CREATE INDEX IF NOT EXISTS idx_boomi_raw_source_external_id ON boomi_inventory_raw(source_external_id);
+CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON quote_requests(company);
+CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON quote_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON quote_request_lines(request_id);
+CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON quote_request_events(request_id);
 
 CREATE VIEW IF NOT EXISTS v_device_catalog AS
 SELECT

@@ -283,6 +283,7 @@ const CORS_ALLOWED_ORIGINS = (() => {
   return origins;
 })();
 const sessions = new Map();
+const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
 
 const db = new DatabaseSync(dbPath);
 
@@ -292,6 +293,7 @@ function initDb() {
   ensureUsersColumns();
   ensureLocationsSchema();
   ensureDeviceSchema();
+  ensureQuoteSchema();
   const countStmt = db.prepare("SELECT COUNT(*) AS count FROM categories");
   const count = Number(countStmt.get().count || 0);
   if (count === 0) {
@@ -332,6 +334,52 @@ function ensureUsersColumns() {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)");
+}
+
+function ensureQuoteSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS quote_requests (
+      id TEXT PRIMARY KEY,
+      request_number TEXT NOT NULL UNIQUE,
+      company TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      created_by_email TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'New',
+      total_amount REAL NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+      currency_code TEXT NOT NULL DEFAULT 'USD',
+      netsuite_estimate_id TEXT,
+      netsuite_estimate_number TEXT,
+      netsuite_status TEXT,
+      netsuite_last_sync_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS quote_request_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT NOT NULL REFERENCES quote_requests(id) ON DELETE CASCADE,
+      device_id TEXT,
+      model TEXT NOT NULL,
+      grade TEXT NOT NULL,
+      quantity INTEGER NOT NULL CHECK (quantity >= 1),
+      offer_price REAL NOT NULL CHECK (offer_price >= 0),
+      note TEXT
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS quote_request_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT NOT NULL REFERENCES quote_requests(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON quote_requests(company)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON quote_requests(created_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON quote_request_lines(request_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON quote_request_events(request_id)");
 }
 
 function normalizeEmail(value) {
@@ -1751,6 +1799,199 @@ function addInventoryEvent({ deviceId, locationId, changeType, previousQuantity,
   `).run(deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason || null, changedByUserId ?? null);
 }
 
+function normalizeRequestStatus(value, fallback = "New") {
+  const normalized = String(value || "").trim();
+  if (REQUEST_STATUS_VALUES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function validateRequestLines(linesRaw) {
+  const lines = Array.isArray(linesRaw) ? linesRaw : [];
+  if (!lines.length) {
+    throw new Error("At least one request line is required.");
+  }
+  return lines.map((line, index) => {
+    const deviceId = String(line.productId || line.deviceId || "").trim();
+    const model = String(line.model || "").trim();
+    const grade = String(line.grade || "").trim();
+    const quantity = Number(line.quantity);
+    const offerPrice = Number(line.offerPrice);
+    const note = String(line.note || "").trim();
+    if (!model) throw new Error(`Line ${index + 1}: model is required.`);
+    if (!grade) throw new Error(`Line ${index + 1}: grade is required.`);
+    if (!isInteger(quantity) || quantity < 1) throw new Error(`Line ${index + 1}: quantity must be an integer >= 1.`);
+    if (!Number.isFinite(offerPrice) || offerPrice < 0) throw new Error(`Line ${index + 1}: offerPrice must be a number >= 0.`);
+    return {
+      deviceId: deviceId || null,
+      model,
+      grade,
+      quantity,
+      offerPrice: Number(offerPrice.toFixed(2)),
+      note
+    };
+  });
+}
+
+function getNextRequestNumber() {
+  const year = new Date().getFullYear();
+  const prefix = `REQ-${year}-`;
+  const row = db.prepare("SELECT COUNT(*) AS count FROM quote_requests WHERE request_number LIKE ?").get(`${prefix}%`);
+  const next = Number(row?.count || 0) + 1;
+  return `${prefix}${String(next).padStart(4, "0")}`;
+}
+
+function getNextDummyEstimateNumber() {
+  const year = new Date().getFullYear();
+  const prefix = `EST-${year}-`;
+  const row = db.prepare("SELECT COUNT(*) AS count FROM quote_requests WHERE netsuite_estimate_number LIKE ?").get(`${prefix}%`);
+  const next = Number(row?.count || 0) + 1;
+  return `${prefix}${String(next).padStart(4, "0")}`;
+}
+
+function getRequestLines(requestId) {
+  return db.prepare(`
+    SELECT device_id, model, grade, quantity, offer_price, note
+    FROM quote_request_lines
+    WHERE request_id = ?
+    ORDER BY id
+  `).all(requestId).map((line) => ({
+    productId: line.device_id || "",
+    model: line.model,
+    grade: line.grade,
+    quantity: Number(line.quantity || 0),
+    offerPrice: Number(line.offer_price || 0),
+    note: line.note || ""
+  }));
+}
+
+function mapRequestRow(row) {
+  return {
+    id: row.id,
+    requestNumber: row.request_number,
+    company: row.company,
+    createdBy: row.created_by_email,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    total: Number(row.total_amount || 0),
+    currencyCode: row.currency_code || "USD",
+    netsuiteEstimateId: row.netsuite_estimate_id || null,
+    netsuiteEstimateNumber: row.netsuite_estimate_number || null,
+    netsuiteStatus: row.netsuite_status || null,
+    netsuiteUpdatedAt: row.netsuite_last_sync_at || null,
+    lines: getRequestLines(row.id)
+  };
+}
+
+function getRequestsForUser(user) {
+  const sql = user.role === "admin"
+    ? "SELECT * FROM quote_requests ORDER BY created_at DESC"
+    : "SELECT * FROM quote_requests WHERE company = ? ORDER BY created_at DESC";
+  const rows = user.role === "admin" ? db.prepare(sql).all() : db.prepare(sql).all(user.company);
+  return rows.map(mapRequestRow);
+}
+
+function getRequestByIdForUser(user, requestId) {
+  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
+  if (!row?.id) return null;
+  if (user.role !== "admin" && row.company !== user.company) return null;
+  return mapRequestRow(row);
+}
+
+function createRequestForUser(user, body) {
+  const lines = validateRequestLines(body.lines);
+  const requestId = randomBytes(16).toString("hex");
+  const requestNumber = getNextRequestNumber();
+  const total = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.prepare(`
+      INSERT INTO quote_requests (
+        id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'New', ?, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(requestId, requestNumber, user.company, user.id, user.email, total);
+
+    const insertLine = db.prepare(`
+      INSERT INTO quote_request_lines (
+        request_id, device_id, model, grade, quantity, offer_price, note
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const line of lines) {
+      insertLine.run(requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null);
+    }
+
+    db.prepare(`
+      INSERT INTO quote_request_events (request_id, event_type, payload_json)
+      VALUES (?, 'request_created', ?)
+    `).run(requestId, JSON.stringify({ lineCount: lines.length, total }));
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return getRequestByIdForUser(user, requestId);
+}
+
+function createDummyEstimateForRequest(user, requestId) {
+  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
+  if (!row?.id) {
+    throw new Error("Request not found.");
+  }
+  if (user.role !== "admin" && row.company !== user.company) {
+    throw new Error("Forbidden");
+  }
+  if (row.netsuite_estimate_id) {
+    return mapRequestRow(row);
+  }
+
+  const estimateId = `dummy-est-${randomBytes(6).toString("hex")}`;
+  const estimateNumber = getNextDummyEstimateNumber();
+  const syncAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE quote_requests
+    SET status = 'Estimate Created',
+        netsuite_estimate_id = ?,
+        netsuite_estimate_number = ?,
+        netsuite_status = 'Estimate Created',
+        netsuite_last_sync_at = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(estimateId, estimateNumber, syncAt, requestId);
+  db.prepare(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    VALUES (?, 'dummy_estimate_created', ?)
+  `).run(requestId, JSON.stringify({ estimateId, estimateNumber, syncedAt: syncAt }));
+  return getRequestByIdForUser(user, requestId);
+}
+
+function updateDummyEstimateStatus(user, requestId, nextStatus) {
+  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
+  if (!row?.id) {
+    throw new Error("Request not found.");
+  }
+  if (user.role !== "admin" && row.company !== user.company) {
+    throw new Error("Forbidden");
+  }
+  const status = normalizeRequestStatus(nextStatus, row.status || "New");
+  const syncAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE quote_requests
+    SET status = ?,
+        netsuite_status = ?,
+        netsuite_last_sync_at = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(status, status, syncAt, requestId);
+  db.prepare(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    VALUES (?, 'dummy_status_update', ?)
+  `).run(requestId, JSON.stringify({ status, syncedAt: syncAt }));
+  return getRequestByIdForUser(user, requestId);
+}
+
 initDb();
 
 const server = createServer(async (req, res) => {
@@ -2077,6 +2318,100 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(req, res, 200, getDevices(url));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/requests") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      json(req, res, 200, getRequestsForUser(user));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/requests") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      try {
+        const request = createRequestForUser(user, body);
+        json(req, res, 201, request);
+      } catch (error) {
+        json(req, res, 400, { error: error.message || "Failed to create request." });
+      }
+      return;
+    }
+
+    const requestByIdMatch = url.pathname.match(/^\/api\/requests\/([^/]+)$/);
+    if (req.method === "GET" && requestByIdMatch) {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const requestId = decodeURIComponent(requestByIdMatch[1]);
+      const request = getRequestByIdForUser(user, requestId);
+      if (!request) {
+        json(req, res, 404, { error: "Request not found." });
+        return;
+      }
+      json(req, res, 200, request);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/integrations/netsuite/estimates/dummy") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      const requestId = String(body.requestId || "").trim();
+      if (!requestId) {
+        json(req, res, 400, { error: "requestId is required." });
+        return;
+      }
+      try {
+        const request = createDummyEstimateForRequest(user, requestId);
+        json(req, res, 200, { ok: true, request });
+      } catch (error) {
+        const message = error.message || "Failed to create dummy estimate.";
+        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 400);
+        json(req, res, statusCode, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/integrations/netsuite/estimates/dummy/status") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      const requestId = String(body.requestId || "").trim();
+      const status = String(body.status || "").trim();
+      if (!requestId) {
+        json(req, res, 400, { error: "requestId is required." });
+        return;
+      }
+      if (!REQUEST_STATUS_VALUES.has(status)) {
+        json(req, res, 400, { error: "status must be one of: New, Received, Estimate Created, Completed." });
+        return;
+      }
+      try {
+        const request = updateDummyEstimateStatus(user, requestId, status);
+        json(req, res, 200, { ok: true, request });
+      } catch (error) {
+        const message = error.message || "Failed to update dummy estimate status.";
+        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 400);
+        json(req, res, statusCode, { error: message });
+      }
       return;
     }
 

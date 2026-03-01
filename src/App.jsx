@@ -82,6 +82,7 @@ const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
 const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
+const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -154,6 +155,18 @@ function getDemoRefreshTokens() {
 
 function setDemoRefreshTokens(tokens) {
   writeJson(localStorage, DEMO_REFRESH_TOKENS_KEY, tokens);
+}
+
+function demoRequestsKey(company) {
+  return `${DEMO_REQUESTS_PREFIX}${String(company || "anon").trim().toLowerCase()}`;
+}
+
+function getDemoRequests(company) {
+  return readJson(localStorage, demoRequestsKey(company), []);
+}
+
+function setDemoRequests(company, requests) {
+  writeJson(localStorage, demoRequestsKey(company), requests);
 }
 
 function makeDemoPublicUser(user) {
@@ -381,6 +394,105 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true, deviceId, weeklySpecial: body.weeklySpecial };
   }
 
+  if (method === "GET" && pathname === "/api/requests") {
+    const auth = requireAuth();
+    return getDemoRequests(auth.company)
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  if (method === "POST" && pathname === "/api/requests") {
+    const auth = requireAuth();
+    const linesRaw = Array.isArray(body.lines) ? body.lines : [];
+    if (!linesRaw.length) throwApiError("At least one request line is required.", 400);
+    const lines = linesRaw.map((line, index) => {
+      const model = String(line.model || "").trim();
+      const grade = String(line.grade || "").trim();
+      const quantity = Number(line.quantity);
+      const offerPrice = Number(line.offerPrice);
+      if (!model) throwApiError(`Line ${index + 1}: model is required.`, 400);
+      if (!grade) throwApiError(`Line ${index + 1}: grade is required.`, 400);
+      if (!Number.isInteger(quantity) || quantity < 1) throwApiError(`Line ${index + 1}: quantity must be >= 1.`, 400);
+      if (!Number.isFinite(offerPrice) || offerPrice < 0) throwApiError(`Line ${index + 1}: offerPrice must be >= 0.`, 400);
+      return {
+        productId: String(line.productId || line.deviceId || "").trim(),
+        model,
+        grade,
+        quantity,
+        offerPrice: Number(offerPrice.toFixed(2)),
+        note: String(line.note || "").trim()
+      };
+    });
+    const requests = getDemoRequests(auth.company);
+    const year = new Date().getFullYear();
+    const requestNumber = `REQ-${year}-${String(requests.length + 1).padStart(4, "0")}`;
+    const total = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
+    const request = {
+      id: crypto.randomUUID(),
+      requestNumber,
+      company: auth.company,
+      createdBy: auth.email,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "New",
+      total,
+      currencyCode: "USD",
+      netsuiteEstimateId: null,
+      netsuiteEstimateNumber: null,
+      netsuiteStatus: null,
+      netsuiteUpdatedAt: null,
+      lines
+    };
+    setDemoRequests(auth.company, [...requests, request]);
+    return request;
+  }
+
+  if (method === "POST" && pathname === "/api/integrations/netsuite/estimates/dummy") {
+    const auth = requireAuth();
+    const requestId = String(body.requestId || "").trim();
+    if (!requestId) throwApiError("requestId is required.", 400);
+    const requests = getDemoRequests(auth.company);
+    const idx = requests.findIndex((r) => r.id === requestId);
+    if (idx < 0) throwApiError("Request not found.", 404);
+    if (!requests[idx].netsuiteEstimateId) {
+      const year = new Date().getFullYear();
+      const estimateCount = requests.filter((r) => r.netsuiteEstimateNumber && String(r.netsuiteEstimateNumber).startsWith(`EST-${year}-`)).length + 1;
+      requests[idx] = {
+        ...requests[idx],
+        status: "Estimate Created",
+        updatedAt: new Date().toISOString(),
+        netsuiteEstimateId: `dummy-est-${crypto.randomUUID().slice(0, 8)}`,
+        netsuiteEstimateNumber: `EST-${year}-${String(estimateCount).padStart(4, "0")}`,
+        netsuiteStatus: "Estimate Created",
+        netsuiteUpdatedAt: new Date().toISOString()
+      };
+      setDemoRequests(auth.company, requests);
+    }
+    return { ok: true, request: requests[idx] };
+  }
+
+  if (method === "POST" && pathname === "/api/integrations/netsuite/estimates/dummy/status") {
+    const auth = requireAuth();
+    const requestId = String(body.requestId || "").trim();
+    const status = String(body.status || "").trim();
+    if (!requestId) throwApiError("requestId is required.", 400);
+    if (!["New", "Received", "Estimate Created", "Completed"].includes(status)) {
+      throwApiError("status must be one of: New, Received, Estimate Created, Completed.", 400);
+    }
+    const requests = getDemoRequests(auth.company);
+    const idx = requests.findIndex((r) => r.id === requestId);
+    if (idx < 0) throwApiError("Request not found.", 404);
+    requests[idx] = {
+      ...requests[idx],
+      status,
+      updatedAt: new Date().toISOString(),
+      netsuiteStatus: status,
+      netsuiteUpdatedAt: new Date().toISOString()
+    };
+    setDemoRequests(auth.company, requests);
+    return { ok: true, request: requests[idx] };
+  }
+
   if (method === "GET" && pathname === "/api/users") {
     requireAdmin();
     return users.map(makeDemoPublicUser).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -538,6 +650,12 @@ export default function App() {
     return Number.isFinite(n) && n > 0 ? n : 1;
   });
   const [cart, setCart] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsError, setRequestsError] = useState("");
+  const [requestSubmitLoading, setRequestSubmitLoading] = useState(false);
+  const [requestStatusUpdateLoading, setRequestStatusUpdateLoading] = useState(false);
+  const [requestStatusUpdateError, setRequestStatusUpdateError] = useState("");
   const [requestStatusFilter, setRequestStatusFilter] = useState("All");
   const [requestSearch, setRequestSearch] = useState("");
   const [activeRequestId, setActiveRequestId] = useState(null);
@@ -572,10 +690,7 @@ export default function App() {
   const [weeklySpecialSearch, setWeeklySpecialSearch] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
 
-  const companyKey = user ? user.company.toLowerCase().trim() : "anon";
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
-  const requestsKey = `pcs.requests.${companyKey}`;
-  const requests = useMemo(() => readJson(localStorage, requestsKey, []), [requestsKey, cart, requestStatusFilter, requestSearch, activeRequestId]);
 
   const applyAuthTokens = (data) => {
     if (!data?.token || !data?.refreshToken) return;
@@ -616,6 +731,10 @@ export default function App() {
     setSessionTimeLeftMs(null);
     setUser(null);
     setCart([]);
+    setRequests([]);
+    setRequestsError("");
+    setRequestStatusUpdateError("");
+    setActiveRequestId(null);
     setCartOpen(false);
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
@@ -743,6 +862,47 @@ export default function App() {
 
   useEffect(() => {
     let ignore = false;
+    async function loadRequests() {
+      if (!user || !authToken) {
+        if (!ignore) {
+          setRequests([]);
+          setRequestsLoading(false);
+        }
+        return;
+      }
+      try {
+        if (!ignore) {
+          setRequestsLoading(true);
+          setRequestsError("");
+        }
+        const payload = await apiRequest("/api/requests", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        if (!ignore) {
+          setRequests(Array.isArray(payload) ? payload : []);
+        }
+      } catch (error) {
+        if (!ignore) {
+          setRequests([]);
+          setRequestsError(error.message || "Failed to load requests.");
+        }
+      } finally {
+        if (!ignore) {
+          setRequestsLoading(false);
+        }
+      }
+    }
+    loadRequests();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, refreshToken, user]);
+
+  useEffect(() => {
+    let ignore = false;
     async function loadWeeklyBannerSetting() {
       if (!user || !authToken) return;
       try {
@@ -776,6 +936,13 @@ export default function App() {
       setSelectedCategory(products[0].category);
     }
   }, [products, selectedCategory]);
+
+  useEffect(() => {
+    if (!activeRequestId) return;
+    if (!requests.some((r) => r.id === activeRequestId)) {
+      setActiveRequestId(null);
+    }
+  }, [requests, activeRequestId]);
 
   useEffect(() => {
     if (skipInitialCategoryResetRef.current) {
@@ -984,6 +1151,25 @@ export default function App() {
     }
   };
 
+  const refreshRequests = async () => {
+    if (!user || !authToken) return;
+    try {
+      setRequestsLoading(true);
+      setRequestsError("");
+      const payload = await apiRequest("/api/requests", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setRequests(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setRequestsError(error.message || "Failed to load requests.");
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
   const imageFor = (p) => p.image || p.images?.[0] || categoryImagePlaceholders[p.category] || "";
 
   const addToCart = (p, qty, note) => {
@@ -1006,18 +1192,72 @@ export default function App() {
     setCategoryPage(1);
   };
 
-  const submitRequest = () => {
+  const submitRequest = async () => {
     if (!cart.length || !user) return;
     const valid = cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0);
     if (!valid) return;
-    const existing = readJson(localStorage, requestsKey, []);
-    const requestNumber = `REQ-${new Date().getFullYear()}-${String(existing.length + 1).padStart(4, "0")}`;
-    const lines = cart.map((x) => ({ productId: x.productId, model: x.model, grade: x.grade, quantity: Number(x.quantity), offerPrice: Number(x.offerPrice), note: x.note || "" }));
-    const total = lines.reduce((s, l) => s + l.quantity * l.offerPrice, 0);
-    writeJson(localStorage, requestsKey, [...existing, { id: crypto.randomUUID(), requestNumber, company: user.company, createdBy: user.email, createdAt: new Date().toISOString(), status: "New", lines, total }]);
-    updateCart([]);
-    setCartOpen(false);
-    setRoute("requests");
+    const lines = cart.map((x) => ({
+      productId: x.productId,
+      model: x.model,
+      grade: x.grade,
+      quantity: Number(x.quantity),
+      offerPrice: Number(x.offerPrice),
+      note: x.note || ""
+    }));
+
+    try {
+      setRequestSubmitLoading(true);
+      setRequestsError("");
+      const created = await apiRequest("/api/requests", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { lines }
+      });
+      await apiRequest("/api/integrations/netsuite/estimates/dummy", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { requestId: created.id }
+      });
+      await refreshRequests();
+      updateCart([]);
+      setCartOpen(false);
+      setRoute("requests");
+      if (created?.id) {
+        setActiveRequestId(created.id);
+      }
+    } catch (error) {
+      setRequestsError(error.message || "Failed to submit request.");
+    } finally {
+      setRequestSubmitLoading(false);
+    }
+  };
+
+  const setDummyRequestStatusAsAdmin = async (requestId, status) => {
+    if (!user || user.role !== "admin") return;
+    try {
+      setRequestStatusUpdateLoading(true);
+      setRequestStatusUpdateError("");
+      await apiRequest("/api/integrations/netsuite/estimates/dummy/status", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { requestId, status }
+      });
+      await refreshRequests();
+      setActiveRequestId(requestId);
+    } catch (error) {
+      setRequestStatusUpdateError(error.message || "Failed to update status.");
+    } finally {
+      setRequestStatusUpdateLoading(false);
+    }
   };
 
   const handleLogin = async (email, password) => {
@@ -1367,7 +1607,7 @@ export default function App() {
 
   const filteredRequests = requests
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
-    .filter((r) => r.requestNumber.toLowerCase().includes(requestSearch.toLowerCase()));
+    .filter((r) => String(r.requestNumber || "").toLowerCase().includes(requestSearch.toLowerCase()));
   const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
   const modalImages = activeProduct ? (activeProduct.images?.length ? activeProduct.images : [imageFor(activeProduct)]) : [];
   const canCarousel = modalImages.length > 1;
@@ -1604,12 +1844,38 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                   {["All", "New", "Received", "Estimate Created", "Completed"].map((s) => <button key={s} className="ghost-btn" style={requestStatusFilter === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}} onClick={() => setRequestStatusFilter(s)}>{s}</button>)}
                   <input className="request-search-input" placeholder="Search request #" value={requestSearch} onChange={(e) => setRequestSearch(e.target.value)} />
+                  <button className="ghost-btn" onClick={refreshRequests} disabled={requestsLoading}>Refresh</button>
                 </div>
-                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>${r.total.toFixed(2)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
+                {requestsError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestsError}</p> : null}
+                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{requestsLoading ? <tr><td colSpan={5} className="small">Loading requests...</td></tr> : filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>${Number(r.total || 0).toFixed(2)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
               </section>
               <section className="panel">
                 <h3 style={{ marginTop: 0 }}>Request details</h3>
-                {activeRequest ? <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>${l.offerPrice.toFixed(2)}</td><td>${(l.quantity * l.offerPrice).toFixed(2)}</td></tr>)}</tbody></table> : <p className="small">Choose a request above.</p>}
+                {activeRequest ? (
+                  <>
+                    <p className="small" style={{ marginTop: 0 }}>
+                      Dummy estimate: {activeRequest.netsuiteEstimateNumber || "Not created yet"}
+                      {activeRequest.netsuiteStatus ? ` | Sync status: ${activeRequest.netsuiteStatus}` : ""}
+                    </p>
+                    {user?.role === "admin" ? (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                        {["New", "Received", "Estimate Created", "Completed"].map((s) => (
+                          <button
+                            key={`req-status-${s}`}
+                            className="ghost-btn"
+                            style={activeRequest.status === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
+                            disabled={requestStatusUpdateLoading}
+                            onClick={() => setDummyRequestStatusAsAdmin(activeRequest.id, s)}
+                          >
+                            {requestStatusUpdateLoading && activeRequest.status !== s ? "Updating..." : `Set ${s}`}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {requestStatusUpdateError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestStatusUpdateError}</p> : null}
+                    <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>${Number(l.offerPrice || 0).toFixed(2)}</td><td>${(Number(l.quantity || 0) * Number(l.offerPrice || 0)).toFixed(2)}</td></tr>)}</tbody></table>
+                  </>
+                ) : <p className="small">Choose a request above.</p>}
               </section>
             </>
           )}
@@ -1821,7 +2087,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])}>Delete all</button><button className="submit-btn" disabled={!cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>Submit request</button></div></div>
+            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Delete all</button><button className="submit-btn" disabled={requestSubmitLoading || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
           </article>
         </div>
       )}

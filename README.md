@@ -17,11 +17,12 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - line total and grand total calculations
   - remove line item
   - submit validation and no-partial-submission behavior
+  - backend request creation + dummy estimate creation call
 - Requests page with:
   - status tabs (New, Received, Estimate Created, Completed)
   - request-number search
-  - read-only request detail view
-- Company-level request visibility model in storage keys
+  - request detail view with dummy estimate metadata
+  - admin-only status update buttons (dummy NetSuite status sync simulation)
 
 ## Technical Notes
 - Frontend: React + Vite
@@ -47,8 +48,8 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - Demo reset verification code: `123456`
 - Current storage model for request flow:
   - `sessionStorage` for in-session request builder state
-  - `localStorage` for user session, saved filters, and submitted requests
-- In production, request/auth persistence should move fully server-side.
+  - backend SQLite for submitted requests and request lines
+  - `localStorage` for user session and UI state
 - Token/session settings:
   - `ACCESS_TOKEN_TTL_MINUTES` (default `30`)
   - `REFRESH_TOKEN_TTL_DAYS` (default `14`)
@@ -85,6 +86,18 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - OpenAPI file: `docs/openapi.yaml`
 - Raw spec endpoint: `/api/openapi.yaml`
 - Swagger UI endpoint: `/api/docs`
+
+## Request / Estimate APIs
+- Requests:
+  - `GET /api/requests`
+  - `POST /api/requests`
+  - `GET /api/requests/{id}`
+- Dummy NetSuite estimate simulation:
+  - `POST /api/integrations/netsuite/estimates/dummy`
+  - `POST /api/integrations/netsuite/estimates/dummy/status`
+- Notes:
+  - App currently calls dummy estimate create automatically after request submission.
+  - Admin can update request status from the Requests details screen via dummy status endpoint.
 
 ## Confluence Publish Helper
 - Script: `scripts/confluence-upsert.mjs`

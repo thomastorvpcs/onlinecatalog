@@ -81,10 +81,13 @@
 <ul>
   <li><code>/api/auth/*</code> - login/register/me/refresh/logout/reset</li>
   <li><code>/api/devices</code> - search/filter/pagination</li>
+  <li><code>/api/requests</code> - create/list request quotes</li>
   <li><code>/api/inventory/*</code> - inventory updates/events</li>
   <li><code>/api/users</code> - admin user management</li>
   <li><code>/api/admin/*</code> - admin controls</li>
   <li><code>/api/integrations/boomi/inventory/sync</code> - external inventory pull</li>
+  <li><code>/api/integrations/netsuite/estimates/dummy</code> - dummy estimate creation</li>
+  <li><code>/api/integrations/netsuite/estimates/dummy/status</code> - dummy estimate status updates</li>
 </ul>
 <p>Full schema and examples: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></p>
 
@@ -116,6 +119,9 @@
   <li><code>device_inventory</code></li>
   <li><code>inventory_events</code></li>
   <li><code>boomi_inventory_raw</code></li>
+  <li><code>quote_requests</code></li>
+  <li><code>quote_request_lines</code></li>
+  <li><code>quote_request_events</code></li>
 </ul>
 <p>Relationships:</p>
 <ul>
