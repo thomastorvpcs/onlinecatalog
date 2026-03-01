@@ -1,97 +1,197 @@
-<h1>NetSuite Sales Estimate Integration Design</h1>
+<h1>NetSuite Sales Estimate Integration Specification</h1>
 
-<h2>Purpose</h2>
-<p>This page describes how PCS Online Catalog should create and track Sales Estimates in NetSuite from submitted buyer requests.</p>
+<h2>1. Purpose</h2>
+<p>This document defines the target integration contract between PCS Online Catalog and NetSuite for Sales Estimate creation and status synchronization. It is written as an implementation guide for NetSuite and integration developers.</p>
 
-<h2>Scope</h2>
+<h2>2. Integration Objective</h2>
 <ul>
-  <li>Create NetSuite Sales Estimates from approved request data.</li>
-  <li>Store NetSuite identifiers and status in the Online Catalog backend.</li>
-  <li>Support status synchronization from NetSuite back to the request record.</li>
-  <li>Provide idempotent, auditable, and retry-safe integration behavior.</li>
+  <li>Create one NetSuite <code>Estimate</code> per submitted request.</li>
+  <li>Prevent duplicate estimates using idempotent keys.</li>
+  <li>Store NetSuite identifiers/status in the request record.</li>
+  <li>Receive estimate status changes back to PCS for workflow visibility.</li>
 </ul>
 
-<h2>High-Level Flow</h2>
+<h2>3. Systems and Responsibilities</h2>
+<table>
+  <tbody>
+    <tr><th>System</th><th>Responsibility</th></tr>
+    <tr><td>PCS Online Catalog</td><td>Owns request lifecycle, payload preparation, persistence of NetSuite references/status.</td></tr>
+    <tr><td>Integration Layer (optional)</td><td>Reference lookups, transformation, auth handling, retries, error normalization.</td></tr>
+    <tr><td>NetSuite</td><td>System of record for Estimate transaction and transactional status.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. End-to-End Flow</h2>
 <ol>
-  <li>Buyer submits request in Online Catalog.</li>
-  <li>Backend validates required quote/request fields.</li>
-  <li>Backend resolves NetSuite references (customer, items, tax, terms, etc.).</li>
-  <li>Backend creates a NetSuite <code>Estimate</code> record.</li>
-  <li>NetSuite internal id + estimate number are stored in local request table.</li>
-  <li>Status updates are received by webhook and reconciled by fallback polling.</li>
+  <li>Buyer submits request in PCS.</li>
+  <li>PCS validates request and line-item data.</li>
+  <li>PCS resolves required NetSuite references (customer, item IDs, tax, terms, etc.).</li>
+  <li>PCS creates NetSuite Estimate using idempotent <code>externalId</code>.</li>
+  <li>PCS persists <code>netsuite_estimate_id</code>, <code>netsuite_estimate_number</code>, and status metadata.</li>
+  <li>NetSuite pushes status updates to PCS webhook (primary).</li>
+  <li>PCS runs reconciliation polling for missed updates (fallback).</li>
 </ol>
 
-<h2>Data Mapping (Request to NetSuite Estimate)</h2>
+<h2>5. Contract: PCS Request to NetSuite Estimate</h2>
+<h3>5.1 Required Request Fields (PCS canonical)</h3>
+<table>
+  <tbody>
+    <tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr>
+    <tr><td><code>request.id</code></td><td>string</td><td>Yes</td><td>Use as idempotency key.</td></tr>
+    <tr><td><code>request.requestNumber</code></td><td>string</td><td>Yes</td><td>Human-readable tracking.</td></tr>
+    <tr><td><code>request.company</code></td><td>string</td><td>Yes</td><td>Used to resolve customer mapping.</td></tr>
+    <tr><td><code>request.createdAt</code></td><td>ISO datetime</td><td>Yes</td><td>Mapped to transaction date.</td></tr>
+    <tr><td><code>request.lines[]</code></td><td>array</td><td>Yes</td><td>At least one line item.</td></tr>
+    <tr><td><code>request.lines[].productId</code></td><td>string</td><td>Yes</td><td>Mapped to NetSuite Item internal id via mapping table.</td></tr>
+    <tr><td><code>request.lines[].quantity</code></td><td>integer</td><td>Yes</td><td>Must be &gt; 0.</td></tr>
+    <tr><td><code>request.lines[].offerPrice</code></td><td>decimal</td><td>Yes</td><td>Mapped as line <code>rate</code>.</td></tr>
+    <tr><td><code>request.lines[].note</code></td><td>string</td><td>No</td><td>Optional line description.</td></tr>
+  </tbody>
+</table>
+
+<h3>5.2 Field Mapping to NetSuite Estimate</h3>
+<table>
+  <tbody>
+    <tr><th>PCS field</th><th>Transform</th><th>NetSuite Estimate field</th></tr>
+    <tr><td><code>request.id</code></td><td>Direct</td><td><code>externalId</code></td></tr>
+    <tr><td><code>company</code></td><td>Lookup customer internal id</td><td><code>entity.id</code></td></tr>
+    <tr><td><code>createdAt</code></td><td>Date only (<code>YYYY-MM-DD</code>)</td><td><code>trandate</code></td></tr>
+    <tr><td><code>requestNumber</code></td><td>Prefix memo</td><td><code>memo</code></td></tr>
+    <tr><td><code>lines[].productId</code></td><td>Lookup item internal id</td><td><code>item.items[].item.id</code></td></tr>
+    <tr><td><code>lines[].quantity</code></td><td>Direct</td><td><code>item.items[].quantity</code></td></tr>
+    <tr><td><code>lines[].offerPrice</code></td><td>Decimal string/number</td><td><code>item.items[].rate</code></td></tr>
+    <tr><td><code>lines[].note</code></td><td>Fallback empty</td><td><code>item.items[].description</code></td></tr>
+  </tbody>
+</table>
+
+<h3>5.3 Example Create Estimate Payload (to NetSuite)</h3>
+<pre><code>{
+  "externalId": "req_5f4b8c2a2f8e4c3a",
+  "entity": { "id": "4567" },
+  "trandate": "2026-03-01",
+  "memo": "PCS Request REQ-2026-0012",
+  "item": {
+    "items": [
+      {
+        "item": { "id": "1024" },
+        "quantity": 10,
+        "rate": 249.99,
+        "description": "iPhone 15 128GB"
+      },
+      {
+        "item": { "id": "2048" },
+        "quantity": 5,
+        "rate": 199.5,
+        "description": "Galaxy S24 128GB"
+      }
+    ]
+  }
+}</code></pre>
+
+<h3>5.4 Example Success Response (from NetSuite)</h3>
+<pre><code>{
+  "id": "78123",
+  "tranId": "EST-2026-00451",
+  "externalId": "req_5f4b8c2a2f8e4c3a",
+  "status": "Open"
+}</code></pre>
+
+<h2>6. Idempotency and Duplicate Prevention</h2>
 <ul>
-  <li><code>request.id</code> -> <code>externalId</code> (idempotency key)</li>
-  <li><code>request.company/customer</code> -> <code>entity</code></li>
-  <li><code>request.createdAt</code> -> <code>trandate</code></li>
-  <li><code>request.lines[*].productId</code> -> <code>item.item</code></li>
-  <li><code>request.lines[*].quantity</code> -> <code>item.quantity</code></li>
-  <li><code>request.lines[*].offerPrice</code> -> <code>item.rate</code></li>
-  <li><code>request.lines[*].note</code> -> <code>item.description</code> (optional)</li>
-  <li>Derived total -> transaction total (NetSuite-calculated)</li>
+  <li><strong>Idempotency key:</strong> <code>externalId = request.id</code>.</li>
+  <li>If create is retried and estimate already exists, integration must return existing estimate id/number instead of creating a new transaction.</li>
+  <li>PCS must treat duplicate create responses as success when <code>externalId</code> matches.</li>
 </ul>
 
-<h2>Status Model</h2>
-<p>Recommended normalized request lifecycle:</p>
+<h2>7. Status Synchronization Contract</h2>
+<h3>7.1 Recommended Push Webhook (NetSuite to PCS)</h3>
+<p>Endpoint in PCS (example): <code>POST /api/integrations/netsuite/estimates/events</code></p>
+
+<h3>7.2 Webhook Payload (example)</h3>
+<pre><code>{
+  "eventId": "ns_evt_20260301_00091",
+  "eventType": "estimate.status.changed",
+  "occurredAt": "2026-03-01T14:25:19Z",
+  "estimate": {
+    "id": "78123",
+    "tranId": "EST-2026-00451",
+    "externalId": "req_5f4b8c2a2f8e4c3a",
+    "status": "Pending Approval",
+    "lastModifiedDate": "2026-03-01T14:25:15Z"
+  }
+}</code></pre>
+
+<h3>7.3 Reconciliation Poll Contract (fallback)</h3>
 <ul>
-  <li><code>New</code></li>
-  <li><code>Received</code></li>
-  <li><code>Estimate Created</code></li>
-  <li><code>Completed</code></li>
-</ul>
-<p>Store both:</p>
-<ul>
-  <li>Raw NetSuite status text/code</li>
-  <li>Normalized app status for UI filtering and workflow control</li>
+  <li>Query NetSuite estimates changed since <code>last_sync_at</code>.</li>
+  <li>For each changed estimate, upsert local status by <code>externalId</code>.</li>
+  <li>Persist last successful poll watermark.</li>
 </ul>
 
-<h2>Sync Strategy</h2>
-<h3>Primary: Push from NetSuite</h3>
+<h3>7.4 NetSuite to PCS Status Normalization</h3>
+<table>
+  <tbody>
+    <tr><th>NetSuite status (example)</th><th>PCS normalized status</th></tr>
+    <tr><td>Open</td><td><code>Estimate Created</code></td></tr>
+    <tr><td>Pending Approval</td><td><code>Received</code></td></tr>
+    <tr><td>Approved / Converted</td><td><code>Completed</code></td></tr>
+    <tr><td>Closed / Rejected</td><td><code>Completed</code> (with reason in audit log)</td></tr>
+  </tbody>
+</table>
+
+<h2>8. Error Contract and Retry Rules</h2>
+<h3>8.1 Error Categories</h3>
+<table>
+  <tbody>
+    <tr><th>Category</th><th>HTTP</th><th>Retry</th><th>Action</th></tr>
+    <tr><td>Validation/mapping error</td><td>400</td><td>No</td><td>Fix mapping/data; store error details.</td></tr>
+    <tr><td>Unauthorized/forbidden</td><td>401/403</td><td>No (until auth fixed)</td><td>Fix credentials/role.</td></tr>
+    <tr><td>Rate limit</td><td>429</td><td>Yes</td><td>Backoff and retry.</td></tr>
+    <tr><td>NetSuite transient error</td><td>5xx/timeout</td><td>Yes</td><td>Retry with exponential backoff.</td></tr>
+  </tbody>
+</table>
+
+<h3>8.2 Retry Policy</h3>
 <ul>
-  <li>NetSuite User Event / integration callback posts status updates to Online Catalog webhook.</li>
-  <li>Webhook applies idempotent updates by <code>requestId/externalId</code>.</li>
+  <li>Backoff sequence (example): 2s, 10s, 30s, 2m, 5m.</li>
+  <li>Max attempts: 5 for transient failures.</li>
+  <li>After max attempts, set sync state to failed and alert.</li>
 </ul>
 
-<h3>Fallback: Reconciliation Poll</h3>
+<h2>9. Security Requirements</h2>
 <ul>
-  <li>Scheduled sync (for example every 5-15 minutes) fetches recently changed estimates from NetSuite.</li>
-  <li>Updates any missed statuses/events.</li>
+  <li>Use dedicated NetSuite integration role with least privilege.</li>
+  <li>Store credentials/tokens in secure secret manager.</li>
+  <li>Verify webhook signatures (HMAC) and reject unsigned events.</li>
+  <li>Log request/response metadata without exposing secrets.</li>
 </ul>
 
-<h2>Reliability and Security</h2>
-<ul>
-  <li>OAuth/token auth with dedicated integration role in NetSuite.</li>
-  <li>Idempotent create using <code>externalId</code> to avoid duplicates.</li>
-  <li>Retry with exponential backoff for transient failures (5xx/timeout/429).</li>
-  <li>Store error payloads for troubleshooting and support.</li>
-  <li>Use signed webhook payload verification (HMAC) where available.</li>
-</ul>
-
-<h2>Operational Data to Persist</h2>
+<h2>10. PCS Data Persistence Requirements</h2>
+<p>Minimum persisted fields:</p>
 <ul>
   <li><code>netsuite_estimate_id</code></li>
   <li><code>netsuite_estimate_number</code></li>
-  <li><code>netsuite_status</code></li>
+  <li><code>netsuite_status</code> (raw)</li>
+  <li><code>status</code> (normalized app status)</li>
   <li><code>netsuite_last_sync_at</code></li>
-  <li>Last sync source (<code>webhook</code> or <code>reconcile</code>)</li>
-  <li>Last sync error message/payload (if failed)</li>
+  <li><code>last_sync_source</code> (<code>webhook</code> / <code>reconcile</code>)</li>
+  <li><code>last_sync_error</code></li>
 </ul>
 
-<h2>Implementation Approach in This Repo</h2>
+<h2>11. Current Repository Implementation Status</h2>
 <ul>
-  <li>Current implementation uses dummy endpoints for estimate creation and status updates.</li>
-  <li>Dummy route pattern is designed to be replaced with real NetSuite calls without changing request UI contract.</li>
-  <li>Relevant backend file: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
-  <li>Relevant API contract: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
+  <li>Current code implements a dummy estimate create/status flow.</li>
+  <li>API contracts are stable and designed for later replacement with real NetSuite calls.</li>
+  <li>Backend reference: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
+  <li>API spec reference: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/docs/openapi.yaml">docs/openapi.yaml</a></li>
 </ul>
 
-<h2>Rollout Plan</h2>
+<h2>12. Go-Live Checklist</h2>
 <ol>
-  <li>Validate mapping in NetSuite sandbox.</li>
-  <li>Enable create-estimate flow for a pilot customer group.</li>
-  <li>Enable webhook status updates.</li>
-  <li>Enable reconciliation polling and monitoring dashboards.</li>
-  <li>Promote to production and monitor error rates/status lag.</li>
+  <li>Validate customer/item mapping table in NetSuite sandbox.</li>
+  <li>Verify idempotent create behavior using duplicate submission tests.</li>
+  <li>Validate webhook signature verification and replay handling.</li>
+  <li>Test reconciliation poll against intentionally dropped webhook events.</li>
+  <li>Confirm alerting for failed sync and stale status.</li>
+  <li>Approve production deployment with rollback plan.</li>
 </ol>
