@@ -1588,8 +1588,13 @@ export default function App() {
           }
         });
       setSavedFilterNotice(editingSavedFilterId ? `Updated "${name}".` : `Saved "${name}".`);
-      setEditingSavedFilterId(payload?.id || editingSavedFilterId || null);
-      setNewSavedFilterName(payload?.name || name);
+      if (editingSavedFilterId) {
+        setEditingSavedFilterId(payload?.id || editingSavedFilterId || null);
+        setNewSavedFilterName(payload?.name || name);
+      } else {
+        setEditingSavedFilterId(null);
+        setNewSavedFilterName("");
+      }
       await Promise.all([refreshSavedFilters(), refreshShortcutFilters()]);
     } catch (error) {
       setSavedFiltersError(error.message || "Failed to save filter.");
