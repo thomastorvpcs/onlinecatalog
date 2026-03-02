@@ -2159,9 +2159,12 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
-  const shortcutCategoryEntries = categories
-    .map((categoryName) => ({ categoryName, filters: shortcutFiltersByCategory[categoryName] || [] }))
-    .filter((entry) => entry.filters.length > 0);
+  const shortcutEntries = categories.flatMap((categoryName) =>
+    (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
+      categoryName,
+      savedFilter
+    }))
+  );
 
   const openSavedFilterShortcut = (categoryName, savedFilter) => {
     const payload = sanitizeFilterPayload(savedFilter?.payload);
@@ -2207,30 +2210,23 @@ export default function App() {
                 <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
                 <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
               </div>
-              {shortcutCategoryEntries.length ? (
+              {shortcutEntries.length ? (
                 <section className="panel shortcuts-panel">
                   <div className="category-header">
                     <h2 style={{ margin: 0, fontSize: "1.7rem", fontWeight: 500 }}>Shortcuts</h2>
-                    <p className="small" style={{ margin: 0 }}>Saved filters by category</p>
+                    <p className="small" style={{ margin: 0 }}>Saved filters</p>
                   </div>
-                  <div className="shortcuts-groups">
-                    {shortcutCategoryEntries.map((entry) => (
-                      <div key={`shortcut-${entry.categoryName}`} className="shortcut-category-group">
-                        <h4 className="shortcut-category-title">{entry.categoryName}</h4>
-                        <div className="shortcut-chips">
-                          {entry.filters.map((savedFilter) => (
-                            <button
-                              key={`shortcut-${entry.categoryName}-${savedFilter.id}`}
-                              type="button"
-                              className="shortcut-chip"
-                              title={savedFilter.name}
-                              onClick={() => openSavedFilterShortcut(entry.categoryName, savedFilter)}
-                            >
-                              {savedFilter.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                  <div className="shortcut-chips">
+                    {shortcutEntries.map(({ categoryName, savedFilter }) => (
+                      <button
+                        key={`shortcut-${categoryName}-${savedFilter.id}`}
+                        type="button"
+                        className="shortcut-chip"
+                        title={`${categoryName} | ${savedFilter.name}`}
+                        onClick={() => openSavedFilterShortcut(categoryName, savedFilter)}
+                      >
+                        {categoryName} | {savedFilter.name}
+                      </button>
                     ))}
                   </div>
                 </section>
