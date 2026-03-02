@@ -661,6 +661,8 @@ export default function App() {
   const [activeRequestId, setActiveRequestId] = useState(null);
   const [activeProduct, setActiveProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [selectedRequestLocation, setSelectedRequestLocation] = useState("");
+  const [allowPartialRequestLocation, setAllowPartialRequestLocation] = useState(false);
   const [productQty, setProductQty] = useState(1);
   const [productOfferPrice, setProductOfferPrice] = useState(0);
   const [productNote, setProductNote] = useState("");
@@ -734,6 +736,8 @@ export default function App() {
     setSessionTimeLeftMs(null);
     setUser(null);
     setCart([]);
+    setSelectedRequestLocation("");
+    setAllowPartialRequestLocation(false);
     setRequests([]);
     setRequestsError("");
     setRequestStatusUpdateError("");
@@ -1214,6 +1218,10 @@ export default function App() {
 
   const submitRequest = async () => {
     if (!cart.length || !user) return;
+    if (!selectedRequestLocation) {
+      setRequestsError("Select an order location before submitting.");
+      return;
+    }
     const valid = cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0);
     if (!valid) return;
     const lines = cart.map((x) => ({
@@ -1234,7 +1242,7 @@ export default function App() {
         refreshToken,
         onAuthUpdate: applyAuthTokens,
         onAuthFail: clearAuthState,
-        body: { lines }
+        body: { lines, preferredLocation: selectedRequestLocation }
       });
       await apiRequest("/api/integrations/netsuite/estimates/dummy", {
         method: "POST",
@@ -1628,6 +1636,50 @@ export default function App() {
   const filteredRequests = requests
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
     .filter((r) => String(r.requestNumber || "").toLowerCase().includes(requestSearch.toLowerCase()));
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const allRequestLocations = useMemo(() => {
+    const names = new Set();
+    for (const p of products) {
+      const locations = p.locations && typeof p.locations === "object" ? Object.keys(p.locations) : [];
+      for (const loc of locations) names.add(loc);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [products]);
+  const fullFulfillmentLocations = useMemo(() => {
+    return allRequestLocations.filter((locationName) => cart.every((line) => {
+      const device = productById.get(line.productId);
+      const available = Number(device?.locations?.[locationName] || 0);
+      return Number(line.quantity || 0) <= available;
+    }));
+  }, [allRequestLocations, cart, productById]);
+  const selectableRequestLocations = allowPartialRequestLocation ? allRequestLocations : fullFulfillmentLocations;
+  const cartFulfillmentIssues = useMemo(() => {
+    if (!selectedRequestLocation) return [];
+    return cart
+      .map((line) => {
+        const device = productById.get(line.productId);
+        const requested = Number(line.quantity || 0);
+        const available = Number(device?.locations?.[selectedRequestLocation] || 0);
+        const shortage = Math.max(0, requested - available);
+        return {
+          id: line.id,
+          productId: line.productId,
+          model: line.model,
+          requested,
+          available,
+          shortage
+        };
+      })
+      .filter((row) => row.shortage > 0);
+  }, [cart, productById, selectedRequestLocation]);
+  const cartFulfillmentIssueByLineId = useMemo(() => {
+    const map = new Map();
+    for (const row of cartFulfillmentIssues) {
+      map.set(row.id, row);
+    }
+    return map;
+  }, [cartFulfillmentIssues]);
+  const cartHasFulfillmentIssues = cartFulfillmentIssues.length > 0;
   const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
   const modalImages = activeProduct ? (activeProduct.images?.length ? activeProduct.images : [imageFor(activeProduct)]) : [];
   const canCarousel = modalImages.length > 1;
@@ -1639,6 +1691,21 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
+
+  useEffect(() => {
+    if (!cart.length) {
+      setSelectedRequestLocation("");
+      return;
+    }
+    const allowedLocations = allowPartialRequestLocation ? allRequestLocations : fullFulfillmentLocations;
+    if (!allowedLocations.length) {
+      setSelectedRequestLocation("");
+      return;
+    }
+    if (!allowedLocations.includes(selectedRequestLocation)) {
+      setSelectedRequestLocation(allowedLocations[0]);
+    }
+  }, [allowPartialRequestLocation, allRequestLocations, fullFulfillmentLocations, cart, selectedRequestLocation]);
 
   return (
     <div className="app-shell">
@@ -2119,9 +2186,17 @@ export default function App() {
                 <tbody>
                   {cart.length ? cart.map((r) => {
                     const lineTotal = Number(r.offerPrice || 0) * Number(r.quantity || 0);
+                    const fulfillmentIssue = cartFulfillmentIssueByLineId.get(r.id);
                     return (
                       <tr key={r.id}>
-                        <td className="cart-col-name" title={r.model}>{r.model}</td>
+                        <td className="cart-col-name" title={r.model}>
+                          {r.model}
+                          {fulfillmentIssue ? (
+                            <div className="small" style={{ color: "#b91c1c", marginTop: 4, whiteSpace: "normal" }}>
+                              Only {fulfillmentIssue.available} available at {selectedRequestLocation}. Reduce by {fulfillmentIssue.shortage}.
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="cart-col-grade">{r.grade}</td>
                         <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
                         <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || 1)))) } : i))} /></td>
@@ -2142,7 +2217,39 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Delete all</button><button className="submit-btn" disabled={requestSubmitLoading || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
+            <div style={{ padding: "0 16px 10px" }}>
+              <label style={{ display: "block", marginBottom: 6 }}>Order location</label>
+              <select
+                value={selectedRequestLocation}
+                onChange={(e) => setSelectedRequestLocation(e.target.value)}
+                style={{ width: "100%" }}
+                disabled={!selectableRequestLocations.length}
+              >
+                <option value="">Select location</option>
+                {selectableRequestLocations.map((locationName) => (
+                  <option key={`req-location-${locationName}`} value={locationName}>{locationName}</option>
+                ))}
+              </select>
+              <label className="small" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={allowPartialRequestLocation}
+                  onChange={(e) => setAllowPartialRequestLocation(e.target.checked)}
+                />
+                Show locations that cannot fully fulfill this order
+              </label>
+              {!allowPartialRequestLocation && cart.length > 0 && !fullFulfillmentLocations.length ? (
+                <p className="small" style={{ color: "#b91c1c", margin: "8px 0 0" }}>
+                  No single location can fully fulfill this request. Enable partial locations to inspect shortages.
+                </p>
+              ) : null}
+              {selectedRequestLocation && cartHasFulfillmentIssues ? (
+                <p className="small" style={{ color: "#b91c1c", margin: "8px 0 0" }}>
+                  Some items cannot be fully fulfilled at {selectedRequestLocation}. Adjust quantities before submitting.
+                </p>
+              ) : null}
+            </div>
+            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Delete all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
           </article>
         </div>
       )}
