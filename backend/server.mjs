@@ -294,6 +294,7 @@ function initDb() {
   ensureLocationsSchema();
   ensureDeviceSchema();
   ensureQuoteSchema();
+  ensureSavedFiltersSchema();
   const countStmt = db.prepare("SELECT COUNT(*) AS count FROM categories");
   const count = Number(countStmt.get().count || 0);
   if (count === 0) {
@@ -380,6 +381,22 @@ function ensureQuoteSchema() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON quote_requests(created_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON quote_request_lines(request_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON quote_request_events(request_id)");
+}
+
+function ensureSavedFiltersSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_saved_filters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      view_key TEXT NOT NULL DEFAULT 'category',
+      name TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_user_saved_filters_user ON user_saved_filters(user_id)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_saved_filters_unique_name ON user_saved_filters(user_id, view_key, name)");
 }
 
 function normalizeEmail(value) {
@@ -2000,6 +2017,99 @@ function updateDummyEstimateStatus(user, requestId, nextStatus) {
   return getRequestByIdForUser(user, requestId);
 }
 
+const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
+
+function normalizeSavedFilterViewKey(raw) {
+  const viewKey = String(raw || "category").trim().toLowerCase();
+  if (!viewKey) return "category";
+  return /^[a-z0-9_-]{1,32}$/.test(viewKey) ? viewKey : "category";
+}
+
+function sanitizeSavedFilterPayload(raw) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const selectedCategory = String(input.selectedCategory || "").trim().slice(0, 80) || "Smartphones";
+  const search = String(input.search || "").slice(0, 200);
+  const sourceFilters = input.filters && typeof input.filters === "object" ? input.filters : {};
+  const filters = {};
+  for (const key of FILTER_FIELD_KEYS) {
+    const values = Array.isArray(sourceFilters[key])
+      ? sourceFilters[key].map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+    if (values.length) {
+      filters[key] = [...new Set(values)].slice(0, 100);
+    }
+  }
+  return { selectedCategory, search, filters };
+}
+
+function mapSavedFilterRow(row) {
+  let payload = {};
+  try {
+    payload = sanitizeSavedFilterPayload(JSON.parse(String(row.payload_json || "{}")));
+  } catch {
+    payload = sanitizeSavedFilterPayload({});
+  }
+  return {
+    id: Number(row.id),
+    viewKey: row.view_key,
+    name: row.name,
+    payload,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function getSavedFiltersForUser(userId, viewKeyRaw) {
+  const viewKey = normalizeSavedFilterViewKey(viewKeyRaw);
+  const rows = db.prepare(`
+    SELECT id, view_key, name, payload_json, created_at, updated_at
+    FROM user_saved_filters
+    WHERE user_id = ? AND view_key = ?
+    ORDER BY updated_at DESC, name COLLATE NOCASE ASC
+  `).all(userId, viewKey);
+  return rows.map(mapSavedFilterRow);
+}
+
+function upsertSavedFilterForUser(userId, body) {
+  const name = String(body.name || "").trim();
+  if (!name) {
+    throw new Error("name is required.");
+  }
+  if (name.length > 80) {
+    throw new Error("name must be 80 characters or less.");
+  }
+  const viewKey = normalizeSavedFilterViewKey(body.viewKey);
+  const payload = sanitizeSavedFilterPayload(body.payload);
+  const payloadJson = JSON.stringify(payload);
+  db.prepare(`
+    INSERT INTO user_saved_filters (user_id, view_key, name, payload_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, view_key, name)
+    DO UPDATE SET
+      payload_json = excluded.payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(userId, viewKey, name, payloadJson);
+  const row = db.prepare(`
+    SELECT id, view_key, name, payload_json, created_at, updated_at
+    FROM user_saved_filters
+    WHERE user_id = ? AND view_key = ? AND name = ?
+    LIMIT 1
+  `).get(userId, viewKey, name);
+  return mapSavedFilterRow(row);
+}
+
+function deleteSavedFilterForUser(userId, filterIdRaw) {
+  const filterId = Number(filterIdRaw);
+  if (!Number.isInteger(filterId) || filterId < 1) {
+    throw new Error("Saved filter not found.");
+  }
+  const row = db.prepare("SELECT id FROM user_saved_filters WHERE id = ? AND user_id = ?").get(filterId, userId);
+  if (!row?.id) {
+    throw new Error("Saved filter not found.");
+  }
+  db.prepare("DELETE FROM user_saved_filters WHERE id = ? AND user_id = ?").run(filterId, userId);
+}
+
 initDb();
 
 const server = createServer(async (req, res) => {
@@ -2326,6 +2436,52 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(req, res, 200, getDevices(url));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/filters/saved") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const viewKey = url.searchParams.get("view") || "category";
+      json(req, res, 200, getSavedFiltersForUser(user.id, viewKey));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/filters/saved") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      try {
+        const savedFilter = upsertSavedFilterForUser(user.id, body);
+        json(req, res, 200, savedFilter);
+      } catch (error) {
+        json(req, res, 400, { error: error.message || "Failed to save filter." });
+      }
+      return;
+    }
+
+    const savedFilterDeleteMatch = url.pathname.match(/^\/api\/filters\/saved\/([^/]+)$/);
+    if (req.method === "DELETE" && savedFilterDeleteMatch) {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const filterId = decodeURIComponent(savedFilterDeleteMatch[1]);
+      try {
+        deleteSavedFilterForUser(user.id, filterId);
+        json(req, res, 200, { ok: true });
+      } catch (error) {
+        const message = error.message || "Failed to delete saved filter.";
+        const statusCode = message === "Saved filter not found." ? 404 : 400;
+        json(req, res, statusCode, { error: message });
+      }
       return;
     }
 

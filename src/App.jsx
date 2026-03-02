@@ -94,6 +94,8 @@ const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
 const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
+const DEMO_SAVED_FILTERS_PREFIX = "pcs.demo.savedFilters.";
+const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -178,6 +180,35 @@ function getDemoRequests(company) {
 
 function setDemoRequests(company, requests) {
   writeJson(localStorage, demoRequestsKey(company), requests);
+}
+
+function demoSavedFiltersKey(userId, viewKey = "category") {
+  return `${DEMO_SAVED_FILTERS_PREFIX}${Number(userId || 0)}.${String(viewKey || "category").trim().toLowerCase() || "category"}`;
+}
+
+function getDemoSavedFilters(userId, viewKey = "category") {
+  return readJson(localStorage, demoSavedFiltersKey(userId, viewKey), []);
+}
+
+function setDemoSavedFilters(userId, viewKey, savedFilters) {
+  writeJson(localStorage, demoSavedFiltersKey(userId, viewKey), savedFilters);
+}
+
+function sanitizeFilterPayload(raw) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const selectedCategory = String(input.selectedCategory || "").trim() || "Smartphones";
+  const search = String(input.search || "").slice(0, 200);
+  const sourceFilters = input.filters && typeof input.filters === "object" ? input.filters : {};
+  const filters = {};
+  for (const key of FILTER_FIELD_KEYS) {
+    const values = Array.isArray(sourceFilters[key])
+      ? sourceFilters[key].map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+    if (values.length) {
+      filters[key] = [...new Set(values)];
+    }
+  }
+  return { selectedCategory, search, filters };
 }
 
 function makeDemoPublicUser(user) {
@@ -378,6 +409,60 @@ async function demoApiRequest(path, options = {}) {
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize);
     return { items, total, page, pageSize };
+  }
+
+  if (method === "GET" && pathname === "/api/filters/saved") {
+    const auth = requireAuth();
+    const viewKey = String(url.searchParams.get("view") || "category").trim().toLowerCase() || "category";
+    return getDemoSavedFilters(auth.id, viewKey)
+      .slice()
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+  }
+
+  if (method === "POST" && pathname === "/api/filters/saved") {
+    const auth = requireAuth();
+    const name = String(body.name || "").trim();
+    const viewKey = String(body.viewKey || "category").trim().toLowerCase() || "category";
+    if (!name) throwApiError("name is required.", 400);
+    if (name.length > 80) throwApiError("name must be 80 characters or less.", 400);
+    const payload = sanitizeFilterPayload(body.payload);
+    const saved = getDemoSavedFilters(auth.id, viewKey);
+    const now = new Date().toISOString();
+    const existingIndex = saved.findIndex((f) => String(f.name || "").toLowerCase() === name.toLowerCase());
+    if (existingIndex >= 0) {
+      const current = saved[existingIndex];
+      saved[existingIndex] = {
+        ...current,
+        name,
+        payload,
+        updatedAt: now
+      };
+      setDemoSavedFilters(auth.id, viewKey, saved);
+      return saved[existingIndex];
+    }
+    const created = {
+      id: crypto.randomUUID(),
+      viewKey,
+      name,
+      payload,
+      createdAt: now,
+      updatedAt: now
+    };
+    saved.push(created);
+    setDemoSavedFilters(auth.id, viewKey, saved);
+    return created;
+  }
+
+  const savedFilterDeleteMatch = pathname.match(/^\/api\/filters\/saved\/([^/]+)$/);
+  if (method === "DELETE" && savedFilterDeleteMatch) {
+    const auth = requireAuth();
+    const filterId = decodeURIComponent(savedFilterDeleteMatch[1]);
+    const viewKey = String(url.searchParams.get("view") || "category").trim().toLowerCase() || "category";
+    const saved = getDemoSavedFilters(auth.id, viewKey);
+    const next = saved.filter((f) => String(f.id) !== filterId);
+    if (next.length === saved.length) throwApiError("Saved filter not found.", 404);
+    setDemoSavedFilters(auth.id, viewKey, next);
+    return { ok: true };
   }
 
   if (method === "GET" && pathname === "/api/weekly-special-banner") {
@@ -716,6 +801,12 @@ export default function App() {
   const [adminCatalogError, setAdminCatalogError] = useState("");
   const [adminImageMapLoading, setAdminImageMapLoading] = useState(false);
   const [expandedFilters, setExpandedFilters] = useState({});
+  const [savedFilters, setSavedFilters] = useState([]);
+  const [savedFiltersLoading, setSavedFiltersLoading] = useState(false);
+  const [savedFiltersError, setSavedFiltersError] = useState("");
+  const [newSavedFilterName, setNewSavedFilterName] = useState("");
+  const [savingFilter, setSavingFilter] = useState(false);
+  const [savedFilterNotice, setSavedFilterNotice] = useState("");
   const [weeklyExpandedFilters, setWeeklyExpandedFilters] = useState({});
   const [weeklyBannerEnabled, setWeeklyBannerEnabled] = useState(false);
   const [weeklyBannerSaving, setWeeklyBannerSaving] = useState(false);
@@ -775,6 +866,10 @@ export default function App() {
     setRequestStatusUpdateError("");
     setActiveRequestId(null);
     setCartOpen(false);
+    setSavedFilters([]);
+    setSavedFiltersError("");
+    setNewSavedFilterName("");
+    setSavedFilterNotice("");
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -969,6 +1064,47 @@ export default function App() {
   }, [authToken, refreshToken, user]);
 
   useEffect(() => {
+    let ignore = false;
+    async function loadSavedFilters() {
+      if (!user || !authToken) {
+        if (!ignore) {
+          setSavedFilters([]);
+          setSavedFiltersLoading(false);
+        }
+        return;
+      }
+      try {
+        if (!ignore) {
+          setSavedFiltersLoading(true);
+          setSavedFiltersError("");
+        }
+        const payload = await apiRequest("/api/filters/saved?view=category", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        if (!ignore) {
+          setSavedFilters(Array.isArray(payload) ? payload : []);
+        }
+      } catch (error) {
+        if (!ignore) {
+          setSavedFilters([]);
+          setSavedFiltersError(error.message || "Failed to load saved filters.");
+        }
+      } finally {
+        if (!ignore) {
+          setSavedFiltersLoading(false);
+        }
+      }
+    }
+    loadSavedFilters();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, refreshToken, user]);
+
+  useEffect(() => {
     if (!products.length) return;
     const categorySet = new Set(products.map((p) => p.category));
     if (!categorySet.has(selectedCategory)) {
@@ -988,6 +1124,12 @@ export default function App() {
       clearTimeout(cartNoticeTimerRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!savedFilterNotice) return;
+    const timer = setTimeout(() => setSavedFilterNotice(""), 2500);
+    return () => clearTimeout(timer);
+  }, [savedFilterNotice]);
 
   useEffect(() => {
     if (skipInitialCategoryResetRef.current) {
@@ -1213,6 +1355,90 @@ export default function App() {
       setRequestsError(error.message || "Failed to load requests.");
     } finally {
       setRequestsLoading(false);
+    }
+  };
+
+  const refreshSavedFilters = async () => {
+    if (!user || !authToken) return;
+    setSavedFiltersLoading(true);
+    setSavedFiltersError("");
+    try {
+      const payload = await apiRequest("/api/filters/saved?view=category", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setSavedFilters(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setSavedFilters([]);
+      setSavedFiltersError(error.message || "Failed to load saved filters.");
+    } finally {
+      setSavedFiltersLoading(false);
+    }
+  };
+
+  const saveCurrentFilters = async () => {
+    if (!authToken || !user || savingFilter) return;
+    const name = newSavedFilterName.trim();
+    if (!name) {
+      setSavedFiltersError("Enter a name before saving.");
+      return;
+    }
+    setSavingFilter(true);
+    setSavedFiltersError("");
+    try {
+      await apiRequest("/api/filters/saved", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          name,
+          viewKey: "category",
+          payload: sanitizeFilterPayload({
+            selectedCategory,
+            search,
+            filters
+          })
+        }
+      });
+      setSavedFilterNotice(`Saved "${name}".`);
+      setNewSavedFilterName("");
+      await refreshSavedFilters();
+    } catch (error) {
+      setSavedFiltersError(error.message || "Failed to save filter.");
+    } finally {
+      setSavingFilter(false);
+    }
+  };
+
+  const applySavedFilter = (savedFilter) => {
+    const payload = sanitizeFilterPayload(savedFilter?.payload);
+    setProductsView("category");
+    setSelectedCategory(payload.selectedCategory);
+    setSearch(payload.search);
+    setFilters(payload.filters);
+    setCategoryPage(1);
+    setSavedFilterNotice(`Applied "${savedFilter.name}".`);
+  };
+
+  const deleteSavedFilter = async (savedFilter) => {
+    if (!authToken || !user) return;
+    setSavedFiltersError("");
+    try {
+      await apiRequest(`/api/filters/saved/${encodeURIComponent(savedFilter.id)}?view=category`, {
+        method: "DELETE",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setSavedFilterNotice(`Deleted "${savedFilter.name}".`);
+      await refreshSavedFilters();
+    } catch (error) {
+      setSavedFiltersError(error.message || "Failed to delete saved filter.");
     }
   };
 
@@ -1825,6 +2051,42 @@ export default function App() {
               <div className="products-shell">
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
+                  <div className="saved-filters-box">
+                    <div className="saved-filters-form">
+                      <input
+                        className="saved-filter-input"
+                        value={newSavedFilterName}
+                        onChange={(e) => setNewSavedFilterName(e.target.value)}
+                        placeholder="Save current filters as..."
+                        maxLength={80}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            saveCurrentFilters();
+                          }
+                        }}
+                      />
+                      <button type="button" className="saved-filter-save-btn" disabled={savingFilter} onClick={saveCurrentFilters}>
+                        {savingFilter ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                    {savedFilterNotice ? <div className="saved-filter-notice">{savedFilterNotice}</div> : null}
+                    {savedFiltersError ? <div className="saved-filter-error">{savedFiltersError}</div> : null}
+                    <div className="saved-filter-list">
+                      {savedFiltersLoading ? (
+                        <div className="small">Loading saved filters...</div>
+                      ) : savedFilters.length ? (
+                        savedFilters.map((saved) => (
+                          <div key={saved.id} className="saved-filter-item">
+                            <button type="button" className="saved-filter-apply-btn" onClick={() => applySavedFilter(saved)}>{saved.name}</button>
+                            <button type="button" className="saved-filter-delete-btn" onClick={() => deleteSavedFilter(saved)}>Delete</button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="small">No saved filters yet.</div>
+                      )}
+                    </div>
+                  </div>
                   {categoryLoading ? (
                     <FilterSkeleton />
                   ) : fields.map((f) => {

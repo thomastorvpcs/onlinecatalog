@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS quote_request_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS user_saved_filters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  view_key TEXT NOT NULL DEFAULT 'category',
+  name TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_devices_category ON devices(category_id);
 CREATE INDEX IF NOT EXISTS idx_devices_manufacturer ON devices(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_model_family ON devices(model_family);
@@ -139,6 +149,8 @@ CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON quote_requests(company)
 CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON quote_requests(created_at);
 CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON quote_request_lines(request_id);
 CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON quote_request_events(request_id);
+CREATE INDEX IF NOT EXISTS idx_user_saved_filters_user ON user_saved_filters(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_saved_filters_unique_name ON user_saved_filters(user_id, view_key, name);
 
 CREATE VIEW IF NOT EXISTS v_device_catalog AS
 SELECT
