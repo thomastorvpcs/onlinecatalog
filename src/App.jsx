@@ -1137,6 +1137,7 @@ export default function App() {
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
+  const aiCopilotFeedRef = useRef(null);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
@@ -1939,6 +1940,16 @@ export default function App() {
     setCategoryPage(1);
   };
 
+  useEffect(() => {
+    if (!aiCopilotOpen) return;
+    const node = aiCopilotFeedRef.current;
+    if (!node) return;
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading]);
+
   const runAiCopilot = async () => {
     if (!authToken || !user || aiCopilotLoading) return;
     const message = aiCopilotInput.trim();
@@ -1961,6 +1972,9 @@ export default function App() {
           message,
           selectedCategory
         }
+      });
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 650);
       });
       setAiCopilotMessages((prev) => [...prev, {
         role: "assistant",
@@ -3254,7 +3268,7 @@ export default function App() {
               </div>
               <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setAiCopilotOpen(false)}>Minimize</button>
             </div>
-            <div className="ai-copilot-feed">
+            <div className="ai-copilot-feed" ref={aiCopilotFeedRef}>
               {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (
                 <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-msg ${message.role}`}>
                   <div>{message.text}</div>
@@ -3267,6 +3281,16 @@ export default function App() {
               )) : (
                 <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
               )}
+              {aiCopilotLoading ? (
+                <div className="ai-copilot-msg assistant typing">
+                  <span>Writing</span>
+                  <span className="ai-typing-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </div>
+              ) : null}
             </div>
             <div className="saved-filters-form" style={{ marginTop: 8 }}>
               <input
