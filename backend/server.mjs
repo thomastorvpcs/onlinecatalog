@@ -1683,11 +1683,17 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog) {
 }
 
 async function runAiCopilot(user, body) {
-  const heuristic = runAiCopilotHeuristic(user, body);
   const message = String(body?.message || "").trim();
   const selectedCategory = String(body?.selectedCategory || "").trim() || "Smartphones";
-  if (!message) return heuristic;
-  if (!AI_COPILOT_REAL_MODEL_ENABLED || !OPENAI_API_KEY) return heuristic;
+  if (!message) {
+    return { reply: "Please enter a message.", action: null };
+  }
+  if (!AI_COPILOT_REAL_MODEL_ENABLED || !OPENAI_API_KEY) {
+    return {
+      reply: "AI copilot is not configured. Set OPENAI_API_KEY (and enable AI_COPILOT_REAL_MODEL_ENABLED) to use the real model.",
+      action: null
+    };
+  }
 
   try {
     const catalog = buildCopilotCatalogContext();
@@ -1722,10 +1728,13 @@ async function runAiCopilot(user, body) {
       };
     }
 
-    const reply = String(plan?.reply || "").trim() || heuristic.reply;
+    const reply = String(plan?.reply || "").trim() || "I can help with product discovery, filter setup, and fulfillment guidance.";
     return { reply, action };
   } catch {
-    return heuristic;
+    return {
+      reply: "AI copilot is temporarily unavailable right now. Please try again in a moment.",
+      action: null
+    };
   }
 }
 
