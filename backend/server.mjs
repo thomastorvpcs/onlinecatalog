@@ -273,6 +273,10 @@ const INVENTORY_OAUTH_CLIENT_SECRET = process.env.INVENTORY_OAUTH_CLIENT_SECRET 
 const INVENTORY_OAUTH_SCOPE = process.env.INVENTORY_OAUTH_SCOPE || "";
 const NETSUITE_AI_REVIEW_RESTLET_URL = String(process.env.NETSUITE_AI_REVIEW_RESTLET_URL || "").trim();
 const NETSUITE_AI_REVIEW_AUTH_HEADER = String(process.env.NETSUITE_AI_REVIEW_AUTH_HEADER || "").trim();
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_BASE_URL = String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
+const AI_COPILOT_MODEL = String(process.env.AI_COPILOT_MODEL || "gpt-4.1-mini").trim();
+const AI_COPILOT_REAL_MODEL_ENABLED = String(process.env.AI_COPILOT_REAL_MODEL_ENABLED || (OPENAI_API_KEY ? "true" : "false")).toLowerCase() === "true";
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -1457,7 +1461,7 @@ function validateNetsuitePayloadWithAi(body) {
   };
 }
 
-function runAiCopilot(user, body) {
+function runAiCopilotHeuristic(user, body) {
   const message = String(body?.message || "").trim();
   const selectedCategory = String(body?.selectedCategory || "").trim() || "Smartphones";
   if (!message) {
@@ -1517,6 +1521,212 @@ function runAiCopilot(user, body) {
     reply: "I can help with product discovery, filter setup, and fulfillment guidance. Try: 'Find Apple CPO in Miami 128GB'.",
     action: null
   };
+}
+
+function buildCopilotCatalogContext() {
+  return {
+    categories: db.prepare("SELECT DISTINCT name FROM categories ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean),
+    manufacturers: db.prepare("SELECT DISTINCT name FROM manufacturers ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean),
+    modelFamilies: db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => String(r.name || "").trim()).filter(Boolean),
+    grades: ["A", "B", "C", "CPO"],
+    storages: db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => String(r.name || "").trim()).filter(Boolean),
+    regions: db.prepare("SELECT DISTINCT name FROM locations ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean)
+  };
+}
+
+function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
+  const asArray = (value) => (Array.isArray(value) ? value.map((x) => String(x || "").trim()).filter(Boolean) : []);
+  const normalizeFromAllowed = (value, allowedValues) => {
+    const allowed = new Set((allowedValues || []).map((x) => String(x || "").trim()).filter(Boolean));
+    const lowerToCanonical = new Map([...allowed].map((item) => [item.toLowerCase(), item]));
+    return asArray(value)
+      .map((entry) => lowerToCanonical.get(String(entry || "").toLowerCase()))
+      .filter(Boolean)
+      .filter((item, idx, arr) => arr.indexOf(item) === idx);
+  };
+
+  const selectedRaw = String(plan?.selectedCategory || "").trim();
+  const categories = Array.isArray(catalog?.categories) ? catalog.categories : [];
+  const categoriesLowerMap = new Map(categories.map((item) => [item.toLowerCase(), item]));
+  const selectedCategory = selectedRaw === "__ALL__"
+    ? "__ALL__"
+    : (categoriesLowerMap.get(selectedRaw.toLowerCase()) || String(fallbackCategory || "Smartphones"));
+
+  const filters = {};
+  const normalizedManufacturers = normalizeFromAllowed(plan?.filters?.manufacturer, catalog?.manufacturers);
+  if (normalizedManufacturers.length) filters.manufacturer = normalizedManufacturers;
+  const normalizedModelFamilies = normalizeFromAllowed(plan?.filters?.modelFamily, catalog?.modelFamilies);
+  if (normalizedModelFamilies.length) filters.modelFamily = normalizedModelFamilies;
+  const normalizedGrades = normalizeFromAllowed(plan?.filters?.grade, catalog?.grades);
+  if (normalizedGrades.length) filters.grade = normalizedGrades;
+  const normalizedStorages = normalizeFromAllowed(plan?.filters?.storage, catalog?.storages);
+  if (normalizedStorages.length) filters.storage = normalizedStorages;
+  const normalizedRegions = normalizeFromAllowed(plan?.filters?.region, catalog?.regions);
+  if (normalizedRegions.length) filters.region = normalizedRegions;
+
+  return {
+    selectedCategory,
+    search: String(plan?.search || "").slice(0, 200),
+    filters
+  };
+}
+
+function countCopilotPayloadMatches(payload) {
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  return allDevices.filter((device) => deviceMatchesCopilotPayload(device, payload)).length;
+}
+
+function buildCopilotNoMatchReply(payload) {
+  const filters = payload?.filters && typeof payload.filters === "object" ? payload.filters : {};
+  const manufacturer = Array.isArray(filters.manufacturer) && filters.manufacturer.length === 1 ? filters.manufacturer[0] : "";
+  const region = Array.isArray(filters.region) && filters.region.length === 1 ? filters.region[0] : "";
+  const categoryPhrase = payload?.selectedCategory === "Smartphones"
+    ? "phones"
+    : (payload?.selectedCategory === "__ALL__" ? "devices" : String(payload?.selectedCategory || "devices").toLowerCase());
+
+  if (manufacturer && region) {
+    return `I cannot find any ${manufacturer} ${categoryPhrase} in ${region} right now. Try another location, or remove some filters to broaden the search.`;
+  }
+  if (manufacturer) {
+    return `I cannot find any ${manufacturer} ${categoryPhrase} right now. Try another location or broader filters.`;
+  }
+  if (region) {
+    return `I cannot find any ${categoryPhrase} in ${region} right now. Try another location or broader filters.`;
+  }
+  return "I cannot find matching devices right now. Try broadening your filters or search text.";
+}
+
+async function requestOpenAiCopilotPlan(message, selectedCategory, catalog) {
+  const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reply", "intent", "selectedCategory", "search", "filters"],
+    properties: {
+      reply: { type: "string" },
+      intent: { type: "string", enum: ["apply_filters", "choose_filters", "none"] },
+      selectedCategory: { type: "string" },
+      search: { type: "string" },
+      filters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          manufacturer: { type: "array", items: { type: "string" } },
+          modelFamily: { type: "array", items: { type: "string" } },
+          grade: { type: "array", items: { type: "string" } },
+          region: { type: "array", items: { type: "string" } },
+          storage: { type: "array", items: { type: "string" } }
+        },
+        required: ["manufacturer", "modelFamily", "grade", "region", "storage"]
+      }
+    }
+  };
+
+  const systemPrompt = [
+    "You are a retail device catalog copilot.",
+    "Your task is to convert user requests into app filter payloads and a short reply.",
+    "Allowed categories: __ALL__, " + catalog.categories.join(", "),
+    "Allowed manufacturers: " + catalog.manufacturers.join(", "),
+    "Allowed model families: " + catalog.modelFamilies.slice(0, 120).join(", "),
+    "Allowed grades: " + catalog.grades.join(", "),
+    "Allowed regions: " + catalog.regions.join(", "),
+    "Allowed storages: " + catalog.storages.join(", "),
+    "Only return valid values from the allowed lists; if unknown, omit that filter.",
+    "Set intent to apply_filters when the user asks to find/search/filter products.",
+    "Set intent to choose_filters when ambiguous across multiple categories.",
+    "Set intent to none when no filter action should be suggested.",
+    "Keep reply concise and user-facing."
+  ].join("\n");
+
+  const payload = {
+    model: AI_COPILOT_MODEL,
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Selected category: ${selectedCategory || "Smartphones"}\nUser message: ${message}` }
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "copilot_plan",
+        strict: true,
+        schema
+      }
+    }
+  };
+
+  const response = await requestJsonStrict(endpoint, {
+    method: "POST",
+    contentType: "application/json",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify(payload),
+    errorPrefix: "OpenAI request"
+  });
+
+  const content = String(response?.choices?.[0]?.message?.content || "").trim();
+  if (!content) {
+    throw new Error("OpenAI response did not include structured content.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("OpenAI response content was not valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("OpenAI response JSON was empty.");
+  }
+  return parsed;
+}
+
+async function runAiCopilot(user, body) {
+  const heuristic = runAiCopilotHeuristic(user, body);
+  const message = String(body?.message || "").trim();
+  const selectedCategory = String(body?.selectedCategory || "").trim() || "Smartphones";
+  if (!message) return heuristic;
+  if (!AI_COPILOT_REAL_MODEL_ENABLED || !OPENAI_API_KEY) return heuristic;
+
+  try {
+    const catalog = buildCopilotCatalogContext();
+    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog);
+    const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
+    const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
+    const suggestedName = buildCopilotSuggestedFilterName(normalizedPayload);
+    const options = buildCopilotFilterOptions(message, normalizedPayload);
+    const intent = String(plan?.intent || "none").trim();
+
+    let action = null;
+    if (intent === "choose_filters" && options.length > 1) {
+      action = { type: "choose_filters", options };
+    } else if (intent === "apply_filters" && hasFilters) {
+      action = {
+        type: "apply_filters",
+        payload: {
+          ...normalizedPayload,
+          suggestedName: suggestedName || "AI Suggested Filter"
+        }
+      };
+      const matchCount = countCopilotPayloadMatches(action.payload);
+      if (matchCount <= 0) {
+        action = null;
+      }
+    }
+
+    if (!action && intent === "apply_filters" && hasFilters) {
+      return {
+        reply: buildCopilotNoMatchReply(normalizedPayload),
+        action: null
+      };
+    }
+
+    const reply = String(plan?.reply || "").trim() || heuristic.reply;
+    return { reply, action };
+  } catch {
+    return heuristic;
+  }
 }
 
 function getAiAdminAnomalies() {
@@ -2027,6 +2237,47 @@ async function requestJson(url, options = {}) {
     });
     req.on("error", (error) => {
       reject(new Error(`External inventory request error: ${error.message}`));
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+
+  return payload;
+}
+
+async function requestJsonStrict(url, options = {}) {
+  const method = options.method || "GET";
+  const headers = options.headers || {};
+  const body = options.body || null;
+  const contentType = options.contentType || null;
+  const rejectUnauthorized = options.rejectUnauthorized !== false;
+  const errorPrefix = String(options.errorPrefix || "External request");
+
+  const payload = await new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method,
+      headers: contentType ? { ...headers, "Content-Type": contentType } : headers,
+      rejectUnauthorized
+    }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        const status = Number(res.statusCode || 0);
+        if (status < 200 || status >= 300) {
+          reject(new Error(`${errorPrefix} failed (${status}): ${String(data || "").slice(0, 400)}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(data || "{}"));
+        } catch {
+          reject(new Error(`${errorPrefix} returned non-JSON payload.`));
+        }
+      });
+    });
+    req.on("error", (error) => {
+      reject(new Error(`${errorPrefix} error: ${error.message}`));
     });
     if (body) req.write(body);
     req.end();
@@ -3021,7 +3272,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      json(req, res, 200, runAiCopilot(user, body));
+      json(req, res, 200, await runAiCopilot(user, body));
       return;
     }
 
