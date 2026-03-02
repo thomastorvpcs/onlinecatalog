@@ -688,7 +688,9 @@ export default function App() {
   const [weeklyDeviceSavingId, setWeeklyDeviceSavingId] = useState("");
   const [weeklyDeviceError, setWeeklyDeviceError] = useState("");
   const [weeklySpecialSearch, setWeeklySpecialSearch] = useState("");
+  const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
+  const cartNoticeTimerRef = useRef(null);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
 
@@ -944,6 +946,12 @@ export default function App() {
     }
   }, [requests, activeRequestId]);
 
+  useEffect(() => () => {
+    if (cartNoticeTimerRef.current) {
+      clearTimeout(cartNoticeTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     if (skipInitialCategoryResetRef.current) {
       skipInitialCategoryResetRef.current = false;
@@ -1181,6 +1189,13 @@ export default function App() {
       next.push({ id: crypto.randomUUID(), productId: p.id, model: p.model, grade: p.grade, quantity: qty, offerPrice: p.price, note });
     }
     updateCart(next);
+    setCartNotice(`${qty} x ${p.model} added to Requested items.`);
+    if (cartNoticeTimerRef.current) {
+      clearTimeout(cartNoticeTimerRef.current);
+    }
+    cartNoticeTimerRef.current = setTimeout(() => {
+      setCartNotice("");
+    }, 2200);
   };
 
   const openCategory = (c) => {
@@ -1990,6 +2005,26 @@ export default function App() {
           {route !== "products" && route !== "requests" && route !== "users" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
         </main>
       </div>
+
+      {cartNotice ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: 20,
+            zIndex: 1200,
+            background: "#166534",
+            color: "#fff",
+            padding: "10px 14px",
+            borderRadius: 10,
+            boxShadow: "0 8px 18px rgba(0,0,0,0.22)",
+            fontSize: "0.92rem",
+            maxWidth: 420
+          }}
+        >
+          {cartNotice}
+        </div>
+      ) : null}
 
       {showSessionWarning ? (
         <div className="app-overlay session-expiry-overlay">
