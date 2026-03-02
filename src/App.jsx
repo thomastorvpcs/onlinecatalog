@@ -2215,7 +2215,7 @@ export default function App() {
                                 className="cart-line-fix-link"
                                 onClick={() => adjustLineToLocationAvailability(r.id, fulfillmentIssue.available, r.model)}
                               >
-                                Set to {fulfillmentIssue.available}
+                                Set qty to {fulfillmentIssue.available}
                               </button>
                             </div>
                           ) : null}

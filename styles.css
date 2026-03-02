@@ -1173,15 +1173,22 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border: 1px solid #93c5fd;
   background: #eff6ff;
   color: #1d4ed8;
-  padding: 3px 10px;
-  margin: 0 0 0 4px;
+  padding: 2px 8px;
+  margin: 2px 0 0 6px;
   border-radius: 999px;
-  font-size: 0.76rem;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  font-size: 0.74rem;
   font-weight: 700;
   text-decoration: none;
-  line-height: 1.1;
+  letter-spacing: 0.1px;
+  line-height: 1.2;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  white-space: nowrap;
   cursor: pointer;
 }
 
