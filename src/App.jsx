@@ -2172,8 +2172,10 @@ export default function App() {
     setSearch(payload.search);
     setFilters(payload.filters);
     setCategoryPage(1);
-    setEditingSavedFilterId(savedFilter.id);
-    setNewSavedFilterName(savedFilter.name);
+    setEditingSavedFilterId(null);
+    setNewSavedFilterName("");
+    setSavedFiltersError("");
+    setSavedFilterNotice(`Applied "${savedFilter.name}".`);
   };
 
   return (
