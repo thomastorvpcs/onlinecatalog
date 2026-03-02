@@ -628,12 +628,24 @@ function iconForCategory(category) {
   }
   return (
     <svg viewBox="0 0 64 64" aria-hidden="true">
-      <rect x="9" y="30" width="46" height="20" rx="5" {...base} />
-      <rect x="12.5" y="33.5" width="39" height="8.5" rx="4.2" {...screen} />
-      <circle cx="32" cy="46" r="2.1" fill="#9dbce6" />
-      <path d="M20.5 15.5a6.5 6.5 0 0 1 13 0v7a3 3 0 0 1-6 0v-7a1 1 0 0 0-2 0v8a5 5 0 0 0 10 0v-8a8.5 8.5 0 0 0-17 0" fill="#147bd1" />
-      <path d="M43 13.5h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-8a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3z" fill="#147bd1" />
-      <rect x="45.6" y="16.8" width="2.8" height="7.6" rx="1.4" fill="#eef0f3" />
+      <path d="M6 24a9 9 0 0 1 18 0v5h-4v-5a5 5 0 0 0-10 0v5H6z" fill="#147bd1" />
+      <rect x="6" y="29" width="4" height="8.5" rx="1.8" fill="#147bd1" />
+      <rect x="20" y="29" width="4" height="8.5" rx="1.8" fill="#147bd1" />
+
+      <rect x="41" y="12" width="17" height="17" rx="3" fill="#147bd1" />
+      <rect x="45.5" y="16.8" width="2.6" height="4.8" rx="1.2" fill="#eef0f3" />
+      <rect x="50.3" y="16.8" width="2.6" height="4.8" rx="1.2" fill="#eef0f3" />
+      <rect x="46" y="23.5" width="7" height="2.2" rx="1.1" fill="#eef0f3" />
+
+      <rect x="8" y="40" width="48" height="15" rx="4" fill="#147bd1" />
+      <rect x="11" y="43" width="42" height="9" rx="2.5" fill="#eef0f3" />
+      <rect x="14" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="19" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="24" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="29" y="46" width="6" height="2" rx="1" fill="#9dbce6" />
+      <rect x="37" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="42" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="47" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
     </svg>
   );
 }
