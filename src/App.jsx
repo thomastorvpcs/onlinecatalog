@@ -712,25 +712,40 @@ function iconForCategory(category) {
     return <svg viewBox="0 0 64 64"><rect x="22" y="2" width="20" height="60" rx="5" {...base} /><rect x="14" y="12" width="36" height="40" rx="8" {...base} /><rect x="19" y="18" width="26" height="28" rx="5" {...screen} /></svg>;
   }
   return (
-    <svg viewBox="0 0 64 64" aria-hidden="true">
-      <path d="M6 24a9 9 0 0 1 18 0v5h-4v-5a5 5 0 0 0-10 0v5H6z" fill="#147bd1" />
-      <rect x="6" y="29" width="4" height="8.5" rx="1.8" fill="#147bd1" />
-      <rect x="20" y="29" width="4" height="8.5" rx="1.8" fill="#147bd1" />
+    <svg className="accessories-icon" viewBox="0 0 64 64" aria-hidden="true">
+      <path d="M7 25v-3a9 9 0 0 1 18 0v3h-3.5v-3a5.5 5.5 0 0 0-11 0v3H7z" fill="#147bd1" />
+      <rect x="7" y="25" width="3.6" height="8.5" rx="1.6" fill="#147bd1" />
+      <rect x="21.4" y="25" width="3.6" height="8.5" rx="1.6" fill="#147bd1" />
+      <rect x="8.2" y="26.6" width="1.2" height="5.2" rx="0.6" fill="#eef0f3" />
+      <rect x="22.6" y="26.6" width="1.2" height="5.2" rx="0.6" fill="#eef0f3" />
 
-      <rect x="41" y="12" width="17" height="17" rx="3" fill="#147bd1" />
-      <rect x="45.5" y="16.8" width="2.6" height="4.8" rx="1.2" fill="#eef0f3" />
-      <rect x="50.3" y="16.8" width="2.6" height="4.8" rx="1.2" fill="#eef0f3" />
-      <rect x="46" y="23.5" width="7" height="2.2" rx="1.1" fill="#eef0f3" />
+      <rect x="38" y="13" width="16.5" height="16.5" rx="2.8" fill="#147bd1" />
+      <rect x="41.2" y="10.7" width="2.6" height="3.2" rx="0.8" fill="#147bd1" />
+      <rect x="48.7" y="10.7" width="2.6" height="3.2" rx="0.8" fill="#147bd1" />
+      <path d="M46.8 17.8l-2 3h1.8l-1.9 3.5 4.2-4.9h-2.1l1.6-1.6h-1.6z" fill="#eef0f3" />
+      <path d="M54.5 21.5h2.1a1.9 1.9 0 0 1 1.9 1.9v1.8a1.9 1.9 0 0 1-1.9 1.9h-2.1z" fill="#147bd1" />
 
-      <rect x="8" y="40" width="48" height="15" rx="4" fill="#147bd1" />
-      <rect x="11" y="43" width="42" height="9" rx="2.5" fill="#eef0f3" />
-      <rect x="14" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
-      <rect x="19" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
-      <rect x="24" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
-      <rect x="29" y="46" width="6" height="2" rx="1" fill="#9dbce6" />
-      <rect x="37" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
-      <rect x="42" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
-      <rect x="47" y="46" width="3" height="2" rx="1" fill="#9dbce6" />
+      <rect x="7" y="40" width="50" height="14" rx="3.4" fill="#147bd1" />
+      <rect x="9.2" y="42.3" width="45.6" height="9.2" rx="1.9" fill="#eef0f3" />
+      <g fill="#147bd1">
+        <rect x="11" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="16" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="21" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="26" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="31" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="36" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="41" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="46" y="44" width="3.5" height="2.5" rx="0.6" />
+        <rect x="11" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="16" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="21" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="26" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="31" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="36" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="41" y="47.4" width="3.5" height="2.5" rx="0.6" />
+        <rect x="46" y="47.4" width="3.5" height="2.5" rx="0.6" />
+      </g>
+      <rect x="25" y="51" width="14" height="1.4" rx="0.7" fill="#147bd1" />
     </svg>
   );
 }
