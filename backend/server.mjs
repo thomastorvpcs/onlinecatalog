@@ -1127,6 +1127,180 @@ function getCategories() {
   return db.prepare("SELECT name FROM categories ORDER BY id").all().map((row) => row.name);
 }
 
+function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
+  const prompt = String(promptRaw || "").trim();
+  if (!prompt) {
+    return {
+      selectedCategory: selectedCategoryRaw || "Smartphones",
+      search: "",
+      filters: {},
+      warnings: ["Enter a prompt to parse filters."]
+    };
+  }
+  const text = prompt.toLowerCase();
+  const categories = getCategories();
+  const manufacturers = db.prepare("SELECT name FROM manufacturers ORDER BY name").all().map((r) => r.name);
+  const modelFamilies = db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => r.name);
+  const storages = db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => r.name);
+  const regions = db.prepare("SELECT name FROM locations ORDER BY id").all().map((r) => r.name);
+  const filters = {};
+  const warnings = [];
+
+  const categoryByMatch = categories.find((name) => text.includes(String(name).toLowerCase()))
+    || (text.includes("phone") ? "Smartphones" : "")
+    || (text.includes("tablet") ? "Tablets" : "")
+    || (text.includes("laptop") ? "Laptops" : "")
+    || (text.includes("wear") || text.includes("watch") ? "Wearables" : "")
+    || (text.includes("accessor") ? "Accessories" : "");
+  const selectedCategory = categoryByMatch || selectedCategoryRaw || "Smartphones";
+
+  const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedManufacturers.length) {
+    filters.manufacturer = matchedManufacturers;
+  }
+
+  const matchedModels = modelFamilies.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedModels.length) {
+    filters.modelFamily = matchedModels.slice(0, 8);
+  }
+
+  const gradeMatches = [];
+  if (/\bcpo\b/i.test(prompt)) gradeMatches.push("CPO");
+  if (/\bgrade\s*a\b/i.test(prompt)) gradeMatches.push("A");
+  if (/\bgrade\s*b\b/i.test(prompt)) gradeMatches.push("B");
+  if (/\bgrade\s*c\b/i.test(prompt)) gradeMatches.push("C");
+  if (gradeMatches.length) {
+    filters.grade = [...new Set(gradeMatches)];
+  }
+
+  const matchedRegions = regions.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedRegions.length) {
+    filters.region = matchedRegions;
+  }
+
+  const matchedStorages = storages.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedStorages.length) {
+    filters.storage = matchedStorages;
+  }
+
+  const priceHintMatch = prompt.match(/\$?\s*(\d{2,6})(?:\s*usd|\s*dollars?)?/i);
+  if (priceHintMatch) {
+    warnings.push("Price constraints were detected but not auto-applied because price filter is not configured.");
+  }
+
+  const usedStructured = Object.keys(filters).length > 0;
+  return {
+    selectedCategory,
+    search: usedStructured ? "" : prompt,
+    filters,
+    warnings
+  };
+}
+
+function validateRequestWithAi(body) {
+  const lines = Array.isArray(body?.lines) ? body.lines : [];
+  const selectedLocation = String(body?.selectedLocation || "").trim();
+  const warnings = [];
+  const suggestions = [];
+  if (!lines.length) {
+    warnings.push({ code: "EMPTY_REQUEST", message: "Request has no lines." });
+    return { warnings, suggestions };
+  }
+
+  const locationByDevice = db.prepare(`
+    SELECT COALESCE(di.quantity, 0) AS quantity
+    FROM devices d
+    JOIN locations l ON l.name = ?
+    LEFT JOIN device_inventory di ON di.device_id = d.id AND di.location_id = l.id
+    WHERE d.id = ?
+    LIMIT 1
+  `);
+
+  lines.forEach((line, index) => {
+    const quantity = Number(line.quantity);
+    const offerPrice = Number(line.offerPrice);
+    const model = String(line.model || "").trim();
+    const grade = String(line.grade || "").trim();
+    const deviceId = String(line.productId || line.deviceId || "").trim();
+    if (!model) warnings.push({ code: "MISSING_MODEL", lineIndex: index, message: `Line ${index + 1}: model is missing.` });
+    if (!grade) warnings.push({ code: "MISSING_GRADE", lineIndex: index, message: `Line ${index + 1}: grade is missing.` });
+    if (!Number.isInteger(quantity) || quantity < 1) warnings.push({ code: "INVALID_QTY", lineIndex: index, message: `Line ${index + 1}: quantity must be >= 1.` });
+    if (!Number.isFinite(offerPrice) || offerPrice < 0) warnings.push({ code: "INVALID_PRICE", lineIndex: index, message: `Line ${index + 1}: offer price must be >= 0.` });
+    if (selectedLocation && deviceId) {
+      const row = locationByDevice.get(selectedLocation, deviceId);
+      const available = Number(row?.quantity || 0);
+      if (Number.isInteger(quantity) && quantity > available) {
+        warnings.push({
+          code: "LOCATION_SHORTAGE",
+          lineIndex: index,
+          message: `Line ${index + 1}: ${model} exceeds available inventory at ${selectedLocation} (requested ${quantity}, available ${available}).`
+        });
+        suggestions.push({
+          type: "ADJUST_QTY",
+          lineIndex: index,
+          message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.`
+        });
+      }
+    }
+  });
+
+  if (!selectedLocation) {
+    suggestions.push({ type: "SELECT_LOCATION", message: "Select an order location before submitting." });
+  }
+  return { warnings, suggestions };
+}
+
+function validateNetsuitePayloadWithAi(body) {
+  const payload = body && typeof body.payload === "object" ? body.payload : {};
+  const requestId = String(body?.requestId || "").trim();
+  let candidate = payload;
+  if (requestId) {
+    const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
+    if (!row?.id) {
+      return { valid: false, errors: ["Request not found."], fixes: ["Use a valid requestId."] };
+    }
+    candidate = {
+      requestId: row.id,
+      requestNumber: row.request_number,
+      company: row.company,
+      createdBy: row.created_by_email,
+      currencyCode: row.currency_code || "USD",
+      lines: getRequestLines(row.id)
+    };
+  }
+
+  const errors = [];
+  const fixes = [];
+  const lines = Array.isArray(candidate.lines) ? candidate.lines : [];
+  if (!candidate.requestNumber && !candidate.requestId) {
+    errors.push("Missing request identifier.");
+    fixes.push("Provide requestId or requestNumber in payload.");
+  }
+  if (!candidate.company) {
+    errors.push("Missing company.");
+    fixes.push("Provide company for NetSuite customer mapping.");
+  }
+  if (!candidate.currencyCode) {
+    errors.push("Missing currency code.");
+    fixes.push("Set currencyCode (for example: USD).");
+  }
+  if (!lines.length) {
+    errors.push("Payload has no lines.");
+    fixes.push("Include at least one line item.");
+  }
+  lines.forEach((line, index) => {
+    if (!String(line.model || "").trim()) errors.push(`Line ${index + 1}: model is required.`);
+    if (!String(line.grade || "").trim()) errors.push(`Line ${index + 1}: grade is required.`);
+    if (!Number.isInteger(Number(line.quantity)) || Number(line.quantity) < 1) errors.push(`Line ${index + 1}: quantity must be >= 1.`);
+    if (!Number.isFinite(Number(line.offerPrice)) || Number(line.offerPrice) < 0) errors.push(`Line ${index + 1}: offerPrice must be >= 0.`);
+  });
+  return {
+    valid: errors.length === 0,
+    errors,
+    fixes
+  };
+}
+
 function clearCatalogData() {
   const before = {
     devices: Number(db.prepare("SELECT COUNT(*) AS count FROM devices").get().count || 0),
@@ -2500,6 +2674,39 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(req, res, 200, getDevices(url));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/ai/parse-filters") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      json(req, res, 200, parseAiFilters(body.prompt, body.selectedCategory));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/ai/validate-request") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      json(req, res, 200, validateRequestWithAi(body));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/ai/validate-netsuite-payload") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      json(req, res, 200, validateNetsuitePayloadWithAi(body));
       return;
     }
 

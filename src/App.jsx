@@ -258,6 +258,117 @@ function categorySavedFilterViewKey(category) {
   return `cat_${slug || "general"}`;
 }
 
+function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts) {
+  const prompt = String(promptRaw || "").trim();
+  const selectedCategory = String(selectedCategoryRaw || "").trim() || "Smartphones";
+  if (!prompt) {
+    return { selectedCategory, search: "", filters: {}, warnings: ["Enter a prompt to parse filters."] };
+  }
+  const text = prompt.toLowerCase();
+  const categories = [...new Set((allProducts || []).map((p) => p.category))];
+  const manufacturers = [...new Set((allProducts || []).map((p) => p.manufacturer))];
+  const modelFamilies = [...new Set((allProducts || []).map((p) => p.modelFamily || modelFamilyOf(p.model)))];
+  const storages = [...new Set((allProducts || []).map((p) => p.storage))];
+  const regions = [...new Set((allProducts || []).flatMap((p) => Object.keys(p.locations || {})))];
+  const filters = {};
+  const warnings = [];
+
+  const categoryByMatch = categories.find((name) => text.includes(String(name).toLowerCase()))
+    || (text.includes("phone") ? "Smartphones" : "")
+    || (text.includes("tablet") ? "Tablets" : "")
+    || (text.includes("laptop") ? "Laptops" : "")
+    || (text.includes("wear") || text.includes("watch") ? "Wearables" : "")
+    || (text.includes("accessor") ? "Accessories" : "");
+
+  const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedManufacturers.length) filters.manufacturer = matchedManufacturers;
+  const matchedModels = modelFamilies.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedModels.length) filters.modelFamily = matchedModels.slice(0, 8);
+  const gradeMatches = [];
+  if (/\bcpo\b/i.test(prompt)) gradeMatches.push("CPO");
+  if (/\bgrade\s*a\b/i.test(prompt)) gradeMatches.push("A");
+  if (/\bgrade\s*b\b/i.test(prompt)) gradeMatches.push("B");
+  if (/\bgrade\s*c\b/i.test(prompt)) gradeMatches.push("C");
+  if (gradeMatches.length) filters.grade = [...new Set(gradeMatches)];
+  const matchedRegions = regions.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedRegions.length) filters.region = matchedRegions;
+  const matchedStorages = storages.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedStorages.length) filters.storage = matchedStorages;
+
+  if (/\$?\s*(\d{2,6})(?:\s*usd|\s*dollars?)?/i.test(prompt)) {
+    warnings.push("Price constraints were detected but not auto-applied because price filter is not configured.");
+  }
+  return {
+    selectedCategory: categoryByMatch || selectedCategory,
+    search: Object.keys(filters).length ? "" : prompt,
+    filters,
+    warnings
+  };
+}
+
+function validateRequestWithHeuristics(body, allProducts) {
+  const lines = Array.isArray(body?.lines) ? body.lines : [];
+  const selectedLocation = String(body?.selectedLocation || "").trim();
+  const warnings = [];
+  const suggestions = [];
+  if (!lines.length) {
+    warnings.push({ code: "EMPTY_REQUEST", message: "Request has no lines." });
+    return { warnings, suggestions };
+  }
+  const byId = new Map((allProducts || []).map((p) => [p.id, p]));
+  lines.forEach((line, index) => {
+    const quantity = Number(line.quantity);
+    const offerPrice = Number(line.offerPrice);
+    const model = String(line.model || "").trim();
+    const grade = String(line.grade || "").trim();
+    const productId = String(line.productId || line.deviceId || "").trim();
+    if (!model) warnings.push({ code: "MISSING_MODEL", lineIndex: index, message: `Line ${index + 1}: model is missing.` });
+    if (!grade) warnings.push({ code: "MISSING_GRADE", lineIndex: index, message: `Line ${index + 1}: grade is missing.` });
+    if (!Number.isInteger(quantity) || quantity < 1) warnings.push({ code: "INVALID_QTY", lineIndex: index, message: `Line ${index + 1}: quantity must be >= 1.` });
+    if (!Number.isFinite(offerPrice) || offerPrice < 0) warnings.push({ code: "INVALID_PRICE", lineIndex: index, message: `Line ${index + 1}: offer price must be >= 0.` });
+    if (selectedLocation && productId) {
+      const device = byId.get(productId);
+      const available = Number(device?.locations?.[selectedLocation] || 0);
+      if (Number.isInteger(quantity) && quantity > available) {
+        warnings.push({ code: "LOCATION_SHORTAGE", lineIndex: index, message: `Line ${index + 1}: ${model} exceeds available inventory at ${selectedLocation} (requested ${quantity}, available ${available}).` });
+        suggestions.push({ type: "ADJUST_QTY", lineIndex: index, message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.` });
+      }
+    }
+  });
+  if (!selectedLocation) suggestions.push({ type: "SELECT_LOCATION", message: "Select an order location before submitting." });
+  return { warnings, suggestions };
+}
+
+function validateNetsuitePayloadHeuristics(body) {
+  const payload = body && typeof body.payload === "object" ? body.payload : {};
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  const errors = [];
+  const fixes = [];
+  if (!payload.requestNumber && !payload.requestId) {
+    errors.push("Missing request identifier.");
+    fixes.push("Provide requestId or requestNumber in payload.");
+  }
+  if (!payload.company) {
+    errors.push("Missing company.");
+    fixes.push("Provide company for NetSuite customer mapping.");
+  }
+  if (!payload.currencyCode) {
+    errors.push("Missing currency code.");
+    fixes.push("Set currencyCode (for example: USD).");
+  }
+  if (!lines.length) {
+    errors.push("Payload has no lines.");
+    fixes.push("Include at least one line item.");
+  }
+  lines.forEach((line, index) => {
+    if (!String(line.model || "").trim()) errors.push(`Line ${index + 1}: model is required.`);
+    if (!String(line.grade || "").trim()) errors.push(`Line ${index + 1}: grade is required.`);
+    if (!Number.isInteger(Number(line.quantity)) || Number(line.quantity) < 1) errors.push(`Line ${index + 1}: quantity must be >= 1.`);
+    if (!Number.isFinite(Number(line.offerPrice)) || Number(line.offerPrice) < 0) errors.push(`Line ${index + 1}: offerPrice must be >= 0.`);
+  });
+  return { valid: errors.length === 0, errors, fixes };
+}
+
 function makeDemoPublicUser(user) {
   return {
     id: user.id,
@@ -459,6 +570,23 @@ async function demoApiRequest(path, options = {}) {
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize);
     return { items, total, page, pageSize };
+  }
+
+  if (method === "POST" && pathname === "/api/ai/parse-filters") {
+    requireAuth();
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    return parseFiltersWithHeuristics(body.prompt, body.selectedCategory, all);
+  }
+
+  if (method === "POST" && pathname === "/api/ai/validate-request") {
+    requireAuth();
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    return validateRequestWithHeuristics(body, all);
+  }
+
+  if (method === "POST" && pathname === "/api/ai/validate-netsuite-payload") {
+    requireAuth();
+    return validateNetsuitePayloadHeuristics(body);
   }
 
   if (method === "GET" && pathname === "/api/filters/saved") {
@@ -893,6 +1021,9 @@ export default function App() {
   const [savedFiltersLoading, setSavedFiltersLoading] = useState(false);
   const [savedFiltersError, setSavedFiltersError] = useState("");
   const [shortcutFiltersByCategory, setShortcutFiltersByCategory] = useState({});
+  const [aiFilterPrompt, setAiFilterPrompt] = useState("");
+  const [aiFilterLoading, setAiFilterLoading] = useState(false);
+  const [aiFilterError, setAiFilterError] = useState("");
   const [newSavedFilterName, setNewSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState(false);
   const [savedFilterNotice, setSavedFilterNotice] = useState("");
@@ -905,6 +1036,9 @@ export default function App() {
   const [weeklyDeviceSavingId, setWeeklyDeviceSavingId] = useState("");
   const [weeklyDeviceError, setWeeklyDeviceError] = useState("");
   const [weeklySpecialSearch, setWeeklySpecialSearch] = useState("");
+  const [aiRequestReviewLoading, setAiRequestReviewLoading] = useState(false);
+  const [aiRequestReview, setAiRequestReview] = useState(null);
+  const [aiRequestReviewError, setAiRequestReviewError] = useState("");
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
@@ -973,6 +1107,10 @@ export default function App() {
     setSavedFilterNotice("");
     setEditingSavedFilterId(null);
     setIsEditingSavedFilter(false);
+    setAiFilterPrompt("");
+    setAiFilterError("");
+    setAiRequestReview(null);
+    setAiRequestReviewError("");
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -1293,6 +1431,11 @@ export default function App() {
   }, [savedFilterNotice]);
 
   useEffect(() => {
+    setAiRequestReview(null);
+    setAiRequestReviewError("");
+  }, [cart, selectedRequestLocation]);
+
+  useEffect(() => {
     if (!editingSavedFilterId) {
       if (isEditingSavedFilter) setIsEditingSavedFilter(false);
       return;
@@ -1580,6 +1723,75 @@ export default function App() {
     setShortcutFiltersByCategory(next);
   };
 
+  const runAiFilterAssist = async () => {
+    if (!authToken || !user || aiFilterLoading) return;
+    const prompt = aiFilterPrompt.trim();
+    if (!prompt) {
+      setAiFilterError("Enter a prompt first.");
+      return;
+    }
+    setAiFilterLoading(true);
+    setAiFilterError("");
+    try {
+      const payload = await apiRequest("/api/ai/parse-filters", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          prompt,
+          selectedCategory
+        }
+      });
+      if (payload.selectedCategory) {
+        setSelectedCategory(payload.selectedCategory);
+      }
+      setSearch(String(payload.search || ""));
+      setFilters(payload.filters && typeof payload.filters === "object" ? payload.filters : {});
+      setProductsView("category");
+      setCategoryPage(1);
+      if (Array.isArray(payload.warnings) && payload.warnings.length) {
+        setAiFilterError(payload.warnings[0]);
+      }
+    } catch (error) {
+      setAiFilterError(error.message || "AI filter assist failed.");
+    } finally {
+      setAiFilterLoading(false);
+    }
+  };
+
+  const runAiRequestReview = async () => {
+    if (!authToken || !user || aiRequestReviewLoading) return;
+    setAiRequestReviewLoading(true);
+    setAiRequestReviewError("");
+    try {
+      const payload = await apiRequest("/api/ai/validate-request", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          selectedLocation: selectedRequestLocation,
+          lines: cart.map((x) => ({
+            productId: x.productId,
+            model: x.model,
+            grade: x.grade,
+            quantity: Number(x.quantity),
+            offerPrice: Number(x.offerPrice)
+          }))
+        }
+      });
+      setAiRequestReview(payload);
+    } catch (error) {
+      setAiRequestReview(null);
+      setAiRequestReviewError(error.message || "AI request review failed.");
+    } finally {
+      setAiRequestReviewLoading(false);
+    }
+  };
+
   const activeEditedSavedFilter = editingSavedFilterId
     ? savedFilters.find((f) => String(f.id) === String(editingSavedFilterId)) || null
     : null;
@@ -1743,6 +1955,29 @@ export default function App() {
     try {
       setRequestSubmitLoading(true);
       setRequestsError("");
+      const netsuitePayloadValidation = await apiRequest("/api/ai/validate-netsuite-payload", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          payload: {
+            requestId: "",
+            requestNumber: "",
+            company: user.company,
+            currencyCode: "USD",
+            lines
+          }
+        }
+      });
+      if (!netsuitePayloadValidation?.valid) {
+        const firstError = Array.isArray(netsuitePayloadValidation.errors) && netsuitePayloadValidation.errors.length
+          ? netsuitePayloadValidation.errors[0]
+          : "NetSuite payload validation failed.";
+        setRequestsError(firstError);
+        return;
+      }
       const created = await apiRequest("/api/requests", {
         method: "POST",
         token: authToken,
@@ -2345,6 +2580,27 @@ export default function App() {
               <div className="products-shell">
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
+                  <div className="ai-filter-box">
+                    <div className="small" style={{ marginBottom: 6, fontWeight: 600, color: "#334155" }}>AI Filter Assist</div>
+                    <div className="saved-filters-form">
+                      <input
+                        className="saved-filter-input"
+                        value={aiFilterPrompt}
+                        onChange={(e) => setAiFilterPrompt(e.target.value)}
+                        placeholder='e.g. "Apple CPO in Miami 128GB"'
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            runAiFilterAssist();
+                          }
+                        }}
+                      />
+                      <button type="button" className="saved-filter-save-btn" disabled={aiFilterLoading} onClick={runAiFilterAssist}>
+                        {aiFilterLoading ? "Applying..." : "Ask AI"}
+                      </button>
+                    </div>
+                    {aiFilterError ? <div className="saved-filter-error">{aiFilterError}</div> : null}
+                  </div>
                   <div className="saved-filters-box">
                     <div className="saved-filters-form">
                       <input
@@ -2899,6 +3155,11 @@ export default function App() {
                 />
                 Show locations that cannot fully fulfill this order
               </label>
+              <div style={{ marginTop: 8 }}>
+                <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={runAiRequestReview} disabled={aiRequestReviewLoading || !cart.length}>
+                  {aiRequestReviewLoading ? "Reviewing..." : "AI Review Request"}
+                </button>
+              </div>
               {!allowPartialRequestLocation && cart.length > 0 && !fullFulfillmentLocations.length ? (
                 <p className="small cart-location-warning">
                   No single location can fully fulfill this request. Enable partial locations to inspect shortages.
@@ -2908,6 +3169,21 @@ export default function App() {
                 <p className="small cart-location-warning">
                   Some items cannot be fully fulfilled at {selectedRequestLocation}. Adjust quantities before submitting.
                 </p>
+              ) : null}
+              {aiRequestReviewError ? <p className="small cart-location-warning">{aiRequestReviewError}</p> : null}
+              {aiRequestReview?.warnings?.length ? (
+                <div className="small cart-location-warning" style={{ marginTop: 6 }}>
+                  {aiRequestReview.warnings.slice(0, 4).map((warning, idx) => (
+                    <div key={`ai-warning-${idx}`}>- {warning.message || String(warning)}</div>
+                  ))}
+                </div>
+              ) : null}
+              {aiRequestReview?.suggestions?.length ? (
+                <div className="small" style={{ marginTop: 6, color: "#1d4ed8" }}>
+                  {aiRequestReview.suggestions.slice(0, 4).map((item, idx) => (
+                    <div key={`ai-suggestion-${idx}`}>- {item.message || String(item)}</div>
+                  ))}
+                </div>
               ) : null}
             </div>
             <div className="cart-footer"><div className="cart-grand-total"><div className="cart-grand-total-label">Grand Total</div><div className="cart-grand-total-value">{formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
