@@ -79,6 +79,23 @@ function inventoryDisplayValue(value) {
   return normalized > INVENTORY_DISPLAY_CAP ? `${INVENTORY_DISPLAY_CAP}+` : String(Math.min(INVENTORY_DISPLAY_CAP, normalized));
 }
 
+function totalInventoryDisplayFromLocations(rawLocations) {
+  const quantities = Object.values(rawLocations || {}).map((qty) => normalizeInventoryQuantity(qty));
+  const cappedLocationCount = quantities.filter((qty) => qty > INVENTORY_DISPLAY_CAP).length;
+  if (cappedLocationCount > 0) {
+    const cappedTotal = cappedLocationCount * INVENTORY_DISPLAY_CAP;
+    return {
+      available: cappedTotal,
+      availableDisplay: `${cappedTotal}+`
+    };
+  }
+  const exactTotal = quantities.reduce((sum, qty) => sum + qty, 0);
+  return {
+    available: exactTotal,
+    availableDisplay: String(exactTotal)
+  };
+}
+
 function normalizeDevice(p) {
   const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
   const fallbackImage = p.image || (images.length ? images[0] : "");
@@ -89,11 +106,15 @@ function normalizeDevice(p) {
     locations[name] = capInventoryQuantity(qty);
     locationDisplay[name] = inventoryDisplayValue(qty);
   }
-  const rawAvailable = p.available !== undefined
-    ? normalizeInventoryQuantity(p.available)
-    : Object.values(rawLocations).reduce((sum, qty) => sum + normalizeInventoryQuantity(qty), 0);
-  const available = Math.min(INVENTORY_DISPLAY_CAP, rawAvailable);
-  const availableDisplay = inventoryDisplayValue(rawAvailable);
+  const hasLocations = Object.keys(rawLocations).length > 0;
+  const totalInventory = hasLocations
+    ? totalInventoryDisplayFromLocations(rawLocations)
+    : {
+      available: capInventoryQuantity(p.available),
+      availableDisplay: inventoryDisplayValue(p.available)
+    };
+  const available = totalInventory.available;
+  const availableDisplay = totalInventory.availableDisplay;
   const availableRegions = Object.entries(locations)
     .filter(([, qty]) => Number(qty || 0) > 0)
     .map(([name]) => name)
