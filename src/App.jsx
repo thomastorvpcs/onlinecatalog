@@ -28,6 +28,7 @@ const baseNavItems = [
 
 const CATEGORY_ORDER = ["Smartphones", "Tablets", "Laptops", "Wearables", "Accessories"];
 const CATEGORY_PAGE_SIZE = 40;
+const INVENTORY_DISPLAY_CAP = 100;
 
 function readJson(area, key, fallback) {
   try {
@@ -61,15 +62,40 @@ function formatUsd(value) {
   return usdFormatter.format(Number(value || 0));
 }
 
+function normalizeInventoryQuantity(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.floor(numeric));
+}
+
+function capInventoryQuantity(value) {
+  return Math.min(INVENTORY_DISPLAY_CAP, normalizeInventoryQuantity(value));
+}
+
+function inventoryDisplayValue(value) {
+  const normalized = normalizeInventoryQuantity(value);
+  return normalized > INVENTORY_DISPLAY_CAP ? `${INVENTORY_DISPLAY_CAP}+` : String(Math.min(INVENTORY_DISPLAY_CAP, normalized));
+}
+
 function normalizeDevice(p) {
   const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
   const fallbackImage = p.image || (images.length ? images[0] : "");
-  const availableRegions = p.locations && typeof p.locations === "object"
-    ? Object.entries(p.locations)
-      .filter(([, qty]) => Number(qty || 0) > 0)
-      .map(([name]) => name)
-      .sort((a, b) => String(a).localeCompare(String(b)))
-    : [];
+  const rawLocations = p.locations && typeof p.locations === "object" ? p.locations : {};
+  const locations = {};
+  const locationDisplay = {};
+  for (const [name, qty] of Object.entries(rawLocations)) {
+    locations[name] = capInventoryQuantity(qty);
+    locationDisplay[name] = inventoryDisplayValue(qty);
+  }
+  const rawAvailable = p.available !== undefined
+    ? normalizeInventoryQuantity(p.available)
+    : Object.values(rawLocations).reduce((sum, qty) => sum + normalizeInventoryQuantity(qty), 0);
+  const available = Math.min(INVENTORY_DISPLAY_CAP, rawAvailable);
+  const availableDisplay = inventoryDisplayValue(rawAvailable);
+  const availableRegions = Object.entries(locations)
+    .filter(([, qty]) => Number(qty || 0) > 0)
+    .map(([name]) => name)
+    .sort((a, b) => String(a).localeCompare(String(b)));
   return {
     ...p,
     modelFamily: p.modelFamily || modelFamilyOf(p.model),
@@ -82,6 +108,10 @@ function normalizeDevice(p) {
     kitType: p.kitType || "Full Kit",
     productNotes: p.productNotes || "",
     weeklySpecial: p.weeklySpecial === true,
+    locations,
+    locationDisplay,
+    available,
+    availableDisplay,
     availableRegions
   };
 }
@@ -2783,7 +2813,7 @@ export default function App() {
               </div>
               <div>
                 {modalProductUnavailable ? <div className="modal-box modal-warning-box"><p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>Currently not available.</p></div> : null}
-                <div className="modal-box" style={{ background: "#eef9f3", marginTop: modalProductUnavailable ? 10 : 0 }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{q}</td></tr>)}</tbody></table></div>
+                <div className="modal-box" style={{ background: "#eef9f3", marginTop: modalProductUnavailable ? 10 : 0 }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.availableDisplay || activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{activeProduct.locationDisplay?.[loc] || q}</td></tr>)}</tbody></table></div>
                 <div className="modal-box" style={{ marginTop: 10 }}>
                   <h4 style={{ marginTop: 0 }}>Product notes</h4>
                   <p className="small" style={{ margin: 0 }}>{activeProduct.productNotes || "No notes provided."}</p>
@@ -3143,6 +3173,7 @@ function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) 
 function ProductCard({ p, image, onOpen, onAdd }) {
   const unavailable = p.available < 1;
   const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
+  const availableDisplay = p.availableDisplay || String(p.available || 0);
   return (
     <article className="card product-card">
       <div className="thumb product-thumb" onClick={() => onOpen(p)}><ImageWithFallback src={image} alt={p.model} /></div>
@@ -3150,7 +3181,7 @@ function ProductCard({ p, image, onOpen, onAdd }) {
       <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
       <div className="price">${cardPrice}</div>
       <div className="product-meta">Device Grade {p.grade}</div>
-      <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${p.available} items available`}</div>
+      <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${availableDisplay} items available`}</div>
       <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, 1, "")}>Add to request</button>
     </article>
   );
