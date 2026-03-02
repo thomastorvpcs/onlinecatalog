@@ -2174,7 +2174,7 @@ export default function App() {
                         <td className="cart-col-name" title={r.model}>
                           {r.model}
                           {fulfillmentIssue ? (
-                            <div className="small" style={{ color: "#b91c1c", marginTop: 4, whiteSpace: "normal" }}>
+                            <div className="small cart-line-warning">
                               Only {fulfillmentIssue.available} available at {selectedRequestLocation}. Reduce by {fulfillmentIssue.shortage}.
                             </div>
                           ) : null}
@@ -2199,12 +2199,12 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div style={{ padding: "0 16px 10px" }}>
-              <label style={{ display: "block", marginBottom: 6 }}>Order location</label>
+            <div className="cart-location-panel">
+              <label className="cart-location-label">Order location</label>
               <select
+                className="cart-location-select"
                 value={selectedRequestLocation}
                 onChange={(e) => setSelectedRequestLocation(e.target.value)}
-                style={{ width: "100%" }}
                 disabled={!selectableRequestLocations.length}
               >
                 <option value="">Select location</option>
@@ -2212,7 +2212,7 @@ export default function App() {
                   <option key={`req-location-${locationName}`} value={locationName}>{locationName}</option>
                 ))}
               </select>
-              <label className="small" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+              <label className="small cart-location-toggle">
                 <input
                   type="checkbox"
                   checked={allowPartialRequestLocation}
@@ -2221,12 +2221,12 @@ export default function App() {
                 Show locations that cannot fully fulfill this order
               </label>
               {!allowPartialRequestLocation && cart.length > 0 && !fullFulfillmentLocations.length ? (
-                <p className="small" style={{ color: "#b91c1c", margin: "8px 0 0" }}>
+                <p className="small cart-location-warning">
                   No single location can fully fulfill this request. Enable partial locations to inspect shortages.
                 </p>
               ) : null}
               {selectedRequestLocation && cartHasFulfillmentIssues ? (
-                <p className="small" style={{ color: "#b91c1c", margin: "8px 0 0" }}>
+                <p className="small cart-location-warning">
                   Some items cannot be fully fulfilled at {selectedRequestLocation}. Adjust quantities before submitting.
                 </p>
               ) : null}
