@@ -1373,6 +1373,10 @@ function runAiCopilot(user, body) {
   const lowered = message.toLowerCase();
   const parsed = parseAiFilters(message, selectedCategory);
   const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
+  const suggestedName = message
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
 
   if (hasFilters && /(find|show|search|filter|need|looking|want)/.test(lowered)) {
     const parts = [];
@@ -1382,7 +1386,10 @@ function runAiCopilot(user, body) {
       reply: `I parsed your request and prepared ${parts.join(" and ")}. Apply this suggestion to jump to matching products.`,
       action: {
         type: "apply_filters",
-        payload: parsed
+        payload: {
+          ...parsed,
+          suggestedName: suggestedName || "AI Suggested Filter"
+        }
       }
     };
   }

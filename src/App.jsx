@@ -599,10 +599,17 @@ async function demoApiRequest(path, options = {}) {
     const all = productsSeed.map((p) => normalizeDevice(p));
     const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
+    const suggestedName = String(body.message || "").replace(/\s+/g, " ").trim().slice(0, 80);
     return hasFilters
       ? {
         reply: "I parsed your request and prepared filters you can apply.",
-        action: { type: "apply_filters", payload: parsed }
+        action: {
+          type: "apply_filters",
+          payload: {
+            ...parsed,
+            suggestedName: suggestedName || "AI Suggested Filter"
+          }
+        }
       }
       : {
         reply: "Try asking for a concrete product query like: Apple CPO in Miami 128GB.",
@@ -1906,6 +1913,10 @@ export default function App() {
     setSearch(payload.search || "");
     setFilters(payload.filters || {});
     setProductsView("category");
+    setIsEditingSavedFilter(false);
+    setEditingSavedFilterId(null);
+    setNewSavedFilterName(String(action?.payload?.suggestedName || "AI Suggested Filter").slice(0, 80));
+    setSavedFiltersError("");
     setCategoryPage(1);
   };
 
