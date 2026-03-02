@@ -275,8 +275,9 @@ const NETSUITE_AI_REVIEW_RESTLET_URL = String(process.env.NETSUITE_AI_REVIEW_RES
 const NETSUITE_AI_REVIEW_AUTH_HEADER = String(process.env.NETSUITE_AI_REVIEW_AUTH_HEADER || "").trim();
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_BASE_URL = String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
-const AI_COPILOT_MODEL = String(process.env.AI_COPILOT_MODEL || "gpt-4.1-mini").trim();
+const AI_COPILOT_MODEL = String(process.env.AI_COPILOT_MODEL || "gpt-4o-mini").trim();
 const AI_COPILOT_REAL_MODEL_ENABLED = String(process.env.AI_COPILOT_REAL_MODEL_ENABLED || (OPENAI_API_KEY ? "true" : "false")).toLowerCase() === "true";
+const AI_COPILOT_DEBUG_ERRORS = String(process.env.AI_COPILOT_DEBUG_ERRORS || "false").toLowerCase() === "true";
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -1730,9 +1731,13 @@ async function runAiCopilot(user, body) {
 
     const reply = String(plan?.reply || "").trim() || "I can help with product discovery, filter setup, and fulfillment guidance.";
     return { reply, action };
-  } catch {
+  } catch (error) {
+    console.error("[ai-copilot] OpenAI call failed:", error?.message || error);
+    const debugSuffix = AI_COPILOT_DEBUG_ERRORS && error?.message
+      ? ` (${String(error.message).slice(0, 180)})`
+      : "";
     return {
-      reply: "AI copilot is temporarily unavailable right now. Please try again in a moment.",
+      reply: `AI copilot is temporarily unavailable right now. Please try again in a moment.${debugSuffix}`,
       action: null
     };
   }
