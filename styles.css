@@ -1170,19 +1170,30 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .cart-line-fix-link {
-  border: none;
-  background: transparent;
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
   color: #1d4ed8;
-  padding: 0;
-  margin: 0;
-  font-size: 0.82rem;
+  padding: 3px 10px;
+  margin: 0 0 0 4px;
+  border-radius: 999px;
+  font-size: 0.76rem;
   font-weight: 700;
-  text-decoration: underline;
+  text-decoration: none;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
 }
 
 .cart-line-fix-link:hover {
-  color: #1e40af;
+  color: #1e3a8a;
+  background: #dbeafe;
+  border-color: #60a5fa;
+}
+
+.cart-line-fix-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 111, 214, 0.2);
 }
 
 .cart-location-panel {
