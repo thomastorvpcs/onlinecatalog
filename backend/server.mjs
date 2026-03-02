@@ -1143,7 +1143,12 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   const categories = getCategories();
   const manufacturers = db.prepare("SELECT name FROM manufacturers ORDER BY name").all().map((r) => r.name);
   const modelFamilies = db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => r.name);
-  const modelFamilyCategoryRows = db.prepare("SELECT DISTINCT model_family AS family, category FROM devices WHERE is_active = 1").all();
+  const modelFamilyCategoryRows = db.prepare(`
+    SELECT DISTINCT d.model_family AS family, c.name AS category
+    FROM devices d
+    JOIN categories c ON c.id = d.category_id
+    WHERE d.is_active = 1
+  `).all();
   const modelFamilyToCategory = new Map(
     modelFamilyCategoryRows
       .map((row) => [String(row.family || "").toLowerCase(), String(row.category || "").trim()])
