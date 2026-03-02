@@ -19,10 +19,23 @@
   <li><strong>Authentication</strong>: login, create account, forgot password with verification code, and approval-required account state.</li>
   <li><strong>Catalog browsing</strong>: home page by category, category detail pages, dynamic filters, and server-side pagination.</li>
   <li><strong>Device details</strong>: modal view with image carousel, availability by location, compact specs, and request creation controls.</li>
-  <li><strong>Requested items</strong>: slide-in request builder with editable price/quantity, per-line totals, grand total, and submit request action.</li>
+  <li><strong>Requested items</strong>: slide-in request builder with editable price/quantity, per-line totals, highlighted grand total, and submit request action.</li>
   <li><strong>Request submission and estimate simulation</strong>: request is persisted in backend and a dummy NetSuite estimate is created for workflow validation.</li>
   <li><strong>Admin operations</strong>: user create/delete/approve, admin role toggles, catalog clear/seed endpoints, weekly special controls, and inventory sync trigger.</li>
   <li><strong>Admin request status controls</strong>: admin can set dummy estimate/request status (New, Received, Estimate Created, Completed) from the request details panel.</li>
+</ul>
+
+<h3>2.4 Request Modal Fulfillment UX (Current)</h3>
+<ul>
+  <li><strong>Order location selector</strong>: user must select a source location before submitting a request.</li>
+  <li><strong>Full-fulfillment default</strong>: location dropdown initially shows only locations that can fully fulfill all requested lines.</li>
+  <li><strong>Partial-location toggle</strong>: user can enable an option to include locations that only partially fulfill the request.</li>
+  <li><strong>Partial-location labels</strong>: locations that cannot fully fulfill are marked in dropdown as <code>(Partial)</code>.</li>
+  <li><strong>Line-level shortage guidance</strong>: for selected partial locations, affected lines show shortage details directly under the product name.</li>
+  <li><strong>Quick adjustment action</strong>: each shortage message includes an action to set quantity to max available for that location.</li>
+  <li><strong>Submission protection</strong>: request submission is blocked until all shortage lines are resolved for the selected location.</li>
+  <li><strong>Quantity edit behavior</strong>: quantity input supports clearing/free typing, then normalizes to valid range on blur.</li>
+  <li><strong>Currency formatting</strong>: request modal totals and request list/detail monetary values are formatted with thousands separators.</li>
 </ul>
 
 <h3>2.3 Business Rules (Current)</h3>
@@ -229,6 +242,8 @@
   <li>Dynamic filters and server-side category pagination</li>
   <li>Skeleton loading states for async fetches</li>
   <li>Image fallback component to avoid broken product thumbnails</li>
+  <li>Request cart modal includes fulfillment-aware location selector and per-line shortage reconciliation actions.</li>
+  <li>Grand total and inline confirmation messages are intentionally emphasized for request feedback visibility.</li>
 </ul>
 <p>Implementation:</p>
 <ul>

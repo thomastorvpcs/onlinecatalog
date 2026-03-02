@@ -195,6 +195,17 @@
   <li>Dynamic filters and server-side category pagination</li>
   <li>Skeleton loading states for async fetches</li>
   <li>Image fallback component to avoid broken product thumbnails</li>
+  <li>Request cart modal supports fulfillment-aware location selection:
+    <ul>
+      <li>full-fulfillment filtering by default</li>
+      <li>optional inclusion of partial locations</li>
+      <li><code>(Partial)</code> location labeling</li>
+      <li>line-level shortage diagnostics and quick quantity adjustment action</li>
+      <li>submit disablement while selected location has unresolved shortages</li>
+    </ul>
+  </li>
+  <li>Quantity input in request cart allows temporary empty state and clamps to valid bounds on blur.</li>
+  <li>USD formatting uses grouped thousands in request totals/line amounts for consistency.</li>
 </ul>
 <p>Implementation:</p>
 <ul>
