@@ -2208,9 +2208,13 @@ export default function App() {
                 disabled={!selectableRequestLocations.length}
               >
                 <option value="">Select location</option>
-                {selectableRequestLocations.map((locationName) => (
-                  <option key={`req-location-${locationName}`} value={locationName}>{locationName}</option>
-                ))}
+                {selectableRequestLocations.map((locationName) => {
+                  const isPartialOnly = !fullFulfillmentLocations.includes(locationName);
+                  const label = allowPartialRequestLocation && isPartialOnly
+                    ? `${locationName} (Partial)`
+                    : locationName;
+                  return <option key={`req-location-${locationName}`} value={locationName}>{label}</option>;
+                })}
               </select>
               <label className="small cart-location-toggle">
                 <input
