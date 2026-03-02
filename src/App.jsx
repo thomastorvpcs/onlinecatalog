@@ -331,12 +331,17 @@ function validateRequestWithHeuristics(body, allProducts) {
       const available = Number(device?.locations?.[selectedLocation] || 0);
       if (Number.isInteger(quantity) && quantity > available) {
         warnings.push({ code: "LOCATION_SHORTAGE", lineIndex: index, message: `Line ${index + 1}: ${model} exceeds available inventory at ${selectedLocation} (requested ${quantity}, available ${available}).` });
-        suggestions.push({ type: "ADJUST_QTY", lineIndex: index, message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.` });
+        suggestions.push({
+          type: "ADJUST_QTY",
+          lineIndex: index,
+          action: { type: "set_quantity", lineIndex: index, suggestedQuantity: Math.max(0, available) },
+          message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.`
+        });
       }
     }
   });
   if (!selectedLocation) suggestions.push({ type: "SELECT_LOCATION", message: "Select an order location before submitting." });
-  return { warnings, suggestions };
+  return { warnings, suggestions, inventorySource: "local" };
 }
 
 function validateNetsuitePayloadHeuristics(body) {
@@ -1859,6 +1864,29 @@ export default function App() {
     } finally {
       setAiRequestReviewLoading(false);
     }
+  };
+
+  const applyAiRequestSuggestions = () => {
+    if (!aiRequestReview || !Array.isArray(aiRequestReview.suggestions) || !aiRequestReview.suggestions.length) return;
+    let next = [...cart];
+    let appliedCount = 0;
+    for (const item of aiRequestReview.suggestions) {
+      const action = item?.action;
+      if (!action || action.type !== "set_quantity") continue;
+      const lineIndex = Number(action.lineIndex);
+      if (!Number.isInteger(lineIndex) || lineIndex < 0 || lineIndex >= next.length) continue;
+      const suggestedQuantity = Math.max(0, Math.floor(Number(action.suggestedQuantity || 0)));
+      if (suggestedQuantity <= 0) {
+        next = next.filter((_, idx) => idx !== lineIndex);
+      } else {
+        next = next.map((line, idx) => (idx === lineIndex ? { ...line, quantity: suggestedQuantity } : line));
+      }
+      appliedCount += 1;
+    }
+    if (!appliedCount) return;
+    updateCart(next);
+    setCartNotice(`Applied ${appliedCount} AI suggestion${appliedCount === 1 ? "" : "s"}.`);
+    setAiRequestReview(null);
   };
 
   const applyCopilotAction = (action) => {
@@ -3386,6 +3414,11 @@ export default function App() {
                 <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={runAiRequestReview} disabled={aiRequestReviewLoading || !cart.length}>
                   {aiRequestReviewLoading ? "Reviewing..." : "AI Review Request"}
                 </button>
+                {aiRequestReview?.suggestions?.some((item) => item?.action?.type === "set_quantity") ? (
+                  <button type="button" className="ghost-btn" style={{ width: "auto", marginLeft: 8 }} onClick={applyAiRequestSuggestions}>
+                    Apply AI Suggestions
+                  </button>
+                ) : null}
               </div>
               {!allowPartialRequestLocation && cart.length > 0 && !fullFulfillmentLocations.length ? (
                 <p className="small cart-location-warning">
@@ -3411,6 +3444,9 @@ export default function App() {
                     <div key={`ai-suggestion-${idx}`}>- {item.message || String(item)}</div>
                   ))}
                 </div>
+              ) : null}
+              {aiRequestReview?.inventorySource ? (
+                <p className="small" style={{ marginTop: 6 }}>Inventory source: {String(aiRequestReview.inventorySource).toUpperCase()}</p>
               ) : null}
             </div>
             <div className="cart-footer"><div className="cart-grand-total"><div className="cart-grand-total-label">Grand Total</div><div className="cart-grand-total-value">{formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>

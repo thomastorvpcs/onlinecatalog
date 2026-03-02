@@ -271,6 +271,8 @@ const INVENTORY_OAUTH_TOKEN_URL = process.env.INVENTORY_OAUTH_TOKEN_URL || "";
 const INVENTORY_OAUTH_CLIENT_ID = process.env.INVENTORY_OAUTH_CLIENT_ID || "";
 const INVENTORY_OAUTH_CLIENT_SECRET = process.env.INVENTORY_OAUTH_CLIENT_SECRET || "";
 const INVENTORY_OAUTH_SCOPE = process.env.INVENTORY_OAUTH_SCOPE || "";
+const NETSUITE_AI_REVIEW_RESTLET_URL = String(process.env.NETSUITE_AI_REVIEW_RESTLET_URL || "").trim();
+const NETSUITE_AI_REVIEW_AUTH_HEADER = String(process.env.NETSUITE_AI_REVIEW_AUTH_HEADER || "").trim();
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -1197,14 +1199,62 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   };
 }
 
-function validateRequestWithAi(body) {
+async function fetchNetsuiteInventoryForReview(lines, selectedLocation) {
+  if (!NETSUITE_AI_REVIEW_RESTLET_URL) {
+    return { map: new Map(), source: "local", warning: "NetSuite restlet is not configured. Used local inventory snapshot." };
+  }
+  const payload = {
+    selectedLocation,
+    lines: lines.map((line) => ({
+      deviceId: String(line.productId || line.deviceId || "").trim(),
+      model: String(line.model || "").trim(),
+      grade: String(line.grade || "").trim(),
+      quantity: Number(line.quantity || 0)
+    }))
+  };
+  try {
+    const response = await requestJson(NETSUITE_AI_REVIEW_RESTLET_URL, {
+      method: "POST",
+      contentType: "application/json",
+      headers: {
+        Accept: "application/json",
+        ...(NETSUITE_AI_REVIEW_AUTH_HEADER ? { Authorization: NETSUITE_AI_REVIEW_AUTH_HEADER } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+    const rows = Array.isArray(response?.inventory)
+      ? response.inventory
+      : (Array.isArray(response?.lines) ? response.lines : (Array.isArray(response?.items) ? response.items : []));
+    const map = new Map();
+    for (const row of rows) {
+      const deviceId = String(row.deviceId || row.productId || "").trim();
+      const location = String(row.location || selectedLocation || "").trim();
+      const available = Number(row.available ?? row.quantityOnHand ?? row.quantity ?? 0);
+      if (!deviceId || !location) continue;
+      map.set(`${deviceId}|${location}`, Math.max(0, Math.floor(available)));
+    }
+    return {
+      map,
+      source: map.size ? "netsuite" : "local",
+      warning: map.size ? "" : "NetSuite restlet response had no usable inventory rows. Used local inventory snapshot."
+    };
+  } catch (error) {
+    return {
+      map: new Map(),
+      source: "local",
+      warning: `NetSuite restlet lookup failed (${error.message || "unknown error"}). Used local inventory snapshot.`
+    };
+  }
+}
+
+async function validateRequestWithAi(body) {
   const lines = Array.isArray(body?.lines) ? body.lines : [];
   const selectedLocation = String(body?.selectedLocation || "").trim();
   const warnings = [];
   const suggestions = [];
   if (!lines.length) {
     warnings.push({ code: "EMPTY_REQUEST", message: "Request has no lines." });
-    return { warnings, suggestions };
+    return { warnings, suggestions, inventorySource: "local" };
   }
 
   const locationByDevice = db.prepare(`
@@ -1215,6 +1265,11 @@ function validateRequestWithAi(body) {
     WHERE d.id = ?
     LIMIT 1
   `);
+
+  const netsuiteInventory = await fetchNetsuiteInventoryForReview(lines, selectedLocation);
+  if (netsuiteInventory.warning) {
+    warnings.push({ code: "INVENTORY_SOURCE", message: netsuiteInventory.warning });
+  }
 
   lines.forEach((line, index) => {
     const quantity = Number(line.quantity);
@@ -1227,8 +1282,11 @@ function validateRequestWithAi(body) {
     if (!Number.isInteger(quantity) || quantity < 1) warnings.push({ code: "INVALID_QTY", lineIndex: index, message: `Line ${index + 1}: quantity must be >= 1.` });
     if (!Number.isFinite(offerPrice) || offerPrice < 0) warnings.push({ code: "INVALID_PRICE", lineIndex: index, message: `Line ${index + 1}: offer price must be >= 0.` });
     if (selectedLocation && deviceId) {
+      const externalKey = `${deviceId}|${selectedLocation}`;
+      const externalAvailable = netsuiteInventory.map.has(externalKey) ? Number(netsuiteInventory.map.get(externalKey)) : null;
       const row = locationByDevice.get(selectedLocation, deviceId);
-      const available = Number(row?.quantity || 0);
+      const localAvailable = Number(row?.quantity || 0);
+      const available = externalAvailable !== null ? externalAvailable : localAvailable;
       if (Number.isInteger(quantity) && quantity > available) {
         warnings.push({
           code: "LOCATION_SHORTAGE",
@@ -1238,6 +1296,11 @@ function validateRequestWithAi(body) {
         suggestions.push({
           type: "ADJUST_QTY",
           lineIndex: index,
+          action: {
+            type: "set_quantity",
+            lineIndex: index,
+            suggestedQuantity: Math.max(0, available)
+          },
           message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.`
         });
       }
@@ -1247,7 +1310,7 @@ function validateRequestWithAi(body) {
   if (!selectedLocation) {
     suggestions.push({ type: "SELECT_LOCATION", message: "Select an order location before submitting." });
   }
-  return { warnings, suggestions };
+  return { warnings, suggestions, inventorySource: netsuiteInventory.source };
 }
 
 function validateNetsuitePayloadWithAi(body) {
@@ -2834,7 +2897,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      json(req, res, 200, validateRequestWithAi(body));
+      json(req, res, 200, await validateRequestWithAi(body));
       return;
     }
 
