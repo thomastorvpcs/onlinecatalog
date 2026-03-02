@@ -1143,18 +1143,33 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   const categories = getCategories();
   const manufacturers = db.prepare("SELECT name FROM manufacturers ORDER BY name").all().map((r) => r.name);
   const modelFamilies = db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => r.name);
+  const modelFamilyCategoryRows = db.prepare("SELECT DISTINCT model_family AS family, category FROM devices WHERE is_active = 1").all();
+  const modelFamilyToCategory = new Map(
+    modelFamilyCategoryRows
+      .map((row) => [String(row.family || "").toLowerCase(), String(row.category || "").trim()])
+      .filter(([family, category]) => family && category)
+  );
   const storages = db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => r.name);
   const regions = db.prepare("SELECT name FROM locations ORDER BY id").all().map((r) => r.name);
   const filters = {};
   const warnings = [];
 
+  const allCategoryRequested = /\b(all categories|across categories|across all categories|any category|all device categories|all devices)\b/i.test(prompt);
   const categoryByMatch = categories.find((name) => text.includes(String(name).toLowerCase()))
-    || (text.includes("phone") ? "Smartphones" : "")
+    || (/\bsmart\s?phones?\b|\bphones?\b/.test(text) ? "Smartphones" : "")
     || (text.includes("tablet") ? "Tablets" : "")
-    || (text.includes("laptop") ? "Laptops" : "")
+    || (/\blaptop\b|\bnotebook\b/.test(text) ? "Laptops" : "")
     || (text.includes("wear") || text.includes("watch") ? "Wearables" : "")
     || (text.includes("accessor") ? "Accessories" : "");
-  const selectedCategory = categoryByMatch || selectedCategoryRaw || "Smartphones";
+  const categoryByModelFamily = [...modelFamilyToCategory.entries()].find(([family]) => family && text.includes(family))?.[1] || "";
+  const categoryByKeyword = (/\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b/.test(text) ? "Laptops" : "")
+    || (/\bipad\b|\bgalaxy tab\b/.test(text) ? "Tablets" : "")
+    || (/\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b/.test(text) ? "Wearables" : "")
+    || (/\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\baccessor(y|ies)\b/.test(text) ? "Accessories" : "")
+    || (/\biphone\b|\bgalaxy\b|\bpixel\b/.test(text) ? "Smartphones" : "");
+  const selectedCategory = allCategoryRequested
+    ? "__ALL__"
+    : (categoryByMatch || categoryByModelFamily || categoryByKeyword || selectedCategoryRaw || "Smartphones");
 
   const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
   if (matchedManufacturers.length) {

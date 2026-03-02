@@ -29,6 +29,8 @@ const baseNavItems = [
 const CATEGORY_ORDER = ["Smartphones", "Tablets", "Laptops", "Wearables", "Accessories"];
 const CATEGORY_PAGE_SIZE = 40;
 const INVENTORY_DISPLAY_CAP = 100;
+const ALL_CATEGORIES_KEY = "__ALL__";
+const ALL_CATEGORIES_LABEL = "All Categories";
 
 function readJson(area, key, fallback) {
   try {
@@ -268,17 +270,32 @@ function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts)
   const categories = [...new Set((allProducts || []).map((p) => p.category))];
   const manufacturers = [...new Set((allProducts || []).map((p) => p.manufacturer))];
   const modelFamilies = [...new Set((allProducts || []).map((p) => p.modelFamily || modelFamilyOf(p.model)))];
+  const modelFamilyToCategory = new Map(
+    (allProducts || [])
+      .map((p) => [String(p.modelFamily || modelFamilyOf(p.model)).toLowerCase(), p.category])
+      .filter(([family, category]) => family && category)
+  );
   const storages = [...new Set((allProducts || []).map((p) => p.storage))];
   const regions = [...new Set((allProducts || []).flatMap((p) => Object.keys(p.locations || {})))];
   const filters = {};
   const warnings = [];
 
+  const allCategoryRequested = /\b(all categories|across categories|across all categories|any category|all device categories|all devices)\b/i.test(prompt);
   const categoryByMatch = categories.find((name) => text.includes(String(name).toLowerCase()))
-    || (text.includes("phone") ? "Smartphones" : "")
+    || (/\bsmart\s?phones?\b|\bphones?\b/.test(text) ? "Smartphones" : "")
     || (text.includes("tablet") ? "Tablets" : "")
-    || (text.includes("laptop") ? "Laptops" : "")
+    || (/\blaptop\b|\bnotebook\b/.test(text) ? "Laptops" : "")
     || (text.includes("wear") || text.includes("watch") ? "Wearables" : "")
     || (text.includes("accessor") ? "Accessories" : "");
+  const categoryByModelFamily = [...modelFamilyToCategory.entries()].find(([family]) => family && text.includes(family))?.[1] || "";
+  const categoryByKeyword = (/\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b/.test(text) ? "Laptops" : "")
+    || (/\bipad\b|\bgalaxy tab\b/.test(text) ? "Tablets" : "")
+    || (/\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b/.test(text) ? "Wearables" : "")
+    || (/\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\baccessor(y|ies)\b/.test(text) ? "Accessories" : "")
+    || (/\biphone\b|\bgalaxy\b|\bpixel\b/.test(text) ? "Smartphones" : "");
+  const nextCategory = allCategoryRequested
+    ? ALL_CATEGORIES_KEY
+    : (categoryByMatch || categoryByModelFamily || categoryByKeyword || selectedCategory);
 
   const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
   if (matchedManufacturers.length) filters.manufacturer = matchedManufacturers;
@@ -299,7 +316,7 @@ function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts)
     warnings.push("Price constraints were detected but not auto-applied because price filter is not configured.");
   }
   return {
-    selectedCategory: categoryByMatch || selectedCategory,
+    selectedCategory: nextCategory,
     search: Object.keys(filters).length ? "" : prompt,
     filters,
     warnings
@@ -1503,6 +1520,7 @@ export default function App() {
 
   useEffect(() => {
     if (!products.length) return;
+    if (selectedCategory === ALL_CATEGORIES_KEY) return;
     const categorySet = new Set(products.map((p) => p.category));
     if (!categorySet.has(selectedCategory)) {
       setSelectedCategory(products[0].category);
@@ -1586,6 +1604,35 @@ export default function App() {
       if (!authToken || productsView !== "category") return;
       try {
         setCategoryLoading(true);
+        if (selectedCategory === ALL_CATEGORIES_KEY) {
+          const searchText = search.trim().toLowerCase();
+          const manufacturers = Array.isArray(filters.manufacturer) ? filters.manufacturer : [];
+          const modelFamilies = Array.isArray(filters.modelFamily) ? filters.modelFamily : [];
+          const grades = Array.isArray(filters.grade) ? filters.grade : [];
+          const regions = Array.isArray(filters.region) ? filters.region : [];
+          const storages = Array.isArray(filters.storage) ? filters.storage : [];
+          const filtered = products.filter((p) => {
+            const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
+            const availableRegions = p.locations && typeof p.locations === "object"
+              ? Object.entries(p.locations).filter(([, qty]) => Number(qty || 0) > 0).map(([name]) => name)
+              : [];
+            if (searchText && !text.includes(searchText)) return false;
+            if (manufacturers.length && !manufacturers.includes(p.manufacturer)) return false;
+            if (modelFamilies.length && !modelFamilies.includes(p.modelFamily || modelFamilyOf(p.model))) return false;
+            if (grades.length && !grades.includes(p.grade)) return false;
+            if (regions.length && !regions.some((regionName) => availableRegions.includes(regionName))) return false;
+            if (storages.length && !storages.includes(p.storage)) return false;
+            return true;
+          });
+          const total = filtered.length;
+          const start = (categoryPage - 1) * CATEGORY_PAGE_SIZE;
+          if (!ignore) {
+            setProductsError("");
+            setCategoryDevices(filtered.slice(start, start + CATEGORY_PAGE_SIZE));
+            setCategoryTotal(total);
+          }
+          return;
+        }
         const qs = new URLSearchParams();
         qs.set("category", selectedCategory);
         qs.set("page", String(categoryPage));
@@ -1625,7 +1672,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, refreshToken, productsView, selectedCategory, search, filters, categoryPage]);
+  }, [authToken, refreshToken, productsView, selectedCategory, search, filters, categoryPage, products]);
 
   useEffect(() => {
     setActiveImageIndex(0);
@@ -2376,7 +2423,10 @@ export default function App() {
   const weeklySpecialAdminDevices = products
     .filter((p) => `${p.manufacturer} ${p.model}`.toLowerCase().includes(weeklySpecialSearch.toLowerCase()))
     .slice(0, 120);
-  const source = products.filter((p) => p.category === selectedCategory);
+  const source = selectedCategory === ALL_CATEGORIES_KEY
+    ? products
+    : products.filter((p) => p.category === selectedCategory);
+  const selectedCategoryLabel = selectedCategory === ALL_CATEGORIES_KEY ? ALL_CATEGORIES_LABEL : selectedCategory;
   const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "grade", title: "Grade" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
   const valuesForField = (device, fieldKey) => {
     if (fieldKey === "region") {
@@ -2897,7 +2947,7 @@ export default function App() {
                 </aside>
                 <section className="products-main">
                   <div className="products-top">
-                    <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategory}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategory}</h2></div>
+                    <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategoryLabel}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategoryLabel}</h2></div>
                     <div className="right-actions"><input className="catalog-search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
                   </div>
                   <div className="small" style={{ marginBottom: 8 }}>
