@@ -1106,9 +1106,6 @@ export default function App() {
   const [savedFiltersLoading, setSavedFiltersLoading] = useState(false);
   const [savedFiltersError, setSavedFiltersError] = useState("");
   const [shortcutFiltersByCategory, setShortcutFiltersByCategory] = useState({});
-  const [aiFilterPrompt, setAiFilterPrompt] = useState("");
-  const [aiFilterLoading, setAiFilterLoading] = useState(false);
-  const [aiFilterError, setAiFilterError] = useState("");
   const [newSavedFilterName, setNewSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState(false);
   const [savedFilterNotice, setSavedFilterNotice] = useState("");
@@ -1824,44 +1821,6 @@ export default function App() {
       }
     }
     setShortcutFiltersByCategory(next);
-  };
-
-  const runAiFilterAssist = async () => {
-    if (!authToken || !user || aiFilterLoading) return;
-    const prompt = aiFilterPrompt.trim();
-    if (!prompt) {
-      setAiFilterError("Enter a prompt first.");
-      return;
-    }
-    setAiFilterLoading(true);
-    setAiFilterError("");
-    try {
-      const payload = await apiRequest("/api/ai/parse-filters", {
-        method: "POST",
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState,
-        body: {
-          prompt,
-          selectedCategory
-        }
-      });
-      if (payload.selectedCategory) {
-        setSelectedCategory(payload.selectedCategory);
-      }
-      setSearch(String(payload.search || ""));
-      setFilters(payload.filters && typeof payload.filters === "object" ? payload.filters : {});
-      setProductsView("category");
-      setCategoryPage(1);
-      if (Array.isArray(payload.warnings) && payload.warnings.length) {
-        setAiFilterError(payload.warnings[0]);
-      }
-    } catch (error) {
-      setAiFilterError(error.message || "AI filter assist failed.");
-    } finally {
-      setAiFilterLoading(false);
-    }
   };
 
   const runAiRequestReview = async () => {
@@ -2814,27 +2773,6 @@ export default function App() {
               <div className="products-shell">
                 <aside className="filters-panel">
                   <div className="filter-head"><h3 style={{ margin: 0, fontWeight: 500 }}>Filters</h3><button className="pill-clear" onClick={() => { setFilters({}); setSearch(""); }}>Clear</button></div>
-                  <div className="ai-filter-box">
-                    <div className="small" style={{ marginBottom: 6, fontWeight: 600, color: "#334155" }}>AI Filter Assist</div>
-                    <div className="saved-filters-form">
-                      <input
-                        className="saved-filter-input"
-                        value={aiFilterPrompt}
-                        onChange={(e) => setAiFilterPrompt(e.target.value)}
-                        placeholder='e.g. "Apple CPO in Miami 128GB"'
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            runAiFilterAssist();
-                          }
-                        }}
-                      />
-                      <button type="button" className="saved-filter-save-btn" disabled={aiFilterLoading} onClick={runAiFilterAssist}>
-                        {aiFilterLoading ? "Applying..." : "Ask AI"}
-                      </button>
-                    </div>
-                    {aiFilterError ? <div className="saved-filter-error">{aiFilterError}</div> : null}
-                  </div>
                   <div className="saved-filters-box">
                     <div className="saved-filters-form">
                       <input
