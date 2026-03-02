@@ -1609,8 +1609,6 @@ export default function App() {
     setSelectedCategory(payload.selectedCategory);
     setSearch(payload.search);
     setFilters(payload.filters);
-    setEditingSavedFilterId(savedFilter.id);
-    setNewSavedFilterName(savedFilter.name);
     setCategoryPage(1);
     setSavedFilterNotice(`Applied "${savedFilter.name}".`);
   };

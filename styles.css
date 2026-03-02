@@ -701,7 +701,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .saved-filter-item-actions {
   display: flex;
-  gap: 6px;
+  gap: 2px;
   flex: 0 0 auto;
 }
 
@@ -728,35 +728,35 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .saved-filter-edit-btn {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 0;
   padding: 0;
-  background: #fff;
+  background: transparent;
   color: #1d4ed8;
-  border: 1px solid #bcd0fa;
+  border: none;
   display: grid;
   place-items: center;
 }
 
 .saved-filter-delete-btn {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 0;
   padding: 0;
-  background: #fff;
+  background: transparent;
   color: #b42318;
-  border: 1px solid #f1bcc2;
+  border: none;
   display: grid;
   place-items: center;
 }
 
 .saved-filter-edit-btn svg,
 .saved-filter-delete-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   fill: currentColor;
 }
 
