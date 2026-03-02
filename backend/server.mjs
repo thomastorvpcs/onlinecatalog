@@ -2098,6 +2098,55 @@ function upsertSavedFilterForUser(userId, body) {
   return mapSavedFilterRow(row);
 }
 
+function updateSavedFilterForUser(userId, filterIdRaw, body) {
+  const filterId = Number(filterIdRaw);
+  if (!Number.isInteger(filterId) || filterId < 1) {
+    throw new Error("Saved filter not found.");
+  }
+  const existing = db.prepare(`
+    SELECT id, view_key, name
+    FROM user_saved_filters
+    WHERE id = ? AND user_id = ?
+    LIMIT 1
+  `).get(filterId, userId);
+  if (!existing?.id) {
+    throw new Error("Saved filter not found.");
+  }
+  const viewKey = normalizeSavedFilterViewKey(body.viewKey || existing.view_key);
+  if (viewKey !== existing.view_key) {
+    throw new Error("Saved filter not found.");
+  }
+  const name = String(body.name || "").trim();
+  if (!name) {
+    throw new Error("name is required.");
+  }
+  if (name.length > 80) {
+    throw new Error("name must be 80 characters or less.");
+  }
+  const payload = sanitizeSavedFilterPayload(body.payload);
+  const payloadJson = JSON.stringify(payload);
+  try {
+    db.prepare(`
+      UPDATE user_saved_filters
+      SET name = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).run(name, payloadJson, filterId, userId);
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.includes("UNIQUE constraint failed")) {
+      throw new Error("Saved filter name already exists.");
+    }
+    throw error;
+  }
+  const row = db.prepare(`
+    SELECT id, view_key, name, payload_json, created_at, updated_at
+    FROM user_saved_filters
+    WHERE id = ? AND user_id = ?
+    LIMIT 1
+  `).get(filterId, userId);
+  return mapSavedFilterRow(row);
+}
+
 function deleteSavedFilterForUser(userId, filterIdRaw) {
   const filterId = Number(filterIdRaw);
   if (!Number.isInteger(filterId) || filterId < 1) {
@@ -2466,14 +2515,35 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const savedFilterDeleteMatch = url.pathname.match(/^\/api\/filters\/saved\/([^/]+)$/);
-    if (req.method === "DELETE" && savedFilterDeleteMatch) {
+    const savedFilterByIdMatch = url.pathname.match(/^\/api\/filters\/saved\/([^/]+)$/);
+    if (req.method === "PATCH" && savedFilterByIdMatch) {
       const user = getAuthUser(req);
       if (!user) {
         json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      const filterId = decodeURIComponent(savedFilterDeleteMatch[1]);
+      const body = await parseBody(req);
+      const filterId = decodeURIComponent(savedFilterByIdMatch[1]);
+      try {
+        const savedFilter = updateSavedFilterForUser(user.id, filterId, body);
+        json(req, res, 200, savedFilter);
+      } catch (error) {
+        const message = error.message || "Failed to update saved filter.";
+        const statusCode = message === "Saved filter not found."
+          ? 404
+          : (message === "Saved filter name already exists." ? 409 : 400);
+        json(req, res, statusCode, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "DELETE" && savedFilterByIdMatch) {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const filterId = decodeURIComponent(savedFilterByIdMatch[1]);
       try {
         deleteSavedFilterForUser(user.id, filterId);
         json(req, res, 200, { ok: true });
