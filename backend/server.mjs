@@ -1399,6 +1399,12 @@ function seedAdminRealDevicesPerCategory(countPerCategory) {
         const uniqueSeed = (variant.modelIdx * 11) + (variant.storageIdx * 7) + (variant.colorIdx * 5) + (variant.gradeIdx * 3) + cycle;
         const seedImagePool = getSeedImagePool(cfg.name, modelFamily);
         const heroImage = seedImagePool.length ? seedImagePool[uniqueSeed % seedImagePool.length] : MODEL_IMAGE_MAP["iPhone 15"];
+        const isShortageTestTarget = cfg.name === "Smartphones"
+          && modelFamily === "iPhone 15"
+          && storage === "128GB"
+          && color === "Black"
+          && grade === "A"
+          && cycle === 1;
 
         deviceInsert.run(
           id,
@@ -1420,7 +1426,9 @@ function seedAdminRealDevicesPerCategory(countPerCategory) {
         );
 
         for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
-          const qty = 10 + ((i * 7 + locIdx * 11) % 120);
+          const qty = isShortageTestTarget && (locIdx === 0 || locIdx === 1)
+            ? 0
+            : 10 + ((i * 7 + locIdx * 11) % 120);
           inventoryInsert.run(id, locations[locIdx], qty);
         }
         const gallery = [heroImage];
