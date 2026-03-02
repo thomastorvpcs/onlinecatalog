@@ -1888,6 +1888,12 @@ export default function App() {
     if (!appliedCount) return;
     updateCart(next);
     setCartNotice(`Applied ${appliedCount} AI suggestion${appliedCount === 1 ? "" : "s"}.`);
+    if (cartNoticeTimerRef.current) {
+      clearTimeout(cartNoticeTimerRef.current);
+    }
+    cartNoticeTimerRef.current = setTimeout(() => {
+      setCartNotice("");
+    }, 2200);
     setAiRequestReview(null);
   };
 
