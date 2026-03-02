@@ -2120,7 +2120,16 @@ export default function App() {
                         <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
                         <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || 1)))) } : i))} /></td>
                         <td className="cart-col-total">${lineTotal.toFixed(2)}</td>
-                        <td className="cart-col-action"><button className="delete-btn cart-delete-btn" onClick={() => updateCart(cart.filter((i) => i.id !== r.id))}>Delete</button></td>
+                        <td className="cart-col-action">
+                          <button
+                            className="delete-btn cart-delete-btn"
+                            aria-label={`Remove ${r.model} from requested items`}
+                            title="Remove item"
+                            onClick={() => updateCart(cart.filter((i) => i.id !== r.id))}
+                          >
+                            <TrashIcon />
+                          </button>
+                        </td>
                       </tr>
                     );
                   }) : <tr><td colSpan={6} className="small">No requested items yet.</td></tr>}
@@ -2293,6 +2302,17 @@ function EyeClosedIcon() {
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <path d="M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="1.8" />
       <path d="M2 12s3.5-6 10-6c2 0 3.8.6 5.3 1.5M22 12s-3.5 6-10 6c-2 0-3.8-.6-5.3-1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M4 7h16" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M9 7V5h6v2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M7 7l1 12h8l1-12" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M10 11v5M14 11v5" fill="none" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   );
 }
