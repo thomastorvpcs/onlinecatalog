@@ -772,6 +772,49 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 12px;
 }
 
+.shortcuts-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.shortcuts-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.shortcut-category-group {
+  padding-top: 2px;
+}
+
+.shortcut-category-title {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.shortcut-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shortcut-chip {
+  width: auto;
+  max-width: 280px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid #cfd7e6;
+  background: #fff;
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .category-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1740,6 +1783,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .saved-filter-item-actions {
     justify-content: flex-end;
+  }
+
+  .shortcut-chip {
+    max-width: 100%;
   }
 
   .products-grid {

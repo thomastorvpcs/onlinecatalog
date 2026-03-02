@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const productsSeed = [
   { id: "p1", manufacturer: "Apple", model: "iPhone 15 Pro Max 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 100, available: 100, image: "images/iphone_15_Pro.png", locations: { Miami: 40, Dubai: 20, "Hong Kong": 25, Japan: 15 } },
@@ -852,6 +852,7 @@ export default function App() {
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoading, setSavedFiltersLoading] = useState(false);
   const [savedFiltersError, setSavedFiltersError] = useState("");
+  const [shortcutFiltersByCategory, setShortcutFiltersByCategory] = useState({});
   const [newSavedFilterName, setNewSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState(false);
   const [savedFilterNotice, setSavedFilterNotice] = useState("");
@@ -869,6 +870,14 @@ export default function App() {
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
+  const categoryNames = useMemo(() => [...new Set(products.map((p) => p.category))].sort((a, b) => {
+    const aIndex = CATEGORY_ORDER.indexOf(a);
+    const bIndex = CATEGORY_ORDER.indexOf(b);
+    const aOrder = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+    const bOrder = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.localeCompare(b);
+  }), [products]);
 
   const applyAuthTokens = (data) => {
     if (!data?.token || !data?.refreshToken) return;
@@ -917,6 +926,7 @@ export default function App() {
     setActiveRequestId(null);
     setCartOpen(false);
     setSavedFilters([]);
+    setShortcutFiltersByCategory({});
     setSavedFiltersError("");
     setNewSavedFilterName("");
     setSavedFilterNotice("");
@@ -1174,6 +1184,44 @@ export default function App() {
       ignore = true;
     };
   }, [authToken, refreshToken, user, selectedCategory]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadShortcutFilters() {
+      if (!user || !authToken || !categoryNames.length) {
+        if (!ignore) {
+          setShortcutFiltersByCategory({});
+        }
+        return;
+      }
+      const entries = await Promise.all(categoryNames.map(async (categoryName) => {
+        try {
+          const viewKey = categorySavedFilterViewKey(categoryName);
+          const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+            token: authToken,
+            refreshToken,
+            onAuthUpdate: applyAuthTokens,
+            onAuthFail: clearAuthState
+          });
+          return [categoryName, Array.isArray(payload) ? payload : []];
+        } catch {
+          return [categoryName, []];
+        }
+      }));
+      if (ignore) return;
+      const next = {};
+      for (const [categoryName, filtersForCategory] of entries) {
+        if (filtersForCategory.length) {
+          next[categoryName] = filtersForCategory;
+        }
+      }
+      setShortcutFiltersByCategory(next);
+    }
+    loadShortcutFilters();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, refreshToken, user, categoryNames]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -1458,6 +1506,34 @@ export default function App() {
     }
   };
 
+  const refreshShortcutFilters = async () => {
+    if (!user || !authToken || !categoryNames.length) {
+      setShortcutFiltersByCategory({});
+      return;
+    }
+    const entries = await Promise.all(categoryNames.map(async (categoryName) => {
+      try {
+        const viewKey = categorySavedFilterViewKey(categoryName);
+        const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        return [categoryName, Array.isArray(payload) ? payload : []];
+      } catch {
+        return [categoryName, []];
+      }
+    }));
+    const next = {};
+    for (const [categoryName, filtersForCategory] of entries) {
+      if (filtersForCategory.length) {
+        next[categoryName] = filtersForCategory;
+      }
+    }
+    setShortcutFiltersByCategory(next);
+  };
+
   const activeEditedSavedFilter = editingSavedFilterId
     ? savedFilters.find((f) => String(f.id) === String(editingSavedFilterId)) || null
     : null;
@@ -1514,7 +1590,7 @@ export default function App() {
       setSavedFilterNotice(editingSavedFilterId ? `Updated "${name}".` : `Saved "${name}".`);
       setEditingSavedFilterId(payload?.id || editingSavedFilterId || null);
       setNewSavedFilterName(payload?.name || name);
-      await refreshSavedFilters();
+      await Promise.all([refreshSavedFilters(), refreshShortcutFilters()]);
     } catch (error) {
       setSavedFiltersError(error.message || "Failed to save filter.");
     } finally {
@@ -1551,7 +1627,7 @@ export default function App() {
         setNewSavedFilterName("");
       }
       setSavedFilterNotice(`Deleted "${savedFilter.name}".`);
-      await refreshSavedFilters();
+      await Promise.all([refreshSavedFilters(), refreshShortcutFilters()]);
     } catch (error) {
       setSavedFiltersError(error.message || "Failed to delete saved filter.");
     }
@@ -1811,14 +1887,7 @@ export default function App() {
     ? [...baseNavItems, { key: "users", label: "Users", icon: "U" }]
     : baseNavItems;
 
-  const categories = [...new Set(products.map((p) => p.category))].sort((a, b) => {
-    const aIndex = CATEGORY_ORDER.indexOf(a);
-    const bIndex = CATEGORY_ORDER.indexOf(b);
-    const aOrder = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
-    const bOrder = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    return a.localeCompare(b);
-  });
+  const categories = categoryNames;
   const weeklySpecialDevices = products.filter((p) => p.weeklySpecial === true);
   const weeklySpecialAdminDevices = products
     .filter((p) => `${p.manufacturer} ${p.model}`.toLowerCase().includes(weeklySpecialSearch.toLowerCase()))
@@ -2085,6 +2154,21 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
+  const shortcutCategoryEntries = categories
+    .map((categoryName) => ({ categoryName, filters: shortcutFiltersByCategory[categoryName] || [] }))
+    .filter((entry) => entry.filters.length > 0);
+
+  const openSavedFilterShortcut = (categoryName, savedFilter) => {
+    const payload = sanitizeFilterPayload(savedFilter?.payload);
+    setRoute("products");
+    setProductsView("category");
+    setSelectedCategory(categoryName);
+    setSearch(payload.search);
+    setFilters(payload.filters);
+    setCategoryPage(1);
+    setEditingSavedFilterId(savedFilter.id);
+    setNewSavedFilterName(savedFilter.name);
+  };
 
   return (
     <div className="app-shell">
@@ -2118,6 +2202,34 @@ export default function App() {
                 <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
                 <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
               </div>
+              {shortcutCategoryEntries.length ? (
+                <section className="panel shortcuts-panel">
+                  <div className="category-header">
+                    <h2 style={{ margin: 0, fontSize: "1.7rem", fontWeight: 500 }}>Shortcuts</h2>
+                    <p className="small" style={{ margin: 0 }}>Saved filters by category</p>
+                  </div>
+                  <div className="shortcuts-groups">
+                    {shortcutCategoryEntries.map((entry) => (
+                      <div key={`shortcut-${entry.categoryName}`} className="shortcut-category-group">
+                        <h4 className="shortcut-category-title">{entry.categoryName}</h4>
+                        <div className="shortcut-chips">
+                          {entry.filters.map((savedFilter) => (
+                            <button
+                              key={`shortcut-${entry.categoryName}-${savedFilter.id}`}
+                              type="button"
+                              className="shortcut-chip"
+                              title={savedFilter.name}
+                              onClick={() => openSavedFilterShortcut(entry.categoryName, savedFilter)}
+                            >
+                              {savedFilter.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
               <section className="panel home-hero">
                 <div><h2 style={{ margin: 0, fontSize: "2rem", fontWeight: 400 }}>Categories</h2><p className="muted" style={{ marginTop: 6 }}>Browse device classes and open a filtered catalog view.</p></div>
                 {productsLoading ? (
