@@ -81,19 +81,15 @@ function inventoryDisplayValue(value) {
 
 function totalInventoryDisplayFromLocations(rawLocations) {
   const quantities = Object.values(rawLocations || {}).map((qty) => normalizeInventoryQuantity(qty));
-  const cappedLocationCount = quantities.filter((qty) => qty > INVENTORY_DISPLAY_CAP).length;
-  if (cappedLocationCount > 0) {
-    const cappedTotal = cappedLocationCount * INVENTORY_DISPLAY_CAP;
+  const rawTotal = quantities.reduce((sum, qty) => sum + qty, 0);
+  if (rawTotal > INVENTORY_DISPLAY_CAP) {
+    const cappedTotal = Math.floor(rawTotal / INVENTORY_DISPLAY_CAP) * INVENTORY_DISPLAY_CAP;
     return {
       available: cappedTotal,
       availableDisplay: `${cappedTotal}+`
     };
   }
-  const exactTotal = quantities.reduce((sum, qty) => sum + qty, 0);
-  return {
-    available: exactTotal,
-    availableDisplay: String(exactTotal)
-  };
+  return { available: rawTotal, availableDisplay: String(rawTotal) };
 }
 
 function normalizeDevice(p) {
