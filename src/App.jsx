@@ -59,9 +59,26 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
 });
+const chatTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  hour: "numeric",
+  minute: "2-digit"
+});
 
 function formatUsd(value) {
   return usdFormatter.format(Number(value || 0));
+}
+
+function normalizeChatTimestamp(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function formatChatTimestamp(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return chatTimeFormatter.format(parsed);
 }
 
 function normalizeInventoryQuantity(value) {
@@ -1642,7 +1659,8 @@ export default function App() {
         .map((msg) => ({
           role: msg.role,
           text: String(msg.text || ""),
-          action: msg.action && typeof msg.action === "object" ? msg.action : null
+          action: msg.action && typeof msg.action === "object" ? msg.action : null,
+          timestamp: normalizeChatTimestamp(msg.timestamp)
         }))
         .slice(-30)
       : [];
@@ -2076,7 +2094,11 @@ export default function App() {
     }
     setAiCopilotLoading(true);
     setAiCopilotError("");
-    setAiCopilotMessages((prev) => [...prev, { role: "user", text: message }]);
+    setAiCopilotMessages((prev) => [...prev, {
+      role: "user",
+      text: message,
+      timestamp: new Date().toISOString()
+    }]);
     setAiCopilotInput("");
     try {
       const payload = await apiRequest("/api/ai/copilot", {
@@ -2096,7 +2118,8 @@ export default function App() {
       setAiCopilotMessages((prev) => [...prev, {
         role: "assistant",
         text: payload.reply || "I could not generate a response.",
-        action: payload.action || null
+        action: payload.action || null,
+        timestamp: new Date().toISOString()
       }]);
     } catch (error) {
       setAiCopilotError(error.message || "AI copilot failed.");
@@ -3348,6 +3371,7 @@ export default function App() {
               {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (
                 <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-msg ${message.role}`}>
                   <div>{message.text}</div>
+                  {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
                   {message.role === "assistant" && message.action?.type === "apply_filters" ? (
                     <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
                       Apply Suggested Filters
