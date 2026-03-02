@@ -2010,16 +2010,21 @@ export default function App() {
         <div
           style={{
             position: "fixed",
-            right: 20,
-            bottom: 20,
-            zIndex: 1200,
-            background: "#166534",
+            top: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1400,
+            background: "#14532d",
             color: "#fff",
-            padding: "10px 14px",
-            borderRadius: 10,
-            boxShadow: "0 8px 18px rgba(0,0,0,0.22)",
-            fontSize: "0.92rem",
-            maxWidth: 420
+            border: "2px solid #bbf7d0",
+            padding: "14px 20px",
+            borderRadius: 12,
+            boxShadow: "0 12px 28px rgba(0,0,0,0.28)",
+            fontSize: "1.02rem",
+            fontWeight: 600,
+            textAlign: "center",
+            minWidth: 360,
+            maxWidth: "min(92vw, 760px)"
           }}
         >
           {cartNotice}
