@@ -1200,11 +1200,9 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
 }
 
 function buildCopilotSuggestedFilterName(parsed) {
-  const category = String(parsed?.selectedCategory || "").trim();
   const filters = parsed?.filters && typeof parsed.filters === "object" ? parsed.filters : {};
   const search = String(parsed?.search || "").trim();
   const parts = [];
-  if (category) parts.push(category);
   const orderedKeys = ["manufacturer", "modelFamily", "grade", "region", "storage"];
   for (const key of orderedKeys) {
     const value = filters[key];

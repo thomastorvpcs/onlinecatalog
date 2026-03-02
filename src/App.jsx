@@ -308,11 +308,9 @@ function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts)
 
 function buildCopilotSuggestedFilterName(payloadRaw) {
   const payload = sanitizeFilterPayload(payloadRaw);
-  const category = String(payload.selectedCategory || "").trim();
   const filters = payload.filters && typeof payload.filters === "object" ? payload.filters : {};
   const search = String(payload.search || "").trim();
   const parts = [];
-  if (category) parts.push(category);
   const orderedKeys = ["manufacturer", "modelFamily", "grade", "region", "storage"];
   for (const key of orderedKeys) {
     const values = Array.isArray(filters[key]) ? filters[key] : [];
