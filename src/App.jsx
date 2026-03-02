@@ -50,6 +50,17 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+function formatUsd(value) {
+  return usdFormatter.format(Number(value || 0));
+}
+
 function normalizeDevice(p) {
   const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
   const fallbackImage = p.image || (images.length ? images[0] : "");
@@ -1940,7 +1951,7 @@ export default function App() {
                   <button className="ghost-btn" onClick={refreshRequests} disabled={requestsLoading}>Refresh</button>
                 </div>
                 {requestsError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestsError}</p> : null}
-                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{requestsLoading ? <tr><td colSpan={5} className="small">Loading requests...</td></tr> : filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>${Number(r.total || 0).toFixed(2)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
+                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{requestsLoading ? <tr><td colSpan={5} className="small">Loading requests...</td></tr> : filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>{formatUsd(r.total)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
               </section>
               <section className="panel">
                 <h3 style={{ marginTop: 0 }}>Request details</h3>
@@ -1966,7 +1977,7 @@ export default function App() {
                       </div>
                     ) : null}
                     {requestStatusUpdateError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestStatusUpdateError}</p> : null}
-                    <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>${Number(l.offerPrice || 0).toFixed(2)}</td><td>${(Number(l.quantity || 0) * Number(l.offerPrice || 0)).toFixed(2)}</td></tr>)}</tbody></table>
+                    <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>{formatUsd(l.offerPrice)}</td><td>{formatUsd(Number(l.quantity || 0) * Number(l.offerPrice || 0))}</td></tr>)}</tbody></table>
                   </>
                 ) : <p className="small">Choose a request above.</p>}
               </section>
@@ -2131,7 +2142,7 @@ export default function App() {
       {activeProduct && (
         <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveProduct(null); }}>
           <article className="modal product-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>${activeProduct.price.toFixed(2)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
+            <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>{formatUsd(activeProduct.price)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
             <div className="modal-grid">
               <div>
                 <div className="modal-box">
@@ -2212,7 +2223,7 @@ export default function App() {
                         <td className="cart-col-grade">{r.grade}</td>
                         <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
                         <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || 1)))) } : i))} /></td>
-                        <td className="cart-col-total">${lineTotal.toFixed(2)}</td>
+                        <td className="cart-col-total">{formatUsd(lineTotal)}</td>
                         <td className="cart-col-action">
                           <button
                             className="delete-btn cart-delete-btn"
@@ -2265,7 +2276,7 @@ export default function App() {
                 </p>
               ) : null}
             </div>
-            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | ${cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0).toFixed(2)}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
+            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | {formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
           </article>
         </div>
       )}
