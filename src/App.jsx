@@ -400,6 +400,72 @@ function deviceMatchesFilterPayload(device, payload) {
   return true;
 }
 
+function buildCopilotNoMatchReply(payloadRaw, allProducts) {
+  const payload = sanitizeFilterPayload(payloadRaw);
+  const filters = payload.filters && typeof payload.filters === "object" ? payload.filters : {};
+  const manufacturers = Array.isArray(filters.manufacturer) ? filters.manufacturer : [];
+  const regions = Array.isArray(filters.region) ? filters.region : [];
+  const hasModelConstraints = Boolean((Array.isArray(filters.modelFamily) && filters.modelFamily.length) || (Array.isArray(filters.storage) && filters.storage.length) || (Array.isArray(filters.grade) && filters.grade.length));
+
+  const primaryManufacturer = manufacturers.length === 1 ? manufacturers[0] : "";
+  const primaryRegion = regions.length === 1 ? regions[0] : "";
+  const categoryPhrase = payload.selectedCategory === "Smartphones"
+    ? "phones"
+    : (payload.selectedCategory === ALL_CATEGORIES_KEY ? "devices" : String(payload.selectedCategory || "devices").toLowerCase());
+
+  let intro = "I cannot find any matching devices right now.";
+  if (primaryManufacturer && primaryRegion) {
+    intro = `I cannot find any ${primaryManufacturer} ${categoryPhrase} in ${primaryRegion} right now.`;
+  } else if (primaryManufacturer) {
+    intro = `I cannot find any ${primaryManufacturer} ${categoryPhrase} right now.`;
+  } else if (primaryRegion) {
+    intro = `I cannot find any ${categoryPhrase} in ${primaryRegion} right now.`;
+  }
+
+  const suggestions = [];
+
+  if (regions.length) {
+    const relaxedFilters = { ...filters };
+    delete relaxedFilters.region;
+    const relaxedPayload = { ...payload, filters: relaxedFilters };
+    const relaxedMatches = (allProducts || []).filter((p) => deviceMatchesFilterPayload(p, relaxedPayload));
+    if (relaxedMatches.length) {
+      const suggestedRegions = [...new Set(relaxedMatches.flatMap((p) => p.availableRegions || []))].slice(0, 3);
+      if (suggestedRegions.length) {
+        suggestions.push(`try another location like ${suggestedRegions.join(", ")}`);
+      } else {
+        suggestions.push("remove the location filter");
+      }
+    }
+  }
+
+  if (manufacturers.length) {
+    const relaxedFilters = { ...filters };
+    delete relaxedFilters.manufacturer;
+    const relaxedPayload = { ...payload, filters: relaxedFilters };
+    const relaxedMatches = (allProducts || []).filter((p) => deviceMatchesFilterPayload(p, relaxedPayload));
+    if (relaxedMatches.length) {
+      const altBrands = [...new Set(relaxedMatches.map((p) => p.manufacturer).filter(Boolean))].slice(0, 3);
+      if (altBrands.length) {
+        suggestions.push(`try other brands in this search, such as ${altBrands.join(", ")}`);
+      }
+    }
+  }
+
+  if (hasModelConstraints) {
+    suggestions.push("remove model/grade/storage filters to broaden the search");
+  }
+  if (payload.search) {
+    suggestions.push("clear the keyword text search");
+  }
+  if (!suggestions.length) {
+    suggestions.push("broaden the request, for example by searching only by brand or category");
+  }
+
+  const topSuggestions = suggestions.slice(0, 3).map((item, index) => `${index + 1}) ${item}`).join("; ");
+  return `${intro} You can ${topSuggestions}.`;
+}
+
 function buildCopilotFilterOptions(promptRaw, parsedRaw, allProducts) {
   const parsed = sanitizeFilterPayload(parsedRaw);
   const categories = [...new Set((allProducts || []).map((p) => p.category))];
@@ -2149,10 +2215,24 @@ export default function App() {
       await new Promise((resolve) => {
         window.setTimeout(resolve, 650);
       });
+      const suggestedAction = payload.action && typeof payload.action === "object" ? payload.action : null;
+      if (suggestedAction?.type === "apply_filters") {
+        const suggestedPayload = sanitizeFilterPayload(suggestedAction.payload);
+        const suggestedCount = products.filter((p) => deviceMatchesFilterPayload(p, suggestedPayload)).length;
+        if (suggestedCount <= 0) {
+          setAiCopilotMessages((prev) => [...prev, {
+            role: "assistant",
+            text: buildCopilotNoMatchReply(suggestedPayload, products),
+            action: null,
+            timestamp: new Date().toISOString()
+          }]);
+          return;
+        }
+      }
       setAiCopilotMessages((prev) => [...prev, {
         role: "assistant",
         text: payload.reply || "I could not generate a response.",
-        action: payload.action || null,
+        action: suggestedAction,
         timestamp: new Date().toISOString()
       }]);
     } catch (error) {
