@@ -2208,7 +2208,14 @@ export default function App() {
                       ) : savedFilters.length ? (
                         savedFilters.map((saved) => (
                           <div key={saved.id} className="saved-filter-item">
-                            <button type="button" className={`saved-filter-apply-btn${String(editingSavedFilterId) === String(saved.id) ? " active" : ""}`} onClick={() => applySavedFilter(saved)}>{saved.name}</button>
+                            <button
+                              type="button"
+                              className={`saved-filter-apply-btn${String(editingSavedFilterId) === String(saved.id) ? " active" : ""}`}
+                              title={saved.name}
+                              onClick={() => applySavedFilter(saved)}
+                            >
+                              {saved.name}
+                            </button>
                             <div className="saved-filter-item-actions">
                               <button
                                 type="button"

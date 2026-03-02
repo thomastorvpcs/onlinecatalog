@@ -694,7 +694,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .saved-filter-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -702,45 +702,55 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .saved-filter-item-actions {
   display: flex;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .saved-filter-apply-btn {
   width: 100%;
   text-align: left;
-  height: 32px;
-  border: 1px solid #cdd3df;
-  border-radius: 8px;
+  height: 36px;
+  border: 1px solid #cfd7e6;
+  border-radius: 10px;
   background: #fff;
-  color: #1f2937;
+  color: #0f172a;
   font-size: 0.83rem;
-  padding: 0 10px;
+  font-weight: 600;
+  padding: 0 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .saved-filter-apply-btn.active {
   border-color: #256fd6;
-  box-shadow: 0 0 0 1px rgba(37, 111, 214, 0.2) inset;
+  background: #eef5ff;
+  box-shadow: 0 0 0 1px rgba(37, 111, 214, 0.15) inset;
 }
 
 .saved-filter-edit-btn {
   width: auto;
-  height: 32px;
-  border-radius: 8px;
-  padding: 0 10px;
+  min-width: 56px;
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 12px;
   background: #fff;
   color: #1d4ed8;
   border: 1px solid #bcd0fa;
   font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .saved-filter-delete-btn {
   width: auto;
-  height: 32px;
-  border-radius: 8px;
-  padding: 0 10px;
+  min-width: 64px;
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 12px;
   background: #fff;
   color: #b42318;
   border: 1px solid #f1bcc2;
   font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .pill-clear {
@@ -1722,6 +1732,14 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .saved-filter-cancel-btn {
     width: 100%;
+  }
+
+  .saved-filter-item {
+    grid-template-columns: 1fr;
+  }
+
+  .saved-filter-item-actions {
+    justify-content: flex-end;
   }
 
   .products-grid {
