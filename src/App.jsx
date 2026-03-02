@@ -2362,29 +2362,6 @@ export default function App() {
     }
   };
 
-  const adjustLineToLocationAvailability = (lineId, availableQty, model) => {
-    const normalizedAvailable = Math.max(0, Math.floor(Number(availableQty || 0)));
-    if (normalizedAvailable <= 0) {
-      updateCart(cart.filter((i) => i.id !== lineId));
-      setCartNotice(`${model} removed because selected location has no inventory.`);
-      if (cartNoticeTimerRef.current) {
-        clearTimeout(cartNoticeTimerRef.current);
-      }
-      cartNoticeTimerRef.current = setTimeout(() => {
-        setCartNotice("");
-      }, 2200);
-      return;
-    }
-    updateCart(cart.map((i) => (i.id === lineId ? { ...i, quantity: normalizedAvailable } : i)));
-    setCartNotice(`${model} quantity set to ${normalizedAvailable} for ${selectedRequestLocation}.`);
-    if (cartNoticeTimerRef.current) {
-      clearTimeout(cartNoticeTimerRef.current);
-    }
-    cartNoticeTimerRef.current = setTimeout(() => {
-      setCartNotice("");
-    }, 2200);
-  };
-
   const handleLogin = async (email, password) => {
     const data = await apiRequest("/api/auth/login", { method: "POST", body: { email, password } });
     if (data.pendingApproval) {
@@ -3531,14 +3508,7 @@ export default function App() {
                           {r.model}
                           {fulfillmentIssue ? (
                             <div className="small cart-line-warning">
-                              <div>Only {fulfillmentIssue.available} available at {selectedRequestLocation}. Reduce by {fulfillmentIssue.shortage}.</div>
-                              <button
-                                type="button"
-                                className="cart-line-fix-link"
-                                onClick={() => adjustLineToLocationAvailability(r.id, fulfillmentIssue.available, r.model)}
-                              >
-                                Set qty to {fulfillmentIssue.available}
-                              </button>
+                              <div>Only {fulfillmentIssue.available} available at {selectedRequestLocation}.</div>
                             </div>
                           ) : null}
                         </td>
