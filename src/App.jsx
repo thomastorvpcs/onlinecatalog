@@ -2064,6 +2064,17 @@ export default function App() {
   const applyCopilotAction = (action) => {
     if (!action || action.type !== "apply_filters") return;
     const payload = sanitizeFilterPayload(action.payload);
+    const matchingCount = products.filter((p) => deviceMatchesFilterPayload(p, payload)).length;
+    if (matchingCount <= 0) {
+      aiCopilotPendingResultCheckRef.current = null;
+      setAiCopilotMessages((prev) => [...prev, {
+        role: "assistant",
+        text: "These suggested filters would return no devices, so I did not apply them. Try broader filters or another category.",
+        action: null,
+        timestamp: new Date().toISOString()
+      }]);
+      return;
+    }
     aiCopilotPendingResultCheckRef.current = {
       waitingForLoadStart: true
     };
