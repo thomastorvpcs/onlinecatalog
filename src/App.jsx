@@ -211,6 +211,16 @@ function sanitizeFilterPayload(raw) {
   return { selectedCategory, search, filters };
 }
 
+function categorySavedFilterViewKey(category) {
+  const slug = String(category || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+  return `cat_${slug || "general"}`;
+}
+
 function makeDemoPublicUser(user) {
   return {
     id: user.id,
@@ -1093,7 +1103,8 @@ export default function App() {
           setSavedFiltersLoading(true);
           setSavedFiltersError("");
         }
-        const payload = await apiRequest("/api/filters/saved?view=category", {
+        const viewKey = categorySavedFilterViewKey(selectedCategory);
+        const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
           token: authToken,
           refreshToken,
           onAuthUpdate: applyAuthTokens,
@@ -1117,7 +1128,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, refreshToken, user]);
+  }, [authToken, refreshToken, user, selectedCategory]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -1378,7 +1389,8 @@ export default function App() {
     setSavedFiltersLoading(true);
     setSavedFiltersError("");
     try {
-      const payload = await apiRequest("/api/filters/saved?view=category", {
+      const viewKey = categorySavedFilterViewKey(selectedCategory);
+      const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
         token: authToken,
         refreshToken,
         onAuthUpdate: applyAuthTokens,
@@ -1411,7 +1423,7 @@ export default function App() {
         onAuthFail: clearAuthState,
         body: {
           name,
-          viewKey: "category",
+          viewKey: categorySavedFilterViewKey(selectedCategory),
           payload: sanitizeFilterPayload({
             selectedCategory,
             search,
@@ -1443,7 +1455,8 @@ export default function App() {
     if (!authToken || !user) return;
     setSavedFiltersError("");
     try {
-      await apiRequest(`/api/filters/saved/${encodeURIComponent(savedFilter.id)}?view=category`, {
+      const viewKey = categorySavedFilterViewKey(selectedCategory);
+      await apiRequest(`/api/filters/saved/${encodeURIComponent(savedFilter.id)}?view=${encodeURIComponent(viewKey)}`, {
         method: "DELETE",
         token: authToken,
         refreshToken,
