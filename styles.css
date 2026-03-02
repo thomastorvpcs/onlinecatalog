@@ -360,7 +360,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .topbar {
-  background: #fff;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -374,11 +374,20 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 10px;
 }
 
+.brand-wrap strong {
+  font-family: "Montserrat", "Avenir Next", "Segoe UI", Tahoma, sans-serif;
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #0f4fbf;
+}
+
 .dot {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
-  background: #d1d5db;
+  background: radial-gradient(circle at 30% 30%, #66b2ff 0%, #2a78d8 46%, #0f4fbf 100%);
+  box-shadow: 0 0 0 2px rgba(15, 79, 191, 0.12);
 }
 
 .top-actions {

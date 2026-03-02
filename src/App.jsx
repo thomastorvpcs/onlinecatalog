@@ -2229,7 +2229,7 @@ export default function App() {
 
       <div className="content-shell">
         <header className="topbar">
-          <div className="brand-wrap"><span className="dot" /><strong>Gadget Crazy</strong></div>
+          <div className="brand-wrap"><span className="dot" /><strong>PCS Wireless</strong></div>
           <div className="top-actions"><span className="muted">{user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
         </header>
         <main className="view">
