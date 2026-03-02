@@ -306,6 +306,25 @@ function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts)
   };
 }
 
+function buildCopilotSuggestedFilterName(payloadRaw) {
+  const payload = sanitizeFilterPayload(payloadRaw);
+  const category = String(payload.selectedCategory || "").trim();
+  const filters = payload.filters && typeof payload.filters === "object" ? payload.filters : {};
+  const search = String(payload.search || "").trim();
+  const parts = [];
+  if (category) parts.push(category);
+  const orderedKeys = ["manufacturer", "modelFamily", "grade", "region", "storage"];
+  for (const key of orderedKeys) {
+    const values = Array.isArray(filters[key]) ? filters[key] : [];
+    const cleaned = values.map((v) => String(v || "").trim()).filter(Boolean);
+    if (!cleaned.length) continue;
+    parts.push(cleaned.slice(0, 2).join(" + "));
+  }
+  if (search) parts.push(search);
+  if (!parts.length) return "AI Suggested Filter";
+  return parts.join(" | ").slice(0, 80);
+}
+
 function validateRequestWithHeuristics(body, allProducts) {
   const lines = Array.isArray(body?.lines) ? body.lines : [];
   const selectedLocation = String(body?.selectedLocation || "").trim();
@@ -599,7 +618,7 @@ async function demoApiRequest(path, options = {}) {
     const all = productsSeed.map((p) => normalizeDevice(p));
     const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
-    const suggestedName = String(body.message || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const suggestedName = buildCopilotSuggestedFilterName(parsed);
     return hasFilters
       ? {
         reply: "I parsed your request and prepared filters you can apply.",

@@ -1199,6 +1199,25 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   };
 }
 
+function buildCopilotSuggestedFilterName(parsed) {
+  const category = String(parsed?.selectedCategory || "").trim();
+  const filters = parsed?.filters && typeof parsed.filters === "object" ? parsed.filters : {};
+  const search = String(parsed?.search || "").trim();
+  const parts = [];
+  if (category) parts.push(category);
+  const orderedKeys = ["manufacturer", "modelFamily", "grade", "region", "storage"];
+  for (const key of orderedKeys) {
+    const value = filters[key];
+    const asArray = Array.isArray(value) ? value : (value ? [value] : []);
+    const cleaned = asArray.map((entry) => String(entry || "").trim()).filter(Boolean);
+    if (!cleaned.length) continue;
+    parts.push(cleaned.slice(0, 2).join(" + "));
+  }
+  if (search) parts.push(search);
+  if (!parts.length) return "AI Suggested Filter";
+  return parts.join(" | ").slice(0, 80);
+}
+
 async function fetchNetsuiteInventoryForReview(lines, selectedLocation) {
   if (!NETSUITE_AI_REVIEW_RESTLET_URL) {
     return { map: new Map(), source: "local", warning: "NetSuite restlet is not configured. Used local inventory snapshot." };
@@ -1373,10 +1392,7 @@ function runAiCopilot(user, body) {
   const lowered = message.toLowerCase();
   const parsed = parseAiFilters(message, selectedCategory);
   const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
-  const suggestedName = message
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80);
+  const suggestedName = buildCopilotSuggestedFilterName(parsed);
 
   if (hasFilters && /(find|show|search|filter|need|looking|want)/.test(lowered)) {
     const parts = [];
