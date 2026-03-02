@@ -589,6 +589,60 @@ async function demoApiRequest(path, options = {}) {
     return validateNetsuitePayloadHeuristics(body);
   }
 
+  if (method === "POST" && pathname === "/api/ai/copilot") {
+    requireAuth();
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
+    const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
+    return hasFilters
+      ? {
+        reply: "I parsed your request and prepared filters you can apply.",
+        action: { type: "apply_filters", payload: parsed }
+      }
+      : {
+        reply: "Try asking for a concrete product query like: Apple CPO in Miami 128GB.",
+        action: null
+      };
+  }
+
+  if (method === "GET" && pathname === "/api/ai/admin/anomalies") {
+    requireAdmin();
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    const lowStock = all.filter((p) => Number(p.available || 0) > 0 && Number(p.available || 0) <= 5).map((p) => ({
+      type: "low_stock",
+      severity: "medium",
+      message: `${p.model} is low stock (${Number(p.available || 0)} units total).`,
+      timestamp: null
+    }));
+    return { anomalies: lowStock.length ? lowStock : [{ type: "none", severity: "info", message: "No significant anomalies detected in demo snapshot.", timestamp: null }] };
+  }
+
+  if (method === "GET" && pathname === "/api/ai/admin/sales-insights") {
+    const auth = requireAdmin();
+    const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") || 30)));
+    const fromTs = Date.now() - (days * 24 * 60 * 60 * 1000);
+    const requests = getDemoRequests(auth.company).filter((r) => new Date(r.createdAt).getTime() >= fromTs);
+    const byStatusMap = new Map();
+    const modelQtyMap = new Map();
+    let totalRevenue = 0;
+    for (const r of requests) {
+      byStatusMap.set(r.status, Number(byStatusMap.get(r.status) || 0) + 1);
+      totalRevenue += Number(r.total || 0);
+      for (const line of Array.isArray(r.lines) ? r.lines : []) {
+        modelQtyMap.set(line.model, Number(modelQtyMap.get(line.model) || 0) + Number(line.quantity || 0));
+      }
+    }
+    const byStatus = [...byStatusMap.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count);
+    const topModels = [...modelQtyMap.entries()].map(([model, quantity]) => ({ model, quantity })).sort((a, b) => b.quantity - a.quantity).slice(0, 8);
+    return {
+      rangeDays: days,
+      requestCount: requests.length,
+      totalRevenue: Number(totalRevenue.toFixed(2)),
+      byStatus,
+      topModels
+    };
+  }
+
   if (method === "GET" && pathname === "/api/filters/saved") {
     const auth = requireAuth();
     const viewKey = String(url.searchParams.get("view") || "category").trim().toLowerCase() || "category";
@@ -1039,6 +1093,15 @@ export default function App() {
   const [aiRequestReviewLoading, setAiRequestReviewLoading] = useState(false);
   const [aiRequestReview, setAiRequestReview] = useState(null);
   const [aiRequestReviewError, setAiRequestReviewError] = useState("");
+  const [aiCopilotMessages, setAiCopilotMessages] = useState([]);
+  const [aiCopilotInput, setAiCopilotInput] = useState("");
+  const [aiCopilotLoading, setAiCopilotLoading] = useState(false);
+  const [aiCopilotError, setAiCopilotError] = useState("");
+  const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
+  const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
+  const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
+  const [adminAiInsights, setAdminAiInsights] = useState(null);
+  const [adminAiError, setAdminAiError] = useState("");
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
@@ -1111,6 +1174,12 @@ export default function App() {
     setAiFilterError("");
     setAiRequestReview(null);
     setAiRequestReviewError("");
+    setAiCopilotMessages([]);
+    setAiCopilotInput("");
+    setAiCopilotError("");
+    setAdminAiAnomalies([]);
+    setAdminAiInsights(null);
+    setAdminAiError("");
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -1789,6 +1858,91 @@ export default function App() {
       setAiRequestReviewError(error.message || "AI request review failed.");
     } finally {
       setAiRequestReviewLoading(false);
+    }
+  };
+
+  const applyCopilotAction = (action) => {
+    if (!action || action.type !== "apply_filters") return;
+    const payload = sanitizeFilterPayload(action.payload);
+    if (payload.selectedCategory) {
+      setSelectedCategory(payload.selectedCategory);
+    }
+    setSearch(payload.search || "");
+    setFilters(payload.filters || {});
+    setProductsView("category");
+    setCategoryPage(1);
+  };
+
+  const runAiCopilot = async () => {
+    if (!authToken || !user || aiCopilotLoading) return;
+    const message = aiCopilotInput.trim();
+    if (!message) {
+      setAiCopilotError("Enter a message first.");
+      return;
+    }
+    setAiCopilotLoading(true);
+    setAiCopilotError("");
+    setAiCopilotMessages((prev) => [...prev, { role: "user", text: message }]);
+    setAiCopilotInput("");
+    try {
+      const payload = await apiRequest("/api/ai/copilot", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          message,
+          selectedCategory
+        }
+      });
+      setAiCopilotMessages((prev) => [...prev, {
+        role: "assistant",
+        text: payload.reply || "I could not generate a response.",
+        action: payload.action || null
+      }]);
+    } catch (error) {
+      setAiCopilotError(error.message || "AI copilot failed.");
+    } finally {
+      setAiCopilotLoading(false);
+    }
+  };
+
+  const loadAdminAiAnomalies = async () => {
+    if (!authToken || !user || user.role !== "admin" || adminAiAnomaliesLoading) return;
+    setAdminAiAnomaliesLoading(true);
+    setAdminAiError("");
+    try {
+      const payload = await apiRequest("/api/ai/admin/anomalies", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setAdminAiAnomalies(Array.isArray(payload?.anomalies) ? payload.anomalies : []);
+    } catch (error) {
+      setAdminAiError(error.message || "Failed to load anomalies.");
+    } finally {
+      setAdminAiAnomaliesLoading(false);
+    }
+  };
+
+  const loadAdminAiInsights = async () => {
+    if (!authToken || !user || user.role !== "admin" || adminAiInsightsLoading) return;
+    setAdminAiInsightsLoading(true);
+    setAdminAiError("");
+    try {
+      const payload = await apiRequest("/api/ai/admin/sales-insights?days=30", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setAdminAiInsights(payload || null);
+    } catch (error) {
+      setAdminAiError(error.message || "Failed to load sales insights.");
+    } finally {
+      setAdminAiInsightsLoading(false);
     }
   };
 
@@ -2510,6 +2664,44 @@ export default function App() {
                 <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
                 <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
               </div>
+              <section className="panel ai-copilot-panel">
+                <div className="category-header">
+                  <h2 style={{ margin: 0, fontSize: "1.45rem", fontWeight: 600 }}>AI Copilot</h2>
+                  <p className="small" style={{ margin: 0 }}>Ask for product discovery and quick filter setup</p>
+                </div>
+                <div className="ai-copilot-feed">
+                  {aiCopilotMessages.length ? aiCopilotMessages.slice(-6).map((message, idx) => (
+                    <div key={`copilot-msg-${idx}`} className={`ai-copilot-msg ${message.role}`}>
+                      <div>{message.text}</div>
+                      {message.role === "assistant" && message.action?.type === "apply_filters" ? (
+                        <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                          Apply Suggested Filters
+                        </button>
+                      ) : null}
+                    </div>
+                  )) : (
+                    <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
+                  )}
+                </div>
+                <div className="saved-filters-form" style={{ marginTop: 8 }}>
+                  <input
+                    className="saved-filter-input"
+                    value={aiCopilotInput}
+                    onChange={(e) => setAiCopilotInput(e.target.value)}
+                    placeholder="Ask AI Copilot..."
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        runAiCopilot();
+                      }
+                    }}
+                  />
+                  <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
+                    {aiCopilotLoading ? "Thinking..." : "Send"}
+                  </button>
+                </div>
+                {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
+              </section>
               {shortcutEntries.length ? (
                 <section className="panel shortcuts-panel">
                   <div className="category-header">
@@ -2872,6 +3064,41 @@ export default function App() {
             <section className="panel">
               <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>User Management</h2>
               {usersError ? <p className="small" style={{ color: "#b91c1c" }}>{usersError}</p> : null}
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>AI Operations Insights</h3>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={{ width: "auto" }} onClick={loadAdminAiAnomalies} disabled={adminAiAnomaliesLoading}>
+                    {adminAiAnomaliesLoading ? "Scanning..." : "Run Anomaly Scan"}
+                  </button>
+                  <button type="button" style={{ width: "auto" }} onClick={loadAdminAiInsights} disabled={adminAiInsightsLoading}>
+                    {adminAiInsightsLoading ? "Generating..." : "Generate 30d Sales Insights"}
+                  </button>
+                </div>
+                {adminAiError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{adminAiError}</p> : null}
+                {adminAiAnomalies.length ? (
+                  <div className="small" style={{ marginTop: 8 }}>
+                    {adminAiAnomalies.slice(0, 8).map((item, idx) => (
+                      <div key={`ai-anomaly-${idx}`}>- [{String(item.severity || "info").toUpperCase()}] {item.message}</div>
+                    ))}
+                  </div>
+                ) : null}
+                {adminAiInsights ? (
+                  <div className="small" style={{ marginTop: 8 }}>
+                    <div><strong>Requests ({adminAiInsights.rangeDays}d):</strong> {Number(adminAiInsights.requestCount || 0)}</div>
+                    <div><strong>Total Revenue:</strong> {formatUsd(adminAiInsights.totalRevenue || 0)}</div>
+                    {Array.isArray(adminAiInsights.byStatus) && adminAiInsights.byStatus.length ? (
+                      <div style={{ marginTop: 4 }}>
+                        <strong>Status Mix:</strong> {adminAiInsights.byStatus.map((s) => `${s.status}: ${s.count}`).join(", ")}
+                      </div>
+                    ) : null}
+                    {Array.isArray(adminAiInsights.topModels) && adminAiInsights.topModels.length ? (
+                      <div style={{ marginTop: 4 }}>
+                        <strong>Top Models:</strong> {adminAiInsights.topModels.map((m) => `${m.model} (${m.quantity})`).join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <div className="admin-user-form" style={{ marginBottom: 10 }}>
                 <h3 style={{ margin: "0 0 8px" }}>Inventory Sync</h3>
                 <p className="small" style={{ marginTop: 0 }}>Fetch and map inventory from Boomi/NetSuite into the local database.</p>

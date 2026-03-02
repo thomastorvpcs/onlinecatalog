@@ -801,6 +801,39 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 10px;
 }
 
+.ai-copilot-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-copilot-feed {
+  border: 1px solid #d7dbe2;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.ai-copilot-msg {
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+
+.ai-copilot-msg.user {
+  background: #e8f0ff;
+  color: #0f172a;
+}
+
+.ai-copilot-msg.assistant {
+  background: #eef7f2;
+  color: #1f2937;
+}
+
 .shortcuts-groups {
   display: grid;
   gap: 10px;
