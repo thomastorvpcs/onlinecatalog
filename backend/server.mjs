@@ -988,8 +988,23 @@ function getDevices(url) {
   addInFilter("m.name", manufacturers, "manufacturer");
   addInFilter("d.model_family", modelFamilies, "modelFamily");
   addInFilter("d.grade", grades, "grade");
-  addInFilter("dl.name", regions, "region");
   addInFilter("d.storage_capacity", storages, "storage");
+  if (regions.length) {
+    const keys = regions.map((_, idx) => `$regionAvail${idx}`);
+    regions.forEach((value, idx) => {
+      params[`$regionAvail${idx}`] = value;
+    });
+    filters.push(`
+      EXISTS (
+        SELECT 1
+        FROM device_inventory di_r
+        JOIN locations l_r ON l_r.id = di_r.location_id
+        WHERE di_r.device_id = d.id
+          AND di_r.quantity > 0
+          AND l_r.name IN (${keys.join(", ")})
+      )
+    `);
+  }
 
   const whereSql = filters.length ? `WHERE d.is_active = 1 AND ${filters.join(" AND ")}` : "WHERE d.is_active = 1";
   const offset = (page - 1) * (pageSize || 1);

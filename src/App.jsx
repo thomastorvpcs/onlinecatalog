@@ -64,6 +64,12 @@ function formatUsd(value) {
 function normalizeDevice(p) {
   const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
   const fallbackImage = p.image || (images.length ? images[0] : "");
+  const availableRegions = p.locations && typeof p.locations === "object"
+    ? Object.entries(p.locations)
+      .filter(([, qty]) => Number(qty || 0) > 0)
+      .map(([name]) => name)
+      .sort((a, b) => String(a).localeCompare(String(b)))
+    : [];
   return {
     ...p,
     modelFamily: p.modelFamily || modelFamilyOf(p.model),
@@ -75,7 +81,8 @@ function normalizeDevice(p) {
     color: p.color || "N/A",
     kitType: p.kitType || "Full Kit",
     productNotes: p.productNotes || "",
-    weeklySpecial: p.weeklySpecial === true
+    weeklySpecial: p.weeklySpecial === true,
+    availableRegions
   };
 }
 
@@ -404,12 +411,15 @@ async function demoApiRequest(path, options = {}) {
     }));
     const filtered = all.filter((p) => {
       const text = `${p.manufacturer} ${p.model} ${p.modelFamily} ${p.category}`.toLowerCase();
+      const availableRegions = p.locations && typeof p.locations === "object"
+        ? Object.entries(p.locations).filter(([, qty]) => Number(qty || 0) > 0).map(([name]) => name)
+        : [];
       if (search && !text.includes(search)) return false;
       if (categories.length && !categories.includes(p.category)) return false;
       if (manufacturers.length && !manufacturers.includes(p.manufacturer)) return false;
       if (modelFamilies.length && !modelFamilies.includes(p.modelFamily)) return false;
       if (grades.length && !grades.includes(p.grade)) return false;
-      if (regions.length && !regions.includes(p.region)) return false;
+      if (regions.length && !regions.some((regionName) => availableRegions.includes(regionName))) return false;
       if (storages.length && !storages.includes(p.storage)) return false;
       return true;
     });
@@ -857,6 +867,7 @@ export default function App() {
   const [savingFilter, setSavingFilter] = useState(false);
   const [savedFilterNotice, setSavedFilterNotice] = useState("");
   const [editingSavedFilterId, setEditingSavedFilterId] = useState(null);
+  const [isEditingSavedFilter, setIsEditingSavedFilter] = useState(false);
   const [weeklyExpandedFilters, setWeeklyExpandedFilters] = useState({});
   const [weeklyBannerEnabled, setWeeklyBannerEnabled] = useState(false);
   const [weeklyBannerSaving, setWeeklyBannerSaving] = useState(false);
@@ -931,6 +942,7 @@ export default function App() {
     setNewSavedFilterName("");
     setSavedFilterNotice("");
     setEditingSavedFilterId(null);
+    setIsEditingSavedFilter(false);
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -1251,12 +1263,16 @@ export default function App() {
   }, [savedFilterNotice]);
 
   useEffect(() => {
-    if (!editingSavedFilterId) return;
+    if (!editingSavedFilterId) {
+      if (isEditingSavedFilter) setIsEditingSavedFilter(false);
+      return;
+    }
     const exists = savedFilters.some((f) => String(f.id) === String(editingSavedFilterId));
     if (!exists) {
       setEditingSavedFilterId(null);
+      setIsEditingSavedFilter(false);
     }
-  }, [savedFilters, editingSavedFilterId]);
+  }, [savedFilters, editingSavedFilterId, isEditingSavedFilter]);
 
   useEffect(() => {
     if (skipInitialCategoryResetRef.current) {
@@ -1558,11 +1574,11 @@ export default function App() {
     setSavedFiltersError("");
     try {
       const viewKey = categorySavedFilterViewKey(selectedCategory);
-      if (editingSavedFilterId && !hasEditedFilterChanges) {
+      if (isEditingSavedFilter && editingSavedFilterId && !hasEditedFilterChanges) {
         setSavedFilterNotice("No changes to update.");
         return;
       }
-      const payload = editingSavedFilterId
+      const payload = (isEditingSavedFilter && editingSavedFilterId)
         ? await apiRequest(`/api/filters/saved/${encodeURIComponent(editingSavedFilterId)}`, {
           method: "PATCH",
           token: authToken,
@@ -1587,12 +1603,13 @@ export default function App() {
             payload: currentFilterDraftPayload
           }
         });
-      setSavedFilterNotice(editingSavedFilterId ? `Updated "${name}".` : `Saved "${name}".`);
-      if (editingSavedFilterId) {
+      setSavedFilterNotice((isEditingSavedFilter && editingSavedFilterId) ? `Updated "${name}".` : `Saved "${name}".`);
+      if (isEditingSavedFilter && editingSavedFilterId) {
         setEditingSavedFilterId(payload?.id || editingSavedFilterId || null);
         setNewSavedFilterName(payload?.name || name);
       } else {
         setEditingSavedFilterId(null);
+        setIsEditingSavedFilter(false);
         setNewSavedFilterName("");
       }
       await Promise.all([refreshSavedFilters(), refreshShortcutFilters()]);
@@ -1610,6 +1627,10 @@ export default function App() {
     setSearch(payload.search);
     setFilters(payload.filters);
     setCategoryPage(1);
+    setIsEditingSavedFilter(false);
+    setEditingSavedFilterId(null);
+    setNewSavedFilterName("");
+    setSavedFiltersError("");
     setSavedFilterNotice(`Applied "${savedFilter.name}".`);
   };
 
@@ -1627,6 +1648,7 @@ export default function App() {
       });
       if (String(editingSavedFilterId) === String(savedFilter.id)) {
         setEditingSavedFilterId(null);
+        setIsEditingSavedFilter(false);
         setNewSavedFilterName("");
       }
       setSavedFilterNotice(`Deleted "${savedFilter.name}".`);
@@ -1665,6 +1687,9 @@ export default function App() {
     setSearch("");
     setFilters({});
     setExpandedFilters({});
+    setIsEditingSavedFilter(false);
+    setEditingSavedFilterId(null);
+    setNewSavedFilterName("");
     setCategoryPage(1);
   };
 
@@ -1897,14 +1922,23 @@ export default function App() {
     .slice(0, 120);
   const source = products.filter((p) => p.category === selectedCategory);
   const fields = [{ key: "manufacturer", title: "Manufacturers" }, { key: "modelFamily", title: "Models" }, { key: "grade", title: "Grade" }, { key: "region", title: "Region / Location" }, { key: "storage", title: "Storage Capacity" }];
-  const valueForField = (device, fieldKey) => (fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey]);
+  const valuesForField = (device, fieldKey) => {
+    if (fieldKey === "region") {
+      if (Array.isArray(device.availableRegions) && device.availableRegions.length) {
+        return device.availableRegions;
+      }
+      return device.region ? [device.region] : [];
+    }
+    const value = fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey];
+    return value ? [value] : [];
+  };
   const matchesOtherFilters = (device, excludedField, activeFilters) => {
     for (const field of fields) {
       if (field.key === excludedField) continue;
       const selected = activeFilters[field.key] || [];
       if (!selected.length) continue;
-      const value = valueForField(device, field.key);
-      if (!selected.includes(value)) return false;
+      const values = valuesForField(device, field.key);
+      if (!selected.some((entry) => values.includes(entry))) return false;
     }
     return true;
   };
@@ -2064,11 +2098,11 @@ export default function App() {
     const optionsByField = {};
     for (const field of fields) {
       const selected = activeFilters[field.key] || [];
-      const allValues = [...new Set(devices.map((p) => valueForField(p, field.key)))].sort((a, b) => String(a).localeCompare(String(b)));
+      const allValues = [...new Set(devices.flatMap((p) => valuesForField(p, field.key)))].sort((a, b) => String(a).localeCompare(String(b)));
       const enabledValues = new Set(
         devices
           .filter((p) => matchesOtherFilters(p, field.key, activeFilters))
-          .map((p) => valueForField(p, field.key))
+          .flatMap((p) => valuesForField(p, field.key))
       );
       optionsByField[field.key] = allValues
         .map((value) => {
@@ -2092,8 +2126,8 @@ export default function App() {
     for (const field of fields) {
       const selected = weeklyFilters[field.key] || [];
       if (!selected.length) continue;
-      const value = valueForField(p, field.key);
-      if (!selected.includes(value)) return false;
+      const values = valuesForField(p, field.key);
+      if (!selected.some((entry) => values.includes(entry))) return false;
     }
     return true;
   });
@@ -2172,6 +2206,7 @@ export default function App() {
     setSearch(payload.search);
     setFilters(payload.filters);
     setCategoryPage(1);
+    setIsEditingSavedFilter(false);
     setEditingSavedFilterId(null);
     setNewSavedFilterName("");
     setSavedFiltersError("");
@@ -2296,14 +2331,15 @@ export default function App() {
                         }}
                       />
                       <button type="button" className="saved-filter-save-btn" disabled={savingFilter} onClick={saveCurrentFilters}>
-                        {savingFilter ? (editingSavedFilterId ? "Updating..." : "Saving...") : (editingSavedFilterId ? "Update" : "Save")}
+                        {savingFilter ? (isEditingSavedFilter && editingSavedFilterId ? "Updating..." : "Saving...") : (isEditingSavedFilter && editingSavedFilterId ? "Update" : "Save")}
                       </button>
-                      {editingSavedFilterId ? (
+                      {isEditingSavedFilter && editingSavedFilterId ? (
                         <button
                           type="button"
                           className="saved-filter-cancel-btn"
                           onClick={() => {
                             setEditingSavedFilterId(null);
+                            setIsEditingSavedFilter(false);
                             setNewSavedFilterName("");
                             setSavedFiltersError("");
                           }}
@@ -2312,7 +2348,7 @@ export default function App() {
                         </button>
                       ) : null}
                     </div>
-                    {editingSavedFilterId ? <div className="small">Editing selected filter. Change filters/name and click Update.</div> : null}
+                    {isEditingSavedFilter && editingSavedFilterId ? <div className="small">Editing selected filter. Change filters/name and click Update.</div> : null}
                     {savedFilterNotice ? <div className="saved-filter-notice">{savedFilterNotice}</div> : null}
                     {savedFiltersError ? <div className="saved-filter-error">{savedFiltersError}</div> : null}
                     <div className="saved-filter-list">
@@ -2323,7 +2359,7 @@ export default function App() {
                           <div key={saved.id} className="saved-filter-item">
                             <button
                               type="button"
-                              className={`saved-filter-apply-btn${String(editingSavedFilterId) === String(saved.id) ? " active" : ""}`}
+                              className={`saved-filter-apply-btn${isEditingSavedFilter && String(editingSavedFilterId) === String(saved.id) ? " active" : ""}`}
                               title={saved.name}
                               onClick={() => applySavedFilter(saved)}
                             >
@@ -2336,6 +2372,7 @@ export default function App() {
                                 aria-label={`Edit ${saved.name}`}
                                 title="Edit filter"
                                 onClick={() => {
+                                  setIsEditingSavedFilter(true);
                                   setEditingSavedFilterId(saved.id);
                                   setNewSavedFilterName(saved.name);
                                   setSavedFilterNotice(`Editing "${saved.name}".`);
