@@ -291,6 +291,7 @@ const CORS_ALLOWED_ORIGINS = (() => {
 })();
 const sessions = new Map();
 const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
+const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
 
 const db = new DatabaseSync(dbPath);
 
@@ -314,6 +315,7 @@ function initDb() {
   }
   ensureDeployRealSeed();
   ensureDefaultUsers();
+  ensureHistoricalCompletedEstimates();
 }
 
 function ensureDeployRealSeed() {
@@ -439,6 +441,133 @@ function ensureDefaultUsers() {
 
   ensureUser(ADMIN_EMAIL, "PCSWW", "admin", ADMIN_PASSWORD, true);
   ensureUser(DEFAULT_BUYER_EMAIL, DEFAULT_BUYER_COMPANY, "buyer", DEFAULT_BUYER_PASSWORD, true);
+}
+
+function ensureHistoricalCompletedEstimates() {
+  const seededFlag = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(HISTORICAL_ESTIMATE_SEED_KEY);
+  if (String(seededFlag?.value || "") === "1") return;
+
+  const existingCount = Number(
+    db.prepare("SELECT COUNT(*) AS count FROM quote_requests WHERE request_number LIKE 'HIST-%'").get().count || 0
+  );
+  if (existingCount >= 20) {
+    db.prepare(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, '1', CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = CURRENT_TIMESTAMP
+    `).run(HISTORICAL_ESTIMATE_SEED_KEY);
+    return;
+  }
+
+  const seedUser = db.prepare("SELECT id, email, company FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1").get();
+  if (!seedUser?.id) return;
+
+  const deviceRows = db.prepare(`
+    SELECT
+      d.id,
+      d.model_name AS model,
+      d.grade,
+      d.base_price AS price,
+      c.name AS category
+    FROM devices d
+    JOIN categories c ON c.id = d.category_id
+    WHERE d.is_active = 1
+    ORDER BY c.name ASC, d.model_name ASC
+  `).all();
+  if (!deviceRows.length) return;
+
+  const byCategory = new Map();
+  for (const row of deviceRows) {
+    const key = String(row.category || "Other");
+    const list = byCategory.get(key) || [];
+    list.push(row);
+    byCategory.set(key, list);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) => a.localeCompare(b));
+  if (!categories.length) return;
+
+  const requestInsert = db.prepare(`
+    INSERT INTO quote_requests (
+      id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code,
+      netsuite_estimate_id, netsuite_estimate_number, netsuite_status, netsuite_last_sync_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'Completed', ?, 'USD', ?, ?, 'Completed', ?, ?, ?)
+  `);
+  const lineInsert = db.prepare(`
+    INSERT INTO quote_request_lines (
+      request_id, device_id, model, grade, quantity, offer_price, note
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const eventInsert = db.prepare(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json, created_at)
+    VALUES (?, 'historical_seeded', ?, ?)
+  `);
+  const requestExistsByIdOrNumber = db.prepare("SELECT id FROM quote_requests WHERE id = ? OR request_number = ? LIMIT 1");
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (let i = 0; i < 20; i += 1) {
+      const requestId = `hist-est-${String(i + 1).padStart(3, "0")}`;
+      const requestNumber = `HIST-${String(i + 1).padStart(4, "0")}`;
+      const requestExists = requestExistsByIdOrNumber.get(requestId, requestNumber);
+      if (requestExists?.id) continue;
+      const estimateId = `hist-dummy-est-${String(i + 1).padStart(4, "0")}`;
+      const estimateNumber = `HIST-EST-${String(i + 1).padStart(4, "0")}`;
+      const createdAt = new Date(Date.now() - ((140 - (i * 5)) * 24 * 60 * 60 * 1000)).toISOString();
+      const lineCount = 3 + (i % 2);
+      const lines = [];
+      let total = 0;
+
+      for (let j = 0; j < lineCount; j += 1) {
+        const categoryName = categories[(i + j) % categories.length];
+        const list = byCategory.get(categoryName) || deviceRows;
+        const device = list[(i * 3 + j * 5) % list.length];
+        const quantity = 50 + ((i * 11 + j * 17) % 96);
+        const multiplier = 0.68 + (((i + j) % 7) * 0.04);
+        const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+        total += quantity * offerPrice;
+        lines.push({
+          deviceId: device.id,
+          model: device.model,
+          grade: device.grade || "A",
+          quantity,
+          offerPrice,
+          note: `Historical completed estimate seed (${categoryName}).`
+        });
+      }
+      total = Number(total.toFixed(2));
+
+      requestInsert.run(
+        requestId,
+        requestNumber,
+        seedUser.company || "PCSWW",
+        seedUser.id,
+        seedUser.email,
+        total,
+        estimateId,
+        estimateNumber,
+        createdAt,
+        createdAt,
+        createdAt
+      );
+
+      for (const line of lines) {
+        lineInsert.run(requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note);
+      }
+
+      eventInsert.run(requestId, JSON.stringify({ seeded: true, lineCount: lines.length, total }), createdAt);
+    }
+
+    db.prepare(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, '1', CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = CURRENT_TIMESTAMP
+    `).run(HISTORICAL_ESTIMATE_SEED_KEY);
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function splitCsv(value) {
@@ -1535,6 +1664,54 @@ function buildCopilotCatalogContext() {
   };
 }
 
+function buildCopilotHistoricalSalesContext() {
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) AS completedCount,
+      COALESCE(SUM(total_amount), 0) AS completedRevenue
+    FROM quote_requests
+    WHERE status = 'Completed'
+  `).get();
+  const totalUnits = db.prepare(`
+    SELECT COALESCE(SUM(qrl.quantity), 0) AS units
+    FROM quote_request_lines qrl
+    JOIN quote_requests qr ON qr.id = qrl.request_id
+    WHERE qr.status = 'Completed'
+  `).get();
+  const topCategories = db.prepare(`
+    SELECT
+      COALESCE(c.name, 'Unknown') AS category,
+      COALESCE(SUM(qrl.quantity), 0) AS qty
+    FROM quote_request_lines qrl
+    JOIN quote_requests qr ON qr.id = qrl.request_id
+    LEFT JOIN devices d ON d.id = qrl.device_id
+    LEFT JOIN categories c ON c.id = d.category_id
+    WHERE qr.status = 'Completed'
+    GROUP BY COALESCE(c.name, 'Unknown')
+    ORDER BY qty DESC, category ASC
+    LIMIT 5
+  `).all().map((r) => ({ category: r.category, quantity: Number(r.qty || 0) }));
+  const topModels = db.prepare(`
+    SELECT
+      qrl.model AS model,
+      COALESCE(SUM(qrl.quantity), 0) AS qty
+    FROM quote_request_lines qrl
+    JOIN quote_requests qr ON qr.id = qrl.request_id
+    WHERE qr.status = 'Completed'
+    GROUP BY qrl.model
+    ORDER BY qty DESC, qrl.model ASC
+    LIMIT 8
+  `).all().map((r) => ({ model: r.model, quantity: Number(r.qty || 0) }));
+
+  return {
+    completedEstimateCount: Number(totals?.completedCount || 0),
+    completedRevenue: Number(totals?.completedRevenue || 0),
+    completedUnits: Number(totalUnits?.units || 0),
+    topCategories,
+    topModels
+  };
+}
+
 function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
   const asArray = (value) => (Array.isArray(value) ? value.map((x) => String(x || "").trim()).filter(Boolean) : []);
   const normalizeFromAllowed = (value, allowedValues) => {
@@ -1597,7 +1774,7 @@ function buildCopilotNoMatchReply(payload) {
   return "I cannot find matching devices right now. Try broadening your filters or search text.";
 }
 
-async function requestOpenAiCopilotPlan(message, selectedCategory, catalog) {
+async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history) {
   const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
   const schema = {
     type: "object",
@@ -1632,7 +1809,9 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog) {
     "Allowed grades: " + catalog.grades.join(", "),
     "Allowed regions: " + catalog.regions.join(", "),
     "Allowed storages: " + catalog.storages.join(", "),
+    "Historical completed-sales context (for trend/suggestion questions): " + JSON.stringify(history),
     "Only return valid values from the allowed lists; if unknown, omit that filter.",
+    "When user asks about historical/completed sales, trends, or suggestions, base your answer on the provided historical context.",
     "Set intent to apply_filters when the user asks to find/search/filter products.",
     "Set intent to choose_filters when ambiguous across multiple categories.",
     "Set intent to none when no filter action should be suggested.",
@@ -1698,7 +1877,8 @@ async function runAiCopilot(user, body) {
 
   try {
     const catalog = buildCopilotCatalogContext();
-    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog);
+    const history = buildCopilotHistoricalSalesContext();
+    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
     const suggestedName = buildCopilotSuggestedFilterName(normalizedPayload);
