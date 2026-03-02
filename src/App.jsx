@@ -1102,6 +1102,7 @@ export default function App() {
   const [aiCopilotInput, setAiCopilotInput] = useState("");
   const [aiCopilotLoading, setAiCopilotLoading] = useState(false);
   const [aiCopilotError, setAiCopilotError] = useState("");
+  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -1182,6 +1183,7 @@ export default function App() {
     setAiCopilotMessages([]);
     setAiCopilotInput("");
     setAiCopilotError("");
+    setAiCopilotOpen(false);
     setAdminAiAnomalies([]);
     setAdminAiInsights(null);
     setAdminAiError("");
@@ -2692,44 +2694,6 @@ export default function App() {
                 <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
                 <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
               </div>
-              <section className="panel ai-copilot-panel">
-                <div className="category-header">
-                  <h2 style={{ margin: 0, fontSize: "1.45rem", fontWeight: 600 }}>AI Copilot</h2>
-                  <p className="small" style={{ margin: 0 }}>Ask for product discovery and quick filter setup</p>
-                </div>
-                <div className="ai-copilot-feed">
-                  {aiCopilotMessages.length ? aiCopilotMessages.slice(-6).map((message, idx) => (
-                    <div key={`copilot-msg-${idx}`} className={`ai-copilot-msg ${message.role}`}>
-                      <div>{message.text}</div>
-                      {message.role === "assistant" && message.action?.type === "apply_filters" ? (
-                        <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
-                          Apply Suggested Filters
-                        </button>
-                      ) : null}
-                    </div>
-                  )) : (
-                    <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
-                  )}
-                </div>
-                <div className="saved-filters-form" style={{ marginTop: 8 }}>
-                  <input
-                    className="saved-filter-input"
-                    value={aiCopilotInput}
-                    onChange={(e) => setAiCopilotInput(e.target.value)}
-                    placeholder="Ask AI Copilot..."
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        runAiCopilot();
-                      }
-                    }}
-                  />
-                  <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
-                    {aiCopilotLoading ? "Thinking..." : "Send"}
-                  </button>
-                </div>
-                {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
-              </section>
               {shortcutEntries.length ? (
                 <section className="panel shortcuts-panel">
                   <div className="category-header">
@@ -3239,6 +3203,56 @@ export default function App() {
           Requested items ({cart.length})
         </button>
       ) : null}
+
+      <div className={`ai-chatbot ${aiCopilotOpen ? "open" : "closed"}`}>
+        {aiCopilotOpen ? (
+          <div className="ai-chatbot-panel">
+            <div className="ai-chatbot-head">
+              <div>
+                <strong>AI Copilot</strong>
+                <div className="small">Available across the app</div>
+              </div>
+              <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setAiCopilotOpen(false)}>Minimize</button>
+            </div>
+            <div className="ai-copilot-feed">
+              {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (
+                <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-msg ${message.role}`}>
+                  <div>{message.text}</div>
+                  {message.role === "assistant" && message.action?.type === "apply_filters" ? (
+                    <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                      Apply Suggested Filters
+                    </button>
+                  ) : null}
+                </div>
+              )) : (
+                <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
+              )}
+            </div>
+            <div className="saved-filters-form" style={{ marginTop: 8 }}>
+              <input
+                className="saved-filter-input"
+                value={aiCopilotInput}
+                onChange={(e) => setAiCopilotInput(e.target.value)}
+                placeholder="Ask AI Copilot..."
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    runAiCopilot();
+                  }
+                }}
+              />
+              <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
+                {aiCopilotLoading ? "Thinking..." : "Send"}
+              </button>
+            </div>
+            {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
+          </div>
+        ) : (
+          <button type="button" className="ai-chatbot-toggle" onClick={() => setAiCopilotOpen(true)}>
+            AI Copilot
+          </button>
+        )}
+      </div>
 
       {cartNotice ? (
         <div

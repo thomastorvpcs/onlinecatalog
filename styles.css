@@ -801,11 +801,6 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 10px;
 }
 
-.ai-copilot-panel {
-  display: grid;
-  gap: 8px;
-}
-
 .ai-copilot-feed {
   border: 1px solid #d7dbe2;
   border-radius: 10px;
@@ -832,6 +827,44 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .ai-copilot-msg.assistant {
   background: #eef7f2;
   color: #1f2937;
+}
+
+.ai-chatbot {
+  position: fixed;
+  right: 18px;
+  bottom: 76px;
+  z-index: 1250;
+}
+
+.ai-chatbot-toggle {
+  width: auto;
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #0f4fbf;
+  border-color: #0f4fbf;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);
+}
+
+.ai-chatbot-panel {
+  width: min(420px, 92vw);
+  max-height: min(72vh, 620px);
+  border: 1px solid #d7dbe2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.24);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-chatbot-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .shortcuts-groups {
@@ -1844,6 +1877,16 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .shortcut-chip {
     max-width: 100%;
+  }
+
+  .ai-chatbot {
+    right: 12px;
+    left: 12px;
+    bottom: 70px;
+  }
+
+  .ai-chatbot-panel {
+    width: 100%;
   }
 
   .products-grid {
