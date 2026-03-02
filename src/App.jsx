@@ -3225,8 +3225,12 @@ export default function App() {
         {aiCopilotOpen ? (
           <div className="ai-chatbot-panel">
             <div className="ai-chatbot-head">
-              <div>
-                <strong>AI Copilot</strong>
+              <div className="ai-chatbot-head-title">
+                <span className="ai-chatbot-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false">
+                    <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+                  </svg>
+                </span>
                 <div className="small">Available across the app</div>
               </div>
               <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setAiCopilotOpen(false)}>Minimize</button>
@@ -3265,8 +3269,12 @@ export default function App() {
             {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
           </div>
         ) : (
-          <button type="button" className="ai-chatbot-toggle" onClick={() => setAiCopilotOpen(true)}>
-            AI Copilot
+          <button type="button" className="ai-chatbot-toggle" onClick={() => setAiCopilotOpen(true)} aria-label="Open AI chatbot">
+            <span className="ai-chatbot-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+              </svg>
+            </span>
           </button>
         )}
       </div>

@@ -839,12 +839,15 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .ai-chatbot-toggle {
   width: auto;
   border-radius: 999px;
-  padding: 10px 14px;
+  padding: 10px;
   background: #0f4fbf;
   border-color: #0f4fbf;
   color: #fff;
   font-weight: 700;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ai-chatbot-panel {
@@ -865,6 +868,30 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.ai-chatbot-head-title {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-chatbot-icon {
+  width: 24px;
+  height: 24px;
+  color: #0f4fbf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-chatbot-toggle .ai-chatbot-icon {
+  color: #fff;
+}
+
+.ai-chatbot-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }
 
 .shortcuts-groups {
