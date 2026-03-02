@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 const productsSeed = [
   { id: "p1", manufacturer: "Apple", model: "iPhone 15 Pro Max 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 100, available: 100, image: "images/iphone_15_Pro.png", locations: { Miami: 40, Dubai: 20, "Hong Kong": 25, Japan: 15 } },
@@ -1636,26 +1636,24 @@ export default function App() {
   const filteredRequests = requests
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
     .filter((r) => String(r.requestNumber || "").toLowerCase().includes(requestSearch.toLowerCase()));
-  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
-  const allRequestLocations = useMemo(() => {
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const allRequestLocations = (() => {
     const names = new Set();
     for (const p of products) {
       const locations = p.locations && typeof p.locations === "object" ? Object.keys(p.locations) : [];
       for (const loc of locations) names.add(loc);
     }
     return [...names].sort((a, b) => a.localeCompare(b));
-  }, [products]);
-  const fullFulfillmentLocations = useMemo(() => {
-    return allRequestLocations.filter((locationName) => cart.every((line) => {
-      const device = productById.get(line.productId);
-      const available = Number(device?.locations?.[locationName] || 0);
-      return Number(line.quantity || 0) <= available;
-    }));
-  }, [allRequestLocations, cart, productById]);
+  })();
+  const fullFulfillmentLocations = allRequestLocations.filter((locationName) => cart.every((line) => {
+    const device = productById.get(line.productId);
+    const available = Number(device?.locations?.[locationName] || 0);
+    return Number(line.quantity || 0) <= available;
+  }));
   const selectableRequestLocations = allowPartialRequestLocation ? allRequestLocations : fullFulfillmentLocations;
-  const cartFulfillmentIssues = useMemo(() => {
-    if (!selectedRequestLocation) return [];
-    return cart
+  const cartFulfillmentIssues = !selectedRequestLocation
+    ? []
+    : cart
       .map((line) => {
         const device = productById.get(line.productId);
         const requested = Number(line.quantity || 0);
@@ -1671,14 +1669,13 @@ export default function App() {
         };
       })
       .filter((row) => row.shortage > 0);
-  }, [cart, productById, selectedRequestLocation]);
-  const cartFulfillmentIssueByLineId = useMemo(() => {
+  const cartFulfillmentIssueByLineId = (() => {
     const map = new Map();
     for (const row of cartFulfillmentIssues) {
       map.set(row.id, row);
     }
     return map;
-  }, [cartFulfillmentIssues]);
+  })();
   const cartHasFulfillmentIssues = cartFulfillmentIssues.length > 0;
   const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
   const modalImages = activeProduct ? (activeProduct.images?.length ? activeProduct.images : [imageFor(activeProduct)]) : [];
@@ -1691,21 +1688,6 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
-
-  useEffect(() => {
-    if (!cart.length) {
-      setSelectedRequestLocation("");
-      return;
-    }
-    const allowedLocations = allowPartialRequestLocation ? allRequestLocations : fullFulfillmentLocations;
-    if (!allowedLocations.length) {
-      setSelectedRequestLocation("");
-      return;
-    }
-    if (!allowedLocations.includes(selectedRequestLocation)) {
-      setSelectedRequestLocation(allowedLocations[0]);
-    }
-  }, [allowPartialRequestLocation, allRequestLocations, fullFulfillmentLocations, cart, selectedRequestLocation]);
 
   return (
     <div className="app-shell">
