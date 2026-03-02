@@ -1282,6 +1282,32 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: #fff;
 }
 
+.cart-grand-total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  border-radius: 12px;
+  min-width: 220px;
+}
+
+.cart-grand-total-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #3730a3;
+  text-transform: uppercase;
+}
+
+.cart-grand-total-value {
+  font-size: 1.42rem;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.1;
+}
+
 .cart-actions {
   display: flex;
   gap: 8px;

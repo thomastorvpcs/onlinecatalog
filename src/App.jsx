@@ -2222,7 +2222,7 @@ export default function App() {
                         </td>
                         <td className="cart-col-grade">{r.grade}</td>
                         <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
-                        <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || 1)))) } : i))} /></td>
+                        <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: e.target.value === "" ? "" : e.target.value } : i))} onBlur={(e) => updateCart(cart.map((i) => { if (i.id !== r.id) return i; const normalized = Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || i.quantity || 1)))); return { ...i, quantity: normalized }; }))} /></td>
                         <td className="cart-col-total">{formatUsd(lineTotal)}</td>
                         <td className="cart-col-action">
                           <button
@@ -2276,7 +2276,7 @@ export default function App() {
                 </p>
               ) : null}
             </div>
-            <div className="cart-footer"><div><strong>Grand Total</strong><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units | {formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
+            <div className="cart-footer"><div className="cart-grand-total"><div className="cart-grand-total-label">Grand Total</div><div className="cart-grand-total-value">{formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
           </article>
         </div>
       )}
