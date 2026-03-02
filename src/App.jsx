@@ -1248,6 +1248,7 @@ export default function App() {
   const cartNoticeTimerRef = useRef(null);
   const aiCopilotFeedRef = useRef(null);
   const aiCopilotStateLoadedRef = useRef(false);
+  const aiCopilotPendingResultCheckRef = useRef(null);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
@@ -1322,6 +1323,7 @@ export default function App() {
     setAiCopilotInput("");
     setAiCopilotError("");
     setAiCopilotOpen(false);
+    aiCopilotPendingResultCheckRef.current = null;
     setAdminAiAnomalies([]);
     setAdminAiInsights(null);
     setAdminAiError("");
@@ -2062,6 +2064,9 @@ export default function App() {
   const applyCopilotAction = (action) => {
     if (!action || action.type !== "apply_filters") return;
     const payload = sanitizeFilterPayload(action.payload);
+    aiCopilotPendingResultCheckRef.current = {
+      waitingForLoadStart: true
+    };
     if (payload.selectedCategory) {
       setSelectedCategory(payload.selectedCategory);
     }
@@ -2074,6 +2079,24 @@ export default function App() {
     setSavedFiltersError("");
     setCategoryPage(1);
   };
+
+  useEffect(() => {
+    const pending = aiCopilotPendingResultCheckRef.current;
+    if (!pending || productsView !== "category") return;
+    if (categoryLoading) {
+      pending.waitingForLoadStart = false;
+      return;
+    }
+    if (pending.waitingForLoadStart) return;
+    aiCopilotPendingResultCheckRef.current = null;
+    if (productsError || categoryTotal > 0) return;
+    setAiCopilotMessages((prev) => [...prev, {
+      role: "assistant",
+      text: "I applied the suggested filters, but no devices matched. Try broadening the filters or selecting another category.",
+      action: null,
+      timestamp: new Date().toISOString()
+    }]);
+  }, [productsView, categoryLoading, categoryTotal, productsError]);
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
