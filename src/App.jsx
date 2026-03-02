@@ -2332,6 +2332,8 @@ export default function App() {
                               <button
                                 type="button"
                                 className="saved-filter-edit-btn"
+                                aria-label={`Edit ${saved.name}`}
+                                title="Edit filter"
                                 onClick={() => {
                                   setEditingSavedFilterId(saved.id);
                                   setNewSavedFilterName(saved.name);
@@ -2339,9 +2341,21 @@ export default function App() {
                                   setSavedFiltersError("");
                                 }}
                               >
-                                Edit
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1.1 1.1 0 0 1 1.6 0l1 1a1.1 1.1 0 0 1 0 1.6l-1.6 1.6-2.6-2.6z" />
+                                </svg>
                               </button>
-                              <button type="button" className="saved-filter-delete-btn" onClick={() => deleteSavedFilter(saved)}>Delete</button>
+                              <button
+                                type="button"
+                                className="saved-filter-delete-btn"
+                                aria-label={`Delete ${saved.name}`}
+                                title="Delete filter"
+                                onClick={() => deleteSavedFilter(saved)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M8 4h8l1 2h4v2H3V6h4l1-2zm1 6h2v8H9v-8zm4 0h2v8h-2v-8zM7 10h2v8H7v-8zm0 10h10a2 2 0 0 0 2-2V8H5v10a2 2 0 0 0 2 2z" />
+                                </svg>
+                              </button>
                             </div>
                           </div>
                         ))

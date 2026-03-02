@@ -708,14 +708,14 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .saved-filter-apply-btn {
   width: 100%;
   text-align: left;
-  height: 36px;
+  height: 42px;
   border: 1px solid #cfd7e6;
   border-radius: 10px;
   background: #fff;
   color: #0f172a;
-  font-size: 0.83rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  padding: 0 12px;
+  padding: 0 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -728,29 +728,36 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .saved-filter-edit-btn {
-  width: auto;
-  min-width: 56px;
-  height: 36px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
   border-radius: 10px;
-  padding: 0 12px;
+  padding: 0;
   background: #fff;
   color: #1d4ed8;
   border: 1px solid #bcd0fa;
-  font-size: 0.8rem;
-  font-weight: 600;
+  display: grid;
+  place-items: center;
 }
 
 .saved-filter-delete-btn {
-  width: auto;
-  min-width: 64px;
-  height: 36px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
   border-radius: 10px;
-  padding: 0 12px;
+  padding: 0;
   background: #fff;
   color: #b42318;
   border: 1px solid #f1bcc2;
-  font-size: 0.8rem;
-  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.saved-filter-edit-btn svg,
+.saved-filter-delete-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
 }
 
 .pill-clear {
