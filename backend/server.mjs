@@ -42,7 +42,7 @@ function loadLocalEnv(rootDir) {
 loadLocalEnv(projectRoot);
 
 const dbDir = join(__dirname, "db");
-const dbPath = join(dbDir, "catalog.sqlite");
+const dbPath = String(process.env.DB_PATH || "").trim() || join(dbDir, "catalog.sqlite");
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
 const distDir = join(projectRoot, "dist");
@@ -58,7 +58,7 @@ const DEFAULT_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_RESET_CODE = "123456";
 const EXTRA_DEVICES_PER_CATEGORY = 1000;
 const DEPLOY_REAL_SEED_COUNT = Math.max(1, Math.min(1000, Number(process.env.DEPLOY_REAL_SEED_COUNT || 100)));
-const AUTO_SEED_REAL_ON_STARTUP = String(process.env.AUTO_SEED_REAL_ON_STARTUP || "true").toLowerCase() !== "false";
+const AUTO_SEED_REAL_ON_STARTUP = String(process.env.AUTO_SEED_REAL_ON_STARTUP || "false").toLowerCase() === "true";
 const MODEL_IMAGE_MAP = {
   "iPhone 15": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15.jpg",
   "iPhone 15 Pro": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-15-pro-max.jpg",
