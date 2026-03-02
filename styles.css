@@ -680,11 +680,6 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   display: block;
 }
 
-.cat-icon svg.accessories-icon {
-  width: 110px;
-  height: 110px;
-}
-
 .cat-label {
   font-size: 0.9rem;
   font-weight: 600;

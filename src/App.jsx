@@ -626,7 +626,16 @@ function iconForCategory(category) {
   if (category === "Wearables") {
     return <svg viewBox="0 0 64 64"><rect x="22" y="2" width="20" height="60" rx="5" {...base} /><rect x="14" y="12" width="36" height="40" rx="8" {...base} /><rect x="19" y="18" width="26" height="28" rx="5" {...screen} /></svg>;
   }
-  return <svg className="accessories-icon" viewBox="0 0 64 64"><path d="M8 24a8 8 0 0 1 16 0" fill="none" stroke="#147bd1" strokeWidth="3.4" /><rect x="6.5" y="23.2" width="3.9" height="10.2" rx="1.9" {...base} /><rect x="21.6" y="23.2" width="3.9" height="10.2" rx="1.9" {...base} /><rect x="39.2" y="18" width="13.6" height="15.2" rx="2.1" {...base} /><rect x="6.3" y="38.8" width="51.4" height="13.4" rx="2.4" {...base} /></svg>;
+  return (
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <rect x="9" y="30" width="46" height="20" rx="5" {...base} />
+      <rect x="12.5" y="33.5" width="39" height="8.5" rx="4.2" {...screen} />
+      <circle cx="32" cy="46" r="2.1" fill="#9dbce6" />
+      <path d="M20.5 15.5a6.5 6.5 0 0 1 13 0v7a3 3 0 0 1-6 0v-7a1 1 0 0 0-2 0v8a5 5 0 0 0 10 0v-8a8.5 8.5 0 0 0-17 0" fill="#147bd1" />
+      <path d="M43 13.5h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-8a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3z" fill="#147bd1" />
+      <rect x="45.6" y="16.8" width="2.8" height="7.6" rx="1.4" fill="#eef0f3" />
+    </svg>
+  );
 }
 
 function PhoneNavIcon() {
