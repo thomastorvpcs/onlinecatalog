@@ -662,6 +662,7 @@ export default function App() {
   const [activeProduct, setActiveProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [productQty, setProductQty] = useState(1);
+  const [productOfferPrice, setProductOfferPrice] = useState(0);
   const [productNote, setProductNote] = useState("");
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [users, setUsers] = useState([]);
@@ -1036,6 +1037,7 @@ export default function App() {
 
   useEffect(() => {
     setActiveImageIndex(0);
+    setProductOfferPrice(Number(activeProduct?.price || 0));
   }, [activeProduct?.id]);
 
   useEffect(() => {
@@ -1180,13 +1182,16 @@ export default function App() {
 
   const imageFor = (p) => p.image || p.images?.[0] || categoryImagePlaceholders[p.category] || "";
 
-  const addToCart = (p, qty, note) => {
+  const addToCart = (p, qty, note, offerPriceOverride) => {
+    const requestedOfferPrice = Number.isFinite(Number(offerPriceOverride)) ? Number(offerPriceOverride) : Number(p.price || 0);
     const existing = cart.find((i) => i.productId === p.id && i.note === note);
     let next = [...cart];
     if (existing) {
-      next = next.map((i) => (i.id === existing.id ? { ...i, quantity: Math.min(9999, i.quantity + qty) } : i));
+      next = next.map((i) => (i.id === existing.id
+        ? { ...i, quantity: Math.min(9999, i.quantity + qty), offerPrice: requestedOfferPrice }
+        : i));
     } else {
-      next.push({ id: crypto.randomUUID(), productId: p.id, model: p.model, grade: p.grade, quantity: qty, offerPrice: p.price, note });
+      next.push({ id: crypto.randomUUID(), productId: p.id, model: p.model, grade: p.grade, quantity: qty, offerPrice: requestedOfferPrice, note });
     }
     updateCart(next);
     setCartNotice(`${qty} x ${p.model} added to Requested items.`);
@@ -1628,6 +1633,7 @@ export default function App() {
   const canCarousel = modalImages.length > 1;
   const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
   const modalProductUnavailable = activeProduct ? activeProduct.available < 1 : false;
+  const modalOfferPriceInvalid = productOfferPrice === "" || Number(productOfferPrice) < 0;
   const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
   const sessionSecondsLeft = showSessionWarning ? Math.max(0, Math.ceil(sessionTimeLeftMs / 1000)) : 0;
   const sessionCountdown = showSessionWarning
@@ -2095,7 +2101,7 @@ export default function App() {
                   <h4 style={{ marginTop: 0 }}>Product notes</h4>
                   <p className="small" style={{ margin: 0 }}>{activeProduct.productNotes || "No notes provided."}</p>
                 </div>
-                <div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)} disabled={modalProductUnavailable}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))} disabled={modalProductUnavailable}>-</button></div><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} disabled={modalProductUnavailable} onClick={() => { addToCart(activeProduct, productQty, productNote.trim()); setActiveProduct(null); setProductQty(1); setProductNote(""); }}>Add to request</button></div>
+                <div className="modal-box" style={{ marginTop: 10 }}><h4 style={{ marginTop: 0 }}>Create request for this product</h4><label>Quantity</label><div className="qty-control"><input type="number" min="1" max={Math.max(1, activeProduct.available)} value={productQty} onChange={(e) => setProductQty(Math.max(1, Math.min(9999, Number(e.target.value || 1))))} /><button type="button" onClick={() => setProductQty((v) => v + 1)} disabled={modalProductUnavailable}>+</button><button type="button" onClick={() => setProductQty((v) => Math.max(1, v - 1))} disabled={modalProductUnavailable}>-</button></div><label>Request price</label><input type="number" min="0" step="0.01" value={productOfferPrice} onChange={(e) => setProductOfferPrice(e.target.value === "" ? "" : Number(e.target.value))} placeholder="Set request price" /><label>Additional request note (optional)</label><input value={productNote} onChange={(e) => setProductNote(e.target.value)} placeholder="Write note" /><button style={{ marginTop: 10 }} disabled={modalProductUnavailable || modalOfferPriceInvalid} onClick={() => { addToCart(activeProduct, productQty, productNote.trim(), Number(productOfferPrice)); setActiveProduct(null); setProductQty(1); setProductOfferPrice(0); setProductNote(""); }}>Add to request</button></div>
               </div>
             </div>
           </article>
