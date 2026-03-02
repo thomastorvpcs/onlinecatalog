@@ -1169,6 +1169,22 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   line-height: 1.3;
 }
 
+.cart-line-fix-link {
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  padding: 0;
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cart-line-fix-link:hover {
+  color: #1e40af;
+}
+
 .cart-location-panel {
   margin: 4px 0 8px;
   padding: 12px;
