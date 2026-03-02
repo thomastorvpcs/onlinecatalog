@@ -2209,7 +2209,7 @@ export default function App() {
                           {r.model}
                           {fulfillmentIssue ? (
                             <div className="small cart-line-warning">
-                              Only {fulfillmentIssue.available} available at {selectedRequestLocation}. Reduce by {fulfillmentIssue.shortage}.{" "}
+                              <div>Only {fulfillmentIssue.available} available at {selectedRequestLocation}. Reduce by {fulfillmentIssue.shortage}.</div>
                               <button
                                 type="button"
                                 className="cart-line-fix-link"
