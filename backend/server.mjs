@@ -1231,6 +1231,60 @@ function buildCopilotSuggestedFilterName(parsed) {
   return parts.join(" | ").slice(0, 80);
 }
 
+function hasExplicitCategoryIntent(promptRaw) {
+  const text = String(promptRaw || "").toLowerCase();
+  return /\bsmart\s?phones?\b|\bphones?\b|\btablet(s)?\b|\blaptop(s)?\b|\bnotebook(s)?\b|\bwearable(s)?\b|\bwatch(es)?\b|\baccessor(y|ies)\b/.test(text)
+    || /\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b|\bipad\b|\bgalaxy tab\b|\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b|\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\biphone\b|\bpixel\b/.test(text);
+}
+
+function deviceMatchesCopilotPayload(device, payload) {
+  const selectedCategory = String(payload?.selectedCategory || "").trim();
+  const search = String(payload?.search || "").trim().toLowerCase();
+  const filters = payload?.filters && typeof payload.filters === "object" ? payload.filters : {};
+  const availableRegions = device?.locations && typeof device.locations === "object"
+    ? Object.entries(device.locations).filter(([, qty]) => Number(qty || 0) > 0).map(([name]) => name)
+    : [];
+  const text = `${device.manufacturer} ${device.model} ${device.modelFamily || ""} ${device.category}`.toLowerCase();
+  if (selectedCategory && selectedCategory !== "__ALL__" && device.category !== selectedCategory) return false;
+  if (search && !text.includes(search)) return false;
+  if (Array.isArray(filters.manufacturer) && filters.manufacturer.length && !filters.manufacturer.includes(device.manufacturer)) return false;
+  if (Array.isArray(filters.modelFamily) && filters.modelFamily.length && !filters.modelFamily.includes(device.modelFamily)) return false;
+  if (Array.isArray(filters.grade) && filters.grade.length && !filters.grade.includes(device.grade)) return false;
+  if (Array.isArray(filters.storage) && filters.storage.length && !filters.storage.includes(device.storage)) return false;
+  if (Array.isArray(filters.region) && filters.region.length && !filters.region.some((regionName) => availableRegions.includes(regionName))) return false;
+  return true;
+}
+
+function buildCopilotFilterOptions(promptRaw, parsed) {
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  const categories = [...new Set(allDevices.map((d) => d.category))];
+  if (categories.length < 2) return [];
+  const shouldOfferChoices = String(parsed?.selectedCategory || "") === "__ALL__" || !hasExplicitCategoryIntent(promptRaw);
+  if (!shouldOfferChoices) return [];
+  const options = categories
+    .map((categoryName) => {
+      const payload = {
+        selectedCategory: categoryName,
+        search: String(parsed?.search || ""),
+        filters: parsed?.filters && typeof parsed.filters === "object" ? parsed.filters : {}
+      };
+      const matchCount = allDevices.filter((device) => deviceMatchesCopilotPayload(device, payload)).length;
+      return { categoryName, payload, matchCount };
+    })
+    .filter((entry) => entry.matchCount > 0)
+    .sort((a, b) => b.matchCount - a.matchCount || a.categoryName.localeCompare(b.categoryName));
+  if (options.length < 2) return [];
+  return options.slice(0, 5).map((entry) => ({
+    id: `cat-${entry.categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    label: `${entry.categoryName} (${entry.matchCount})`,
+    description: `${entry.matchCount} matching device${entry.matchCount === 1 ? "" : "s"}`,
+    payload: {
+      ...entry.payload,
+      suggestedName: buildCopilotSuggestedFilterName(entry.payload)
+    }
+  }));
+}
+
 async function fetchNetsuiteInventoryForReview(lines, selectedLocation) {
   if (!NETSUITE_AI_REVIEW_RESTLET_URL) {
     return { map: new Map(), source: "local", warning: "NetSuite restlet is not configured. Used local inventory snapshot." };
@@ -1406,20 +1460,25 @@ function runAiCopilot(user, body) {
   const parsed = parseAiFilters(message, selectedCategory);
   const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
   const suggestedName = buildCopilotSuggestedFilterName(parsed);
+  const options = buildCopilotFilterOptions(message, parsed);
 
   if (hasFilters && /(find|show|search|filter|need|looking|want)/.test(lowered)) {
     const parts = [];
     if (Object.keys(parsed.filters || {}).length) parts.push("structured filters");
     if (parsed.search) parts.push("search text");
     return {
-      reply: `I parsed your request and prepared ${parts.join(" and ")}. Apply this suggestion to jump to matching products.`,
-      action: {
-        type: "apply_filters",
-        payload: {
-          ...parsed,
-          suggestedName: suggestedName || "AI Suggested Filter"
+      reply: options.length > 1
+        ? "I found matches in multiple categories. Choose one to apply."
+        : `I parsed your request and prepared ${parts.join(" and ")}. Apply this suggestion to jump to matching products.`,
+      action: options.length > 1
+        ? { type: "choose_filters", options }
+        : {
+          type: "apply_filters",
+          payload: {
+            ...parsed,
+            suggestedName: suggestedName || "AI Suggested Filter"
+          }
         }
-      }
     };
   }
 

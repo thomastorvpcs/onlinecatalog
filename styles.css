@@ -829,6 +829,31 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   color: #1f2937;
 }
 
+.ai-copilot-choice-list {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-copilot-choice-btn {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #bfd2f2;
+  background: #fff;
+  color: #0f4fbf;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.ai-copilot-choice-btn:hover {
+  background: #edf4ff;
+  border-color: #98b9eb;
+}
+
 .ai-copilot-msg.typing {
   display: inline-flex;
   align-items: center;

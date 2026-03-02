@@ -129,6 +129,7 @@ const SESSION_WARNING_MS = 5 * 60 * 1000;
 const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
+const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
 const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
@@ -338,6 +339,61 @@ function buildCopilotSuggestedFilterName(payloadRaw) {
   if (search) parts.push(search);
   if (!parts.length) return "AI Suggested Filter";
   return parts.join(" | ").slice(0, 80);
+}
+
+function hasExplicitCategoryIntent(promptRaw) {
+  const text = String(promptRaw || "").toLowerCase();
+  return /\bsmart\s?phones?\b|\bphones?\b|\btablet(s)?\b|\blaptop(s)?\b|\bnotebook(s)?\b|\bwearable(s)?\b|\bwatch(es)?\b|\baccessor(y|ies)\b/.test(text)
+    || /\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b|\bipad\b|\bgalaxy tab\b|\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b|\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\biphone\b|\bpixel\b/.test(text);
+}
+
+function deviceMatchesFilterPayload(device, payload) {
+  const normalized = sanitizeFilterPayload(payload);
+  const selectedCategory = String(normalized.selectedCategory || "").trim();
+  const search = String(normalized.search || "").trim().toLowerCase();
+  const activeFilters = normalized.filters && typeof normalized.filters === "object" ? normalized.filters : {};
+  const availableRegions = device && device.locations && typeof device.locations === "object"
+    ? Object.entries(device.locations).filter(([, qty]) => Number(qty || 0) > 0).map(([name]) => name)
+    : [];
+  const text = `${device.manufacturer} ${device.model} ${device.modelFamily || modelFamilyOf(device.model)} ${device.category}`.toLowerCase();
+  if (selectedCategory && selectedCategory !== ALL_CATEGORIES_KEY && device.category !== selectedCategory) return false;
+  if (search && !text.includes(search)) return false;
+  if (Array.isArray(activeFilters.manufacturer) && activeFilters.manufacturer.length && !activeFilters.manufacturer.includes(device.manufacturer)) return false;
+  if (Array.isArray(activeFilters.modelFamily) && activeFilters.modelFamily.length && !activeFilters.modelFamily.includes(device.modelFamily || modelFamilyOf(device.model))) return false;
+  if (Array.isArray(activeFilters.grade) && activeFilters.grade.length && !activeFilters.grade.includes(device.grade)) return false;
+  if (Array.isArray(activeFilters.storage) && activeFilters.storage.length && !activeFilters.storage.includes(device.storage)) return false;
+  if (Array.isArray(activeFilters.region) && activeFilters.region.length && !activeFilters.region.some((regionName) => availableRegions.includes(regionName))) return false;
+  return true;
+}
+
+function buildCopilotFilterOptions(promptRaw, parsedRaw, allProducts) {
+  const parsed = sanitizeFilterPayload(parsedRaw);
+  const categories = [...new Set((allProducts || []).map((p) => p.category))];
+  if (categories.length < 2) return [];
+  const shouldOfferChoices = parsed.selectedCategory === ALL_CATEGORIES_KEY || !hasExplicitCategoryIntent(promptRaw);
+  if (!shouldOfferChoices) return [];
+  const categoryOptions = categories
+    .map((categoryName) => {
+      const payload = {
+        selectedCategory: categoryName,
+        search: parsed.search,
+        filters: parsed.filters
+      };
+      const matchCount = (allProducts || []).filter((p) => deviceMatchesFilterPayload(p, payload)).length;
+      return { categoryName, payload, matchCount };
+    })
+    .filter((entry) => entry.matchCount > 0)
+    .sort((a, b) => b.matchCount - a.matchCount || a.categoryName.localeCompare(b.categoryName));
+  if (categoryOptions.length < 2) return [];
+  return categoryOptions.slice(0, 5).map((entry) => ({
+    id: `cat-${entry.categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    label: `${entry.categoryName} (${entry.matchCount})`,
+    description: `${entry.matchCount} matching device${entry.matchCount === 1 ? "" : "s"}`,
+    payload: {
+      ...entry.payload,
+      suggestedName: buildCopilotSuggestedFilterName(entry.payload)
+    }
+  }));
 }
 
 function validateRequestWithHeuristics(body, allProducts) {
@@ -634,16 +690,21 @@ async function demoApiRequest(path, options = {}) {
     const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
     const suggestedName = buildCopilotSuggestedFilterName(parsed);
+    const options = buildCopilotFilterOptions(body.message, parsed, all);
     return hasFilters
       ? {
-        reply: "I parsed your request and prepared filters you can apply.",
-        action: {
-          type: "apply_filters",
-          payload: {
-            ...parsed,
-            suggestedName: suggestedName || "AI Suggested Filter"
+        reply: options.length > 1
+          ? "I found matches in multiple categories. Choose one to apply."
+          : "I parsed your request and prepared filters you can apply.",
+        action: options.length > 1
+          ? { type: "choose_filters", options }
+          : {
+            type: "apply_filters",
+            payload: {
+              ...parsed,
+              suggestedName: suggestedName || "AI Suggested Filter"
+            }
           }
-        }
       }
       : {
         reply: "Try asking for a concrete product query like: Apple CPO in Miami 128GB.",
@@ -1150,9 +1211,11 @@ export default function App() {
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
   const aiCopilotFeedRef = useRef(null);
+  const aiCopilotStateLoadedRef = useRef(false);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
+  const aiCopilotStateKey = user ? `${AI_COPILOT_STATE_KEY_PREFIX}${normalizeEmail(user.email)}` : "";
   const categoryNames = useMemo(() => [...new Set(products.map((p) => p.category))].sort((a, b) => {
     const aIndex = CATEGORY_ORDER.indexOf(a);
     const bIndex = CATEGORY_ORDER.indexOf(b);
@@ -1545,6 +1608,37 @@ export default function App() {
     const timer = setTimeout(() => setSavedFilterNotice(""), 2500);
     return () => clearTimeout(timer);
   }, [savedFilterNotice]);
+
+  useEffect(() => {
+    if (!aiCopilotStateKey) {
+      aiCopilotStateLoadedRef.current = false;
+      setAiCopilotMessages([]);
+      setAiCopilotOpen(false);
+      return;
+    }
+    const state = readJson(localStorage, aiCopilotStateKey, {});
+    const messages = Array.isArray(state?.messages)
+      ? state.messages
+        .filter((msg) => msg && (msg.role === "user" || msg.role === "assistant"))
+        .map((msg) => ({
+          role: msg.role,
+          text: String(msg.text || ""),
+          action: msg.action && typeof msg.action === "object" ? msg.action : null
+        }))
+        .slice(-30)
+      : [];
+    setAiCopilotMessages(messages);
+    setAiCopilotOpen(state?.open === true);
+    aiCopilotStateLoadedRef.current = true;
+  }, [aiCopilotStateKey]);
+
+  useEffect(() => {
+    if (!aiCopilotStateKey || !aiCopilotStateLoadedRef.current) return;
+    writeJson(localStorage, aiCopilotStateKey, {
+      open: aiCopilotOpen,
+      messages: aiCopilotMessages.slice(-30)
+    });
+  }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages]);
 
   useEffect(() => {
     setAiRequestReview(null);
@@ -3262,6 +3356,21 @@ export default function App() {
                     <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
                       Apply Suggested Filters
                     </button>
+                  ) : null}
+                  {message.role === "assistant" && message.action?.type === "choose_filters" && Array.isArray(message.action.options) ? (
+                    <div className="ai-copilot-choice-list">
+                      {message.action.options.map((option) => (
+                        <button
+                          key={`${option.id}-${option.label}`}
+                          type="button"
+                          className="ai-copilot-choice-btn"
+                          title={option.description || option.label}
+                          onClick={() => applyCopilotAction({ type: "apply_filters", payload: option.payload })}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   ) : null}
                 </div>
               )) : (
