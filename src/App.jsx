@@ -442,7 +442,9 @@ function validateRequestWithHeuristics(body, allProducts) {
           type: "ADJUST_QTY",
           lineIndex: index,
           action: { type: "set_quantity", lineIndex: index, suggestedQuantity: Math.max(0, available) },
-          message: `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.`
+          message: Math.max(0, available) <= 0
+            ? `Remove ${model} from this request for ${selectedLocation}.`
+            : `Set quantity to ${Math.max(0, available)} for ${model} at ${selectedLocation}.`
         });
       }
     }
