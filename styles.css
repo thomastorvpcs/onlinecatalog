@@ -847,6 +847,14 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   font-weight: 600;
 }
 
+.request-btn-floating {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1200;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+}
+
 .products-grid {
   margin-top: 14px;
   display: grid;
@@ -1690,6 +1698,13 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .request-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .request-btn-floating {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
   }
 
   .request-search-input {

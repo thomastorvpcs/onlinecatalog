@@ -2522,6 +2522,12 @@ export default function App() {
         </main>
       </div>
 
+      {route === "products" ? (
+        <button className="request-btn request-btn-floating" onClick={() => setCartOpen(true)}>
+          Requested items ({cart.length})
+        </button>
+      ) : null}
+
       {cartNotice ? (
         <div
           style={{
