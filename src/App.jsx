@@ -844,6 +844,7 @@ export default function App() {
   const cartNoticeTimerRef = useRef(null);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
+  const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
 
   const applyAuthTokens = (data) => {
     if (!data?.token || !data?.refreshToken) return;
@@ -1018,6 +1019,25 @@ export default function App() {
     }
     setCart(readJson(sessionStorage, cartKey, []));
   }, [cartKey]);
+
+  useEffect(() => {
+    if (!requestPrefsKey) {
+      setSelectedRequestLocation("");
+      setAllowPartialRequestLocation(false);
+      return;
+    }
+    const prefs = readJson(localStorage, requestPrefsKey, {});
+    setSelectedRequestLocation(String(prefs?.selectedRequestLocation || ""));
+    setAllowPartialRequestLocation(Boolean(prefs?.allowPartialRequestLocation));
+  }, [requestPrefsKey]);
+
+  useEffect(() => {
+    if (!requestPrefsKey) return;
+    writeJson(localStorage, requestPrefsKey, {
+      selectedRequestLocation,
+      allowPartialRequestLocation
+    });
+  }, [requestPrefsKey, selectedRequestLocation, allowPartialRequestLocation]);
 
   useEffect(() => {
     let ignore = false;
