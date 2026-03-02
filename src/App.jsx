@@ -3483,41 +3483,57 @@ export default function App() {
             </div>
             <div className="ai-copilot-feed" ref={aiCopilotFeedRef}>
               {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (
-                <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-msg ${message.role}`}>
-                  <div>{message.text}</div>
-                  {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
-                  {message.role === "assistant" && message.action?.type === "apply_filters" ? (
-                    <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
-                      Apply Suggested Filters
-                    </button>
+                <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-row ${message.role}`}>
+                  {message.role === "assistant" ? (
+                    <span className="ai-copilot-avatar" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" role="img" focusable="false">
+                        <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+                      </svg>
+                    </span>
                   ) : null}
-                  {message.role === "assistant" && message.action?.type === "choose_filters" && Array.isArray(message.action.options) ? (
-                    <div className="ai-copilot-choice-list">
-                      {message.action.options.map((option) => (
-                        <button
-                          key={`${option.id}-${option.label}`}
-                          type="button"
-                          className="ai-copilot-choice-btn"
-                          title={option.description || option.label}
-                          onClick={() => applyCopilotAction({ type: "apply_filters", payload: option.payload })}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  <div className={`ai-copilot-msg ${message.role}`}>
+                    <div>{message.text}</div>
+                    {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
+                    {message.role === "assistant" && message.action?.type === "apply_filters" ? (
+                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                        Apply Suggested Filters
+                      </button>
+                    ) : null}
+                    {message.role === "assistant" && message.action?.type === "choose_filters" && Array.isArray(message.action.options) ? (
+                      <div className="ai-copilot-choice-list">
+                        {message.action.options.map((option) => (
+                          <button
+                            key={`${option.id}-${option.label}`}
+                            type="button"
+                            className="ai-copilot-choice-btn"
+                            title={option.description || option.label}
+                            onClick={() => applyCopilotAction({ type: "apply_filters", payload: option.payload })}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               )) : (
                 <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
               )}
               {aiCopilotLoading ? (
-                <div className="ai-copilot-msg assistant typing">
-                  <span>Writing</span>
-                  <span className="ai-typing-dots" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
+                <div className="ai-copilot-row assistant">
+                  <span className="ai-copilot-avatar" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                      <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+                    </svg>
                   </span>
+                  <div className="ai-copilot-msg assistant typing">
+                    <span>Writing</span>
+                    <span className="ai-typing-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </div>
                 </div>
               ) : null}
             </div>
