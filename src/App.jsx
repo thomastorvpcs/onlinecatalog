@@ -2248,7 +2248,7 @@ export default function App() {
               {shortcutEntries.length ? (
                 <section className="panel shortcuts-panel">
                   <div className="category-header">
-                    <h2 style={{ margin: 0, fontSize: "1.7rem", fontWeight: 500 }}>Shortcuts</h2>
+                    <h2 style={{ margin: 0, fontSize: "1.7rem", fontWeight: 500 }}>Favorites</h2>
                     <p className="small" style={{ margin: 0 }}>Saved filters</p>
                   </div>
                   <div className="shortcut-chips">
