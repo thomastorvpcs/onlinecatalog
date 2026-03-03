@@ -2793,6 +2793,22 @@ export default function App() {
 
   const imageFor = (p) => p.image || p.images?.[0] || categoryImagePlaceholders[p.category] || "";
 
+  const openRequestLineProduct = (line) => {
+    const productId = String(line?.productId || "").trim();
+    const model = String(line?.model || "").trim().toLowerCase();
+    const grade = String(line?.grade || "").trim().toLowerCase();
+    const matched = products.find((p) => String(p.id || "") === productId)
+      || products.find((p) => (
+        String(p.model || "").trim().toLowerCase() === model
+        && String(p.grade || "").trim().toLowerCase() === grade
+      ))
+      || products.find((p) => String(p.model || "").trim().toLowerCase() === model)
+      || null;
+    if (!matched) return;
+    setActiveImageIndex(0);
+    setActiveProduct(matched);
+  };
+
   const addToCart = (p, qty, note, offerPriceOverride) => {
     const requestedOfferPrice = Number.isFinite(Number(offerPriceOverride)) ? Number(offerPriceOverride) : Number(p.price || 0);
     const existing = cart.find((i) => i.productId === p.id && i.note === note);
@@ -3834,7 +3850,17 @@ export default function App() {
                                   <tbody>
                                     {r.lines.map((l, i) => (
                                       <tr key={`${r.id}-${l.productId}-${i}`}>
-                                        <td>{l.model}</td>
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="link-btn"
+                                            style={{ padding: 0, fontSize: "inherit" }}
+                                            onClick={() => openRequestLineProduct(l)}
+                                            title={l.productId ? "Open product details" : "Open product details (best match)"}
+                                          >
+                                            {l.model}
+                                          </button>
+                                        </td>
                                         <td>{l.grade}</td>
                                         <td>{l.quantity}</td>
                                         <td>{formatUsd(l.offerPrice)}</td>
