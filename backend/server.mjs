@@ -2352,10 +2352,24 @@ function getCopilotDeviceCandidates(payload, limit = 6) {
 function getCopilotWeeklySpecialCandidates(message, selectedCategory, limit = 6) {
   const allDevices = getDevices(new URL("http://localhost/api/devices"));
   const parsedPayload = parseAiFilters(message, selectedCategory);
-  const parsedHasFilters = Object.keys(parsedPayload.filters || {}).length > 0 || String(parsedPayload.search || "").trim().length > 0;
+  const promoWordPattern = /\b(weekly|special|specials|promotion|promotions|promo|deal|deals|offer|offers|show|find|what|are|is|the|current)\b/gi;
+  const cleanedSearch = String(parsedPayload.search || "")
+    .replace(promoWordPattern, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const payloadForMatch = {
+    ...parsedPayload,
+    search: cleanedSearch
+  };
+  if (!hasExplicitCategoryIntent(message)) {
+    payloadForMatch.selectedCategory = "__ALL__";
+  }
+  const hasStructuredFilters = Object.keys(payloadForMatch.filters || {}).length > 0;
+  const hasCategoryConstraint = String(payloadForMatch.selectedCategory || "").trim() !== "" && String(payloadForMatch.selectedCategory || "").trim() !== "__ALL__";
+  const parsedHasFilters = hasStructuredFilters || Boolean(payloadForMatch.search) || hasCategoryConstraint;
   let weekly = allDevices.filter((device) => device.weeklySpecial === true);
   if (parsedHasFilters) {
-    weekly = weekly.filter((device) => deviceMatchesCopilotPayload(device, parsedPayload));
+    weekly = weekly.filter((device) => deviceMatchesCopilotPayload(device, payloadForMatch));
   }
   return weekly
     .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || Number(a.price || 0) - Number(b.price || 0))
