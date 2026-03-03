@@ -4404,17 +4404,20 @@ function Login({
             <h2 className="auth-hero-title">PCS Online Catalog</h2>
             <p className="auth-hero-text">Sign in with Auth0 to continue.</p>
           </aside>
-          <div className="auth-card">
-            <h1 className="auth-title">Sign In</h1>
-            <div style={{ display: "grid", gap: 8 }}>
-              <button type="button" className="auth-submit-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
+          <div className="auth-card auth0-card">
+            <div className="auth0-chip">Secure Login by Auth0</div>
+            <h1 className="auth-title auth0-title">Sign In To Continue</h1>
+            <p className="auth0-subtitle">Use your company account to access catalog, requests, and AI copilot.</p>
+            <div className="auth0-actions">
+              <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
               </button>
-              <button type="button" className="ghost-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
+              <button type="button" className="ghost-btn auth0-secondary-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
               </button>
             </div>
-            {auth0ErrorText ? <p className="auth-error" style={{ marginTop: 10 }}>Auth0 error: {auth0ErrorText}</p> : null}
+            <p className="auth0-note">You will be redirected to Universal Login.</p>
+            {auth0ErrorText ? <p className="auth-error auth0-error">Auth0 error: {auth0ErrorText}</p> : null}
           </div>
         </div>
       </div>
