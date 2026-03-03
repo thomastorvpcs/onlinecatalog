@@ -703,6 +703,10 @@ function ensureLargeCatalog() {
   const categories = db.prepare("SELECT id, name FROM categories").all();
   const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
   const locations = db.prepare("SELECT id FROM locations ORDER BY id").all().map((l) => l.id);
+  const existingGeneratedCount = Number(
+    db.prepare("SELECT COUNT(*) AS count FROM devices WHERE id LIKE 'gen-%'").get().count || 0
+  );
+  const shouldSeedGenerated = existingGeneratedCount === 0;
   const config = [
     {
       name: "Smartphones",
@@ -818,63 +822,62 @@ function ensureLargeCatalog() {
 
   db.exec("BEGIN TRANSACTION");
   try {
-    // Clean up previous generated rows so we can repopulate with cleaner realistic variants.
-    db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
+    if (shouldSeedGenerated) {
+      for (const cfg of config) {
+        const categoryId = categoryByName.get(cfg.name);
+        if (!categoryId) continue;
+        for (let i = 0; i < EXTRA_DEVICES_PER_CATEGORY; i += 1) {
+          const id = `gen-${cfg.slug}-${String(i + 1).padStart(4, "0")}`;
+          const modelMeta = cfg.models[i % cfg.models.length];
+          const storage = cfg.storages[i % cfg.storages.length];
+          const color = cfg.colors[i % cfg.colors.length];
+          const defaultLocationId = locations[i % locations.length];
+          const modelFamily = modelMeta.family;
+          const modelName = storage === "N/A"
+            ? `${modelFamily} - ${color}`
+            : `${modelFamily} ${storage} - ${color}`;
+          const storageStep = cfg.storages.indexOf(storage);
+          const modelStep = cfg.models.findIndex((m) => m.family === modelFamily);
+          const price = Number((cfg.basePrice + (modelStep * 15) + (storageStep * 35) + (i % 10)).toFixed(2));
+          const carrier = cfg.name === "Tablets" || cfg.name === "Laptops" ? "WiFi" : (cfg.name === "Wearables" ? "LTE" : (cfg.name === "Accessories" ? "Bluetooth" : "Unlocked"));
+          const screenSize = cfg.name === "Smartphones"
+            ? (modelFamily.includes("Pro Max") ? "6.7 inches" : "6.1 inches")
+            : cfg.name === "Tablets"
+              ? "11 inches"
+              : cfg.name === "Laptops"
+                ? "14 inches"
+                : cfg.name === "Wearables"
+                  ? "47 mm"
+                  : "N/A";
+          const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
+          const productNotes = `${modelFamily} variant in ${color} with ${storage}.`;
 
-    for (const cfg of config) {
-      const categoryId = categoryByName.get(cfg.name);
-      if (!categoryId) continue;
-      for (let i = 0; i < EXTRA_DEVICES_PER_CATEGORY; i += 1) {
-        const id = `gen-${cfg.slug}-${String(i + 1).padStart(4, "0")}`;
-        const modelMeta = cfg.models[i % cfg.models.length];
-        const storage = cfg.storages[i % cfg.storages.length];
-        const color = cfg.colors[i % cfg.colors.length];
-        const defaultLocationId = locations[i % locations.length];
-        const modelFamily = modelMeta.family;
-        const modelName = storage === "N/A"
-          ? `${modelFamily} - ${color}`
-          : `${modelFamily} ${storage} - ${color}`;
-        const storageStep = cfg.storages.indexOf(storage);
-        const modelStep = cfg.models.findIndex((m) => m.family === modelFamily);
-        const price = Number((cfg.basePrice + (modelStep * 15) + (storageStep * 35) + (i % 10)).toFixed(2));
-        const carrier = cfg.name === "Tablets" || cfg.name === "Laptops" ? "WiFi" : (cfg.name === "Wearables" ? "LTE" : (cfg.name === "Accessories" ? "Bluetooth" : "Unlocked"));
-        const screenSize = cfg.name === "Smartphones"
-          ? (modelFamily.includes("Pro Max") ? "6.7 inches" : "6.1 inches")
-          : cfg.name === "Tablets"
-            ? "11 inches"
-            : cfg.name === "Laptops"
-              ? "14 inches"
-              : cfg.name === "Wearables"
-                ? "47 mm"
-                : "N/A";
-        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
-        const productNotes = `${modelFamily} variant in ${color} with ${storage}.`;
+          deviceInsert.run(
+            id,
+            modelMeta.manufacturerId,
+            categoryId,
+            modelName,
+            modelFamily,
+            storage,
+            cfg.grade,
+            price,
+            carrier,
+            screenSize,
+            "No",
+            color,
+            kitType,
+            productNotes,
+            defaultLocationId
+          );
 
-        deviceInsert.run(
-          id,
-          modelMeta.manufacturerId,
-          categoryId,
-          modelName,
-          modelFamily,
-          storage,
-          cfg.grade,
-          price,
-          carrier,
-          screenSize,
-          "No",
-          color,
-          kitType,
-          productNotes,
-          defaultLocationId
-        );
-
-        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
-          const qty = 8 + ((i * 3 + locIdx * 13) % 140);
-          inventoryInsert.run(id, locations[locIdx], qty);
+          for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
+            const qty = 8 + ((i * 3 + locIdx * 13) % 140);
+            inventoryInsert.run(id, locations[locIdx], qty);
+          }
+          imageInsert.run(id, `https://picsum.photos/seed/${id}-1/900/700`, 1);
+          imageInsert.run(id, `https://picsum.photos/seed/${id}-2/900/700`, 2);
+          imageInsert.run(id, `https://picsum.photos/seed/${id}-3/900/700`, 3);
         }
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-1/900/700`, 1);
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-2/900/700`, 2);
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-3/900/700`, 3);
       }
     }
 
