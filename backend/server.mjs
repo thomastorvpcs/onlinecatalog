@@ -1712,6 +1712,199 @@ function buildCopilotHistoricalSalesContext() {
   };
 }
 
+function formatUsdValue(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "$0.00";
+  return `$${numeric.toFixed(2)}`;
+}
+
+function buildOrderHistoryFiltersFromMessage(message, selectedCategory) {
+  const parsed = parseAiFilters(message, selectedCategory);
+  return {
+    search: String(parsed?.search || "").trim(),
+    manufacturers: Array.isArray(parsed?.filters?.manufacturer) ? parsed.filters.manufacturer : [],
+    modelFamilies: Array.isArray(parsed?.filters?.modelFamily) ? parsed.filters.modelFamily : [],
+    grades: Array.isArray(parsed?.filters?.grade) ? parsed.filters.grade : [],
+    storages: Array.isArray(parsed?.filters?.storage) ? parsed.filters.storage : []
+  };
+}
+
+function queryOrderHistoryLineRows(user, message, selectedCategory, limit = 150) {
+  const filters = buildOrderHistoryFiltersFromMessage(message, selectedCategory);
+  const clauses = [];
+  const params = [];
+
+  if (user?.role !== "admin") {
+    clauses.push("qr.company = ?");
+    params.push(String(user?.company || "").trim());
+  }
+
+  if (filters.search) {
+    clauses.push("LOWER(qrl.model) LIKE ?");
+    params.push(`%${filters.search.toLowerCase()}%`);
+  }
+  if (filters.modelFamilies.length) {
+    const parts = [];
+    for (const family of filters.modelFamilies) {
+      parts.push("LOWER(qrl.model) LIKE ?");
+      params.push(`%${String(family || "").toLowerCase()}%`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+  if (filters.manufacturers.length) {
+    const parts = [];
+    for (const manufacturer of filters.manufacturers) {
+      parts.push("LOWER(qrl.model) LIKE ?");
+      params.push(`%${String(manufacturer || "").toLowerCase()}%`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+  if (filters.grades.length) {
+    const marks = filters.grades.map(() => "?").join(", ");
+    clauses.push(`qrl.grade IN (${marks})`);
+    for (const grade of filters.grades) params.push(grade);
+  }
+  if (filters.storages.length) {
+    const parts = [];
+    for (const storage of filters.storages) {
+      parts.push("LOWER(qrl.model) LIKE ?");
+      params.push(`%${String(storage || "").toLowerCase()}%`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+
+  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const sql = `
+    SELECT
+      qrl.model AS model,
+      qrl.grade AS grade,
+      qrl.quantity AS quantity,
+      qrl.offer_price AS offerPrice,
+      qr.request_number AS requestNumber,
+      qr.created_at AS createdAt,
+      qr.status AS status
+    FROM quote_request_lines qrl
+    JOIN quote_requests qr ON qr.id = qrl.request_id
+    ${whereSql}
+    ORDER BY qr.created_at DESC, qrl.id DESC
+    LIMIT ${Math.max(1, Math.min(500, Number(limit || 150)))}
+  `;
+
+  return db.prepare(sql).all(...params).map((row) => ({
+    model: String(row.model || "").trim(),
+    grade: String(row.grade || "").trim(),
+    quantity: Number(row.quantity || 0),
+    offerPrice: Number(row.offerPrice || 0),
+    requestNumber: String(row.requestNumber || "").trim(),
+    createdAt: String(row.createdAt || "").trim(),
+    status: String(row.status || "").trim()
+  }));
+}
+
+function buildCopilotUserOrderHistoryContext(user) {
+  const lines = queryOrderHistoryLineRows(user, "", "Smartphones", 300);
+  const byModel = new Map();
+  for (const row of lines) {
+    const key = row.model || "Unknown";
+    const entry = byModel.get(key) || {
+      model: key,
+      orders: 0,
+      units: 0,
+      weightedValue: 0,
+      lastOfferPrice: 0,
+      lastPurchasedAt: "",
+      lastRequestNumber: ""
+    };
+    entry.orders += 1;
+    entry.units += Number(row.quantity || 0);
+    entry.weightedValue += Number(row.offerPrice || 0) * Number(row.quantity || 0);
+    if (!entry.lastPurchasedAt || new Date(row.createdAt).getTime() > new Date(entry.lastPurchasedAt).getTime()) {
+      entry.lastPurchasedAt = row.createdAt;
+      entry.lastOfferPrice = Number(row.offerPrice || 0);
+      entry.lastRequestNumber = row.requestNumber || "";
+    }
+    byModel.set(key, entry);
+  }
+
+  const topModelPriceStats = [...byModel.values()]
+    .map((row) => ({
+      model: row.model,
+      orders: row.orders,
+      units: row.units,
+      averageOfferPrice: row.units > 0 ? Number((row.weightedValue / row.units).toFixed(2)) : 0,
+      lastOfferPrice: Number((row.lastOfferPrice || 0).toFixed(2)),
+      lastPurchasedAt: row.lastPurchasedAt,
+      lastRequestNumber: row.lastRequestNumber
+    }))
+    .sort((a, b) => b.units - a.units || a.model.localeCompare(b.model))
+    .slice(0, 40);
+
+  return {
+    scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`,
+    totalLineItems: lines.length,
+    topModelPriceStats
+  };
+}
+
+function isOrderHistoryQuestion(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  return /(last time|previous order|previously|what price|price did|average price|avg price|paid|bought|historical|order history)/.test(text);
+}
+
+function answerOrderHistoryQuestion(user, message, selectedCategory) {
+  const rows = queryOrderHistoryLineRows(user, message, selectedCategory, 250);
+  if (!rows.length) return null;
+
+  const text = String(message || "").toLowerCase();
+  const wantsAverage = /\b(average|avg|mean)\b/.test(text);
+  const wantsLast = /\b(last|latest|previous|last time)\b/.test(text) || !wantsAverage;
+
+  const distinctModels = [...new Set(rows.map((r) => r.model).filter(Boolean))];
+  if (distinctModels.length > 3 && !/\biphone|galaxy|pixel|ipad|watch|airpods|macbook|thinkpad|model\b/.test(text)) {
+    const sample = distinctModels.slice(0, 3).join(", ");
+    return {
+      reply: `I found order history for multiple models. Please specify the model (for example: ${sample}).`,
+      action: null
+    };
+  }
+
+  const byModel = new Map();
+  for (const row of rows) {
+    const key = row.model;
+    const entry = byModel.get(key) || {
+      model: key,
+      units: 0,
+      weightedValue: 0,
+      last: row
+    };
+    entry.units += Number(row.quantity || 0);
+    entry.weightedValue += Number(row.offerPrice || 0) * Number(row.quantity || 0);
+    if (new Date(row.createdAt).getTime() > new Date(entry.last.createdAt).getTime()) {
+      entry.last = row;
+    }
+    byModel.set(key, entry);
+  }
+
+  const ranked = [...byModel.values()].sort((a, b) => b.units - a.units || a.model.localeCompare(b.model));
+  const target = ranked[0];
+  const avg = target.units > 0 ? Number((target.weightedValue / target.units).toFixed(2)) : Number(target.last.offerPrice || 0);
+  const last = target.last;
+
+  const parts = [];
+  if (wantsLast) {
+    parts.push(`Last time for ${target.model}: ${formatUsdValue(last.offerPrice)} in ${last.requestNumber} on ${new Date(last.createdAt).toLocaleDateString("en-US")}.`);
+  }
+  if (wantsAverage) {
+    parts.push(`Average historical offer price for ${target.model}: ${formatUsdValue(avg)} across ${target.units} units.`);
+  } else {
+    parts.push(`Historical average for ${target.model}: ${formatUsdValue(avg)} across ${target.units} units.`);
+  }
+  return {
+    reply: parts.join(" "),
+    action: null
+  };
+}
+
 function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
   const asArray = (value) => (Array.isArray(value) ? value.map((x) => String(x || "").trim()).filter(Boolean) : []);
   const normalizeFromAllowed = (value, allowedValues) => {
@@ -1849,7 +2042,7 @@ function buildCopilotAddToRequestAction(message, payload) {
   };
 }
 
-async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history) {
+async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory) {
   const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
   const schema = {
     type: "object",
@@ -1885,8 +2078,10 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Allowed regions: " + catalog.regions.join(", "),
     "Allowed storages: " + catalog.storages.join(", "),
     "Historical completed-sales context (for trend/suggestion questions): " + JSON.stringify(history),
+    "User order-history context (for previous order pricing questions): " + JSON.stringify(userHistory),
     "Only return valid values from the allowed lists; if unknown, omit that filter.",
     "When user asks about historical/completed sales, trends, or suggestions, base your answer on the provided historical context.",
+    "When user asks about previous order prices or averages, base your answer on user order-history context.",
     "Set intent to apply_filters when the user asks to find/search/filter products.",
     "Set intent to choose_filters when ambiguous across multiple categories.",
     "Set intent to none when no filter action should be suggested.",
@@ -1951,9 +2146,15 @@ async function runAiCopilot(user, body) {
   }
 
   try {
+    const deterministicHistoryAnswer = isOrderHistoryQuestion(message)
+      ? answerOrderHistoryQuestion(user, message, selectedCategory)
+      : null;
+    if (deterministicHistoryAnswer) return deterministicHistoryAnswer;
+
     const catalog = buildCopilotCatalogContext();
     const history = buildCopilotHistoricalSalesContext();
-    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history);
+    const userHistory = buildCopilotUserOrderHistoryContext(user);
+    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
     const heuristicPayload = parseAiFilters(message, selectedCategory);
