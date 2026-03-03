@@ -164,6 +164,7 @@ const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
+const AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX = "pcs.aiCopilotWelcomed.";
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1451,6 +1452,9 @@ export default function App() {
   const aiCopilotStateKey = user
     ? `${AI_COPILOT_STATE_KEY_PREFIX}${String(user.id || "anon")}.${normalizeEmail(user.email)}`
     : "";
+  const aiCopilotWelcomedSessionKey = user
+    ? `${AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX}${String(user.id || "anon")}.${normalizeEmail(user.email)}`
+    : "";
   const categoryNames = useMemo(() => [...new Set(products.map((p) => p.category))].sort((a, b) => {
     const aIndex = CATEGORY_ORDER.indexOf(a);
     const bIndex = CATEGORY_ORDER.indexOf(b);
@@ -1881,6 +1885,19 @@ export default function App() {
       panelHeight: Number.isFinite(Number(aiCopilotPanelHeight)) ? Math.max(0, Math.round(Number(aiCopilotPanelHeight))) : 0
     });
   }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages, aiCopilotPanelHeight]);
+
+  useEffect(() => {
+    if (!aiCopilotOpen || !aiCopilotWelcomedSessionKey) return;
+    const alreadyWelcomed = sessionStorage.getItem(aiCopilotWelcomedSessionKey) === "1";
+    if (alreadyWelcomed) return;
+    sessionStorage.setItem(aiCopilotWelcomedSessionKey, "1");
+    setAiCopilotMessages((prev) => [...prev, {
+      role: "assistant",
+      text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request.",
+      action: null,
+      timestamp: new Date().toISOString()
+    }]);
+  }, [aiCopilotOpen, aiCopilotWelcomedSessionKey]);
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
