@@ -1270,7 +1270,7 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   const prompt = String(promptRaw || "").trim();
   if (!prompt) {
     return {
-      selectedCategory: selectedCategoryRaw || "Smartphones",
+      selectedCategory: selectedCategoryRaw || "__ALL__",
       search: "",
       filters: {},
       warnings: ["Enter a prompt to parse filters."]
@@ -1311,7 +1311,7 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
     || (/\biphone\b|\bgalaxy\b|\bpixel\b/.test(text) ? "Smartphones" : "");
   const selectedCategory = allCategoryRequested
     ? "__ALL__"
-    : (categoryByMatch || categoryByModelFamily || categoryByKeyword || selectedCategoryRaw || "Smartphones");
+    : (categoryByMatch || categoryByModelFamily || categoryByKeyword || selectedCategoryRaw || "__ALL__");
 
   const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
   if (matchedManufacturers.length) {
@@ -1354,6 +1354,15 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
     filters,
     warnings
   };
+}
+
+function resolveCopilotSelectedCategoryContext(messageRaw, selectedCategoryRaw) {
+  const selectedCategory = String(selectedCategoryRaw || "").trim() || "__ALL__";
+  const message = String(messageRaw || "").trim();
+  if (selectedCategory === "Smartphones" && !hasExplicitCategoryIntent(message)) {
+    return "__ALL__";
+  }
+  return selectedCategory;
 }
 
 function buildCopilotSuggestedFilterName(parsed) {
@@ -1596,7 +1605,7 @@ function validateNetsuitePayloadWithAi(body) {
 
 function runAiCopilotHeuristic(user, body) {
   const message = String(body?.message || "").trim();
-  const selectedCategory = String(body?.selectedCategory || "").trim() || "Smartphones";
+  const selectedCategory = resolveCopilotSelectedCategoryContext(message, body?.selectedCategory);
   if (!message) {
     return { reply: "Please enter a message.", action: null };
   }
@@ -2233,7 +2242,7 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
 
 async function runAiCopilot(user, body) {
   const message = String(body?.message || "").trim();
-  const selectedCategory = String(body?.selectedCategory || "").trim() || "Smartphones";
+  const selectedCategory = resolveCopilotSelectedCategoryContext(message, body?.selectedCategory);
   if (!message) {
     return { reply: "Please enter a message.", action: null };
   }
