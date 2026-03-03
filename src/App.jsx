@@ -1460,6 +1460,7 @@ export default function App() {
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
   const auth0ExchangeInFlightRef = useRef(false);
+  const auth0LogoutInProgressRef = useRef(false);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
@@ -1566,10 +1567,17 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!auth0IsAuthenticated) {
+      auth0LogoutInProgressRef.current = false;
+    }
+  }, [auth0IsAuthenticated]);
+
+  useEffect(() => {
     let ignore = false;
     async function exchangeAuth0Session() {
       if (!auth0IsAuthenticated) return;
       if (authToken || refreshToken || user) return;
+      if (auth0LogoutInProgressRef.current) return;
       if (auth0ExchangeInFlightRef.current) return;
       try {
         auth0ExchangeInFlightRef.current = true;
@@ -1613,6 +1621,11 @@ export default function App() {
     async function loadMe() {
       if (!authToken && !refreshToken) {
         if (auth0IsAuthenticated) {
+          if (auth0LogoutInProgressRef.current) {
+            setAuthLoading(false);
+            setUser(null);
+            return;
+          }
           setAuthLoading(true);
           return;
         }
@@ -2922,6 +2935,7 @@ export default function App() {
   };
 
   const handleAuth0Login = async () => {
+    auth0LogoutInProgressRef.current = false;
     await loginWithRedirect();
   };
 
@@ -2946,6 +2960,7 @@ export default function App() {
   };
 
   const logout = () => {
+    auth0LogoutInProgressRef.current = true;
     apiRequest("/api/auth/logout", {
       method: "POST",
       token: authToken,
