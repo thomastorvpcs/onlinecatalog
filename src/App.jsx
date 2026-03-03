@@ -3525,35 +3525,74 @@ export default function App() {
                   <button className="ghost-btn" onClick={refreshRequests} disabled={requestsLoading}>Refresh</button>
                 </div>
                 {requestsError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestsError}</p> : null}
-                <table className="table"><thead><tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr></thead><tbody>{requestsLoading ? <tr><td colSpan={5} className="small">Loading requests...</td></tr> : filteredRequests.length ? filteredRequests.map((r) => <tr key={r.id}><td>{r.requestNumber}</td><td>{r.status}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>{formatUsd(r.total)}</td><td><button className="ghost-btn" onClick={() => setActiveRequestId(r.id)}>View</button></td></tr>) : <tr><td colSpan={5} className="small">No requests found.</td></tr>}</tbody></table>
-              </section>
-              <section className="panel">
-                <h3 style={{ marginTop: 0 }}>Request details</h3>
-                {activeRequest ? (
-                  <>
-                    <p className="small" style={{ marginTop: 0 }}>
-                      Dummy estimate: {activeRequest.netsuiteEstimateNumber || "Not created yet"}
-                      {activeRequest.netsuiteStatus ? ` | Sync status: ${activeRequest.netsuiteStatus}` : ""}
-                    </p>
-                    {user?.role === "admin" ? (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                        {["New", "Received", "Estimate Created", "Completed"].map((s) => (
-                          <button
-                            key={`req-status-${s}`}
-                            className="ghost-btn"
-                            style={activeRequest.status === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
-                            disabled={requestStatusUpdateLoading}
-                            onClick={() => setDummyRequestStatusAsAdmin(activeRequest.id, s)}
-                          >
-                            {requestStatusUpdateLoading && activeRequest.status !== s ? "Updating..." : `Set ${s}`}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {requestStatusUpdateError ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestStatusUpdateError}</p> : null}
-                    <table className="table"><thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead><tbody>{activeRequest.lines.map((l, i) => <tr key={`${l.productId}-${i}`}><td>{l.model}</td><td>{l.grade}</td><td>{l.quantity}</td><td>{formatUsd(l.offerPrice)}</td><td>{formatUsd(Number(l.quantity || 0) * Number(l.offerPrice || 0))}</td></tr>)}</tbody></table>
-                  </>
-                ) : <p className="small">Choose a request above.</p>}
+                <table className="table">
+                  <thead>
+                    <tr><th>Request #</th><th>Status</th><th>Created</th><th>Total</th><th /></tr>
+                  </thead>
+                  <tbody>
+                    {requestsLoading ? (
+                      <tr><td colSpan={5} className="small">Loading requests...</td></tr>
+                    ) : filteredRequests.length ? (
+                      filteredRequests.map((r) => (
+                        <React.Fragment key={r.id}>
+                          <tr>
+                            <td>{r.requestNumber}</td>
+                            <td>{r.status}</td>
+                            <td>{new Date(r.createdAt).toLocaleString()}</td>
+                            <td>{formatUsd(r.total)}</td>
+                            <td>
+                              <button className="ghost-btn" onClick={() => setActiveRequestId((prev) => (prev === r.id ? null : r.id))}>
+                                {activeRequestId === r.id ? "Hide" : "View"}
+                              </button>
+                            </td>
+                          </tr>
+                          {activeRequestId === r.id ? (
+                            <tr>
+                              <td colSpan={5}>
+                                <div className="small" style={{ marginBottom: 8 }}>
+                                  Dummy estimate: {r.netsuiteEstimateNumber || "Not created yet"}
+                                  {r.netsuiteStatus ? ` | Sync status: ${r.netsuiteStatus}` : ""}
+                                </div>
+                                {user?.role === "admin" ? (
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                                    {["New", "Received", "Estimate Created", "Completed"].map((s) => (
+                                      <button
+                                        key={`req-status-${r.id}-${s}`}
+                                        className="ghost-btn"
+                                        style={r.status === s ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
+                                        disabled={requestStatusUpdateLoading}
+                                        onClick={() => setDummyRequestStatusAsAdmin(r.id, s)}
+                                      >
+                                        {requestStatusUpdateLoading && r.status !== s ? "Updating..." : `Set ${s}`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {requestStatusUpdateError && activeRequestId === r.id ? <p className="small" style={{ color: "#b91c1c", marginTop: 0 }}>{requestStatusUpdateError}</p> : null}
+                                <table className="table" style={{ margin: 0 }}>
+                                  <thead><tr><th>Product</th><th>Grade</th><th>Qty</th><th>Offer</th><th>Total</th></tr></thead>
+                                  <tbody>
+                                    {r.lines.map((l, i) => (
+                                      <tr key={`${r.id}-${l.productId}-${i}`}>
+                                        <td>{l.model}</td>
+                                        <td>{l.grade}</td>
+                                        <td>{l.quantity}</td>
+                                        <td>{formatUsd(l.offerPrice)}</td>
+                                        <td>{formatUsd(Number(l.quantity || 0) * Number(l.offerPrice || 0))}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </React.Fragment>
+                      ))
+                    ) : (
+                      <tr><td colSpan={5} className="small">No requests found.</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </section>
             </>
           )}
