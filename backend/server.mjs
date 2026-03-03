@@ -2330,12 +2330,121 @@ function isCopilotAddToRequestIntent(messageRaw) {
     && /\b(device|phone|phones|item|items|tablet|laptop|watch|accessor|airpods|iphone|pixel|galaxy)\b/.test(message);
 }
 
+function isCopilotWeeklySpecialIntent(messageRaw) {
+  const message = String(messageRaw || "").toLowerCase();
+  return /\b(weekly\s*special|weekly\s*deal|specials|promotions?|promo|deals?|offers?)\b/.test(message);
+}
+
+function isCopilotAddWeeklySpecialIntent(messageRaw) {
+  const message = String(messageRaw || "").toLowerCase();
+  return /\b(add|include|put|request|quote|order)\b/.test(message)
+    && /\b(weekly\s*special|weekly\s*deal|specials|promotions?|promo|deals?|offers?)\b/.test(message);
+}
+
 function getCopilotDeviceCandidates(payload, limit = 6) {
   const allDevices = getDevices(new URL("http://localhost/api/devices"));
   return allDevices
     .filter((device) => deviceMatchesCopilotPayload(device, payload))
     .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || String(a.model).localeCompare(String(b.model)))
     .slice(0, limit);
+}
+
+function getCopilotWeeklySpecialCandidates(message, selectedCategory, limit = 6) {
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  const parsedPayload = parseAiFilters(message, selectedCategory);
+  const parsedHasFilters = Object.keys(parsedPayload.filters || {}).length > 0 || String(parsedPayload.search || "").trim().length > 0;
+  let weekly = allDevices.filter((device) => device.weeklySpecial === true);
+  if (parsedHasFilters) {
+    weekly = weekly.filter((device) => deviceMatchesCopilotPayload(device, parsedPayload));
+  } else if (selectedCategory && selectedCategory !== "__ALL__") {
+    weekly = weekly.filter((device) => String(device.category || "") === String(selectedCategory));
+  }
+  return weekly
+    .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || Number(a.price || 0) - Number(b.price || 0))
+    .slice(0, limit);
+}
+
+function buildWeeklySpecialResponse(message, selectedCategory) {
+  const quantity = parseCopilotRequestedQuantity(message);
+  const offerPriceRequested = parseCopilotRequestedOfferPrice(message);
+  const isAddIntent = isCopilotAddWeeklySpecialIntent(message);
+  const candidates = getCopilotWeeklySpecialCandidates(message, selectedCategory, 8);
+
+  if (!candidates.length) {
+    return {
+      reply: "I cannot find any weekly specials that match right now. Try removing some filters, changing category, or asking for all current specials.",
+      action: null
+    };
+  }
+
+  if (isAddIntent && candidates.length === 1) {
+    const device = candidates[0];
+    return {
+      reply: `I found one matching weekly special: ${device.manufacturer} ${device.model}. I can add ${quantity} unit${quantity === 1 ? "" : "s"} to Requested items.`,
+      action: {
+        type: "add_to_request",
+        payload: {
+          deviceId: device.id,
+          quantity,
+          offerPrice: offerPriceRequested !== null ? offerPriceRequested : Number(device.price || 0),
+          note: "Added from weekly specials by AI copilot"
+        }
+      }
+    };
+  }
+
+  const options = candidates.map((device) => ({
+    id: `weekly-${String(device.id).replace(/[^a-zA-Z0-9_-]+/g, "-")}`,
+    label: `${device.manufacturer} ${device.model}`,
+    description: `${device.category} | ${device.grade} | ${Number(device.available || 0)} available | $${Number(device.price || 0).toFixed(2)}`,
+    payload: {
+      type: "add_to_request",
+      payload: {
+        deviceId: device.id,
+        quantity,
+        offerPrice: offerPriceRequested !== null ? offerPriceRequested : Number(device.price || 0),
+        note: "Added from weekly specials by AI copilot"
+      }
+    }
+  }));
+
+  const preview = candidates
+    .slice(0, 3)
+    .map((d) => `${d.manufacturer} ${d.model}`)
+    .join(", ");
+
+  if (isAddIntent) {
+    return {
+      reply: `I found multiple weekly specials (${preview}). Choose one below and I'll add ${quantity} unit${quantity === 1 ? "" : "s"} to Requested items.`,
+      action: { type: "choose_devices", options }
+    };
+  }
+
+  return {
+    reply: `Current weekly specials include ${preview}${candidates.length > 3 ? ", and more" : ""}. Tap one below to add it to Requested items.`,
+    action: { type: "choose_devices", options }
+  };
+}
+
+function buildCopilotWeeklySpecialContext(limit = 10) {
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  const weekly = allDevices.filter((device) => device.weeklySpecial === true);
+  return {
+    totalActiveWeeklySpecials: weekly.length,
+    sample: weekly
+      .sort((a, b) => Number(b.available || 0) - Number(a.available || 0))
+      .slice(0, limit)
+      .map((device) => ({
+        id: device.id,
+        category: device.category,
+        manufacturer: device.manufacturer,
+        model: device.model,
+        grade: device.grade,
+        storage: device.storage,
+        price: Number(device.price || 0),
+        available: Number(device.available || 0)
+      }))
+  };
 }
 
 function buildCopilotAddToRequestAction(message, payload) {
@@ -2380,7 +2489,7 @@ function buildCopilotAddToRequestAction(message, payload) {
   };
 }
 
-async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory) {
+async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials) {
   const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
   const schema = {
     type: "object",
@@ -2417,10 +2526,13 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Allowed storages: " + catalog.storages.join(", "),
     "Historical completed-sales context (for trend/suggestion questions): " + JSON.stringify(history),
     "User order-history context (for previous order pricing questions): " + JSON.stringify(userHistory),
+    "Weekly specials context (for promotions/specials questions and proactive suggestions): " + JSON.stringify(weeklySpecials),
     "Only return valid values from the allowed lists; if unknown, omit that filter.",
     "When user asks about historical/completed sales, trends, or suggestions, base your answer on the provided historical context.",
     "When user asks about previous order prices or averages, base your answer on user order-history context.",
     "When user asks for order details, summarize full order-level details from user order-history context.",
+    "When user asks for promotions, deals, or weekly specials, use the weekly specials context in your reply.",
+    "When user asks for recommendations, mention relevant weekly specials when appropriate.",
     "Set intent to apply_filters when the user asks to find/search/filter products.",
     "Set intent to choose_filters when ambiguous across multiple categories.",
     "Set intent to none when no filter action should be suggested.",
@@ -2485,6 +2597,11 @@ async function runAiCopilot(user, body) {
   }
 
   try {
+    const deterministicWeeklySpecial = isCopilotWeeklySpecialIntent(message)
+      ? buildWeeklySpecialResponse(message, selectedCategory)
+      : null;
+    if (deterministicWeeklySpecial) return deterministicWeeklySpecial;
+
     const deterministicAddFromHistory = isAddFromHistoryIntent(message)
       ? buildAddFromHistoricalOrderAction(user, message)
       : null;
@@ -2503,7 +2620,8 @@ async function runAiCopilot(user, body) {
     const catalog = buildCopilotCatalogContext();
     const history = buildCopilotHistoricalSalesContext();
     const userHistory = buildCopilotUserOrderHistoryContext(user);
-    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory);
+    const weeklySpecials = buildCopilotWeeklySpecialContext();
+    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
     const heuristicPayload = parseAiFilters(message, selectedCategory);
