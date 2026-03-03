@@ -79,6 +79,11 @@ Render will run:
 - Build: `npm ci && npm run build`
 - Start: `npm run start`
 
+### Recommended Render Release Flow
+- Use separate staging and production services with separate persistent disks.
+- Use branch promotion: `develop` -> staging, then `develop` -> `main` for production.
+- Full checklist and rollout/rollback steps: [docs/deploy.md](docs/deploy.md)
+
 ## Inventory API
 See docs/inventory-api.md for inventory update endpoint design and examples.
 
@@ -148,9 +153,9 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
   - Seed realistic devices: `POST /api/admin/catalog/seed-real` (defaults to 100 per category)
 
 ## Deploy Startup Seed
-- By default, backend startup auto-seeds realistic catalog rows (`adminreal-*`) so deploys include 100 devices per category with images.
+- Backend startup can seed realistic catalog rows (`adminreal-*`) for initial environments.
 - Optional env vars:
-  - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `true`)
+  - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `false`)
   - `DEPLOY_REAL_SEED_COUNT` (default `100`, max `1000`)
 
 
