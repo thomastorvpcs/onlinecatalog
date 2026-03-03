@@ -1894,9 +1894,11 @@ export default function App() {
   }, [aiCopilotOpen]);
 
   useEffect(() => () => {
-    window.removeEventListener("pointermove", handleAiCopilotResizeMove);
-    window.removeEventListener("pointerup", stopAiCopilotResize);
-    window.removeEventListener("pointercancel", stopAiCopilotResize);
+    window.removeEventListener("mousemove", handleAiCopilotResizeMouseMove);
+    window.removeEventListener("mouseup", stopAiCopilotResize);
+    window.removeEventListener("touchmove", handleAiCopilotResizeTouchMove);
+    window.removeEventListener("touchend", stopAiCopilotResize);
+    window.removeEventListener("touchcancel", stopAiCopilotResize);
   }, []);
 
   useEffect(() => {
@@ -2427,38 +2429,62 @@ export default function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading]);
 
-  function handleAiCopilotResizeMove(event) {
+  function handleAiCopilotResizeAtY(clientY) {
     const state = aiCopilotResizeRef.current;
     if (!state.active) return;
     const minHeight = Math.max(1, Math.round(aiCopilotMinPanelHeight || state.startHeight));
     const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight - 24));
-    const delta = state.startY - Number(event.clientY || 0);
+    const delta = state.startY - Number(clientY || 0);
     const nextHeight = Math.min(maxHeight, Math.max(minHeight, Math.round(state.startHeight + delta)));
     setAiCopilotPanelHeight(nextHeight);
   }
 
-  function stopAiCopilotResize() {
-    aiCopilotResizeRef.current = { active: false, startY: 0, startHeight: 0 };
-    window.removeEventListener("pointermove", handleAiCopilotResizeMove);
-    window.removeEventListener("pointerup", stopAiCopilotResize);
-    window.removeEventListener("pointercancel", stopAiCopilotResize);
+  function handleAiCopilotResizeMouseMove(event) {
+    handleAiCopilotResizeAtY(event.clientY);
   }
 
-  function startAiCopilotResize(event) {
+  function handleAiCopilotResizeTouchMove(event) {
+    const touch = event.touches && event.touches[0];
+    if (!touch) return;
+    handleAiCopilotResizeAtY(touch.clientY);
+  }
+
+  function stopAiCopilotResize() {
+    aiCopilotResizeRef.current = { active: false, startY: 0, startHeight: 0 };
+    window.removeEventListener("mousemove", handleAiCopilotResizeMouseMove);
+    window.removeEventListener("mouseup", stopAiCopilotResize);
+    window.removeEventListener("touchmove", handleAiCopilotResizeTouchMove);
+    window.removeEventListener("touchend", stopAiCopilotResize);
+    window.removeEventListener("touchcancel", stopAiCopilotResize);
+  }
+
+  function beginAiCopilotResize(startY) {
     if (!aiCopilotOpen) return;
     const panelNode = aiCopilotPanelRef.current;
     if (!panelNode) return;
-    event.preventDefault();
     const measured = Math.max(1, Math.round(panelNode.getBoundingClientRect().height));
     const startHeight = Math.max(aiCopilotMinPanelHeight || measured, aiCopilotPanelHeight || measured);
     aiCopilotResizeRef.current = {
       active: true,
-      startY: Number(event.clientY || 0),
+      startY: Number(startY || 0),
       startHeight
     };
-    window.addEventListener("pointermove", handleAiCopilotResizeMove);
-    window.addEventListener("pointerup", stopAiCopilotResize);
-    window.addEventListener("pointercancel", stopAiCopilotResize);
+    window.addEventListener("mousemove", handleAiCopilotResizeMouseMove);
+    window.addEventListener("mouseup", stopAiCopilotResize);
+    window.addEventListener("touchmove", handleAiCopilotResizeTouchMove, { passive: true });
+    window.addEventListener("touchend", stopAiCopilotResize);
+    window.addEventListener("touchcancel", stopAiCopilotResize);
+  }
+
+  function startAiCopilotResizeMouse(event) {
+    event.preventDefault();
+    beginAiCopilotResize(event.clientY);
+  }
+
+  function startAiCopilotResizeTouch(event) {
+    const touch = event.touches && event.touches[0];
+    if (!touch) return;
+    beginAiCopilotResize(touch.clientY);
   }
 
   const runAiCopilot = async () => {
@@ -3845,7 +3871,8 @@ export default function App() {
             <button
               type="button"
               className="ai-chatbot-resize-handle"
-              onPointerDown={startAiCopilotResize}
+              onMouseDown={startAiCopilotResizeMouse}
+              onTouchStart={startAiCopilotResizeTouch}
               aria-label="Resize chat box height"
               title="Drag up or down to resize"
             />

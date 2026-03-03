@@ -995,7 +995,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .ai-chatbot-panel {
   width: min(420px, 92vw);
-  max-height: min(72vh, 620px);
+  max-height: none;
   border: 1px solid #d7dbe2;
   border-radius: 12px;
   background: #fff;
