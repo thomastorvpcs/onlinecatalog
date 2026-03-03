@@ -1443,7 +1443,9 @@ export default function App() {
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
-  const aiCopilotStateKey = user ? `${AI_COPILOT_STATE_KEY_PREFIX}${normalizeEmail(user.email)}` : "";
+  const aiCopilotStateKey = user
+    ? `${AI_COPILOT_STATE_KEY_PREFIX}${String(user.id || "anon")}.${normalizeEmail(user.email)}`
+    : "";
   const categoryNames = useMemo(() => [...new Set(products.map((p) => p.category))].sort((a, b) => {
     const aIndex = CATEGORY_ORDER.indexOf(a);
     const bIndex = CATEGORY_ORDER.indexOf(b);
