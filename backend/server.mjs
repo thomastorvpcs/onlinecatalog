@@ -3324,6 +3324,9 @@ async function fetchBoomiInventory() {
 
   const extracted = extractBoomiRowsFromPayload(payload);
   if (Array.isArray(extracted)) return extracted;
+  if (payload && typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length === 0) {
+    return [];
+  }
   const topLevelKeys = payload && typeof payload === "object"
     ? Object.keys(payload).slice(0, 12).join(", ")
     : typeof payload;
