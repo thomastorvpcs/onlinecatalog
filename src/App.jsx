@@ -3417,6 +3417,9 @@ export default function App() {
   const canCarousel = modalImages.length > 1;
   const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
   const modalProductUnavailable = activeProduct ? activeProduct.available < 1 : false;
+  const modalAvailableLocations = activeProduct && activeProduct.locations && typeof activeProduct.locations === "object"
+    ? Object.entries(activeProduct.locations).filter(([, qty]) => Number(qty || 0) > 0)
+    : [];
   const modalOfferPriceInvalid = productOfferPrice === "" || Number(productOfferPrice) < 0;
   const modalQtyInvalid = productQty === "" || !Number.isFinite(Number(productQty)) || Number(productQty) < 1;
   const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
@@ -4256,7 +4259,7 @@ export default function App() {
               </div>
               <div>
                 {modalProductUnavailable ? <div className="modal-box modal-warning-box"><p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>Currently not available.</p></div> : null}
-                <div className="modal-box" style={{ background: "#eef9f3", marginTop: modalProductUnavailable ? 10 : 0 }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.availableDisplay || activeProduct.available}</strong></p><table className="table"><tbody>{Object.entries(activeProduct.locations).map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{activeProduct.locationDisplay?.[loc] || q}</td></tr>)}</tbody></table></div>
+                <div className="modal-box" style={{ background: "#eef9f3", marginTop: modalProductUnavailable ? 10 : 0 }}><h4 style={{ marginTop: 0 }}>Availability</h4><p className="small">Total across all locations <strong>{activeProduct.availableDisplay || activeProduct.available}</strong></p><table className="table"><tbody>{modalAvailableLocations.map(([loc, q]) => <tr key={loc}><td>{loc}</td><td>{activeProduct.locationDisplay?.[loc] || q}</td></tr>)}</tbody></table>{!modalAvailableLocations.length ? <p className="small" style={{ marginTop: 8 }}>No locations currently have available inventory for this device.</p> : null}</div>
                 <div className="modal-box" style={{ marginTop: 10 }}>
                   <h4 style={{ marginTop: 0 }}>Product notes</h4>
                   <p className="small" style={{ margin: 0 }}>{activeProduct.productNotes || "No notes provided."}</p>
