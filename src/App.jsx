@@ -164,6 +164,7 @@ const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
+const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
 const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
@@ -1883,12 +1884,14 @@ export default function App() {
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
-    const panelNode = aiCopilotPanelRef.current;
-    if (!panelNode) return;
     const frame = window.requestAnimationFrame(() => {
-      const measured = Math.max(1, Math.round(panelNode.getBoundingClientRect().height));
-      setAiCopilotMinPanelHeight((prev) => (prev > 0 ? prev : measured));
-      setAiCopilotPanelHeight((prev) => (prev > 0 ? prev : measured));
+      const maxAllowed = Math.max(260, Math.floor(window.innerHeight - 24));
+      const baseline = Math.max(260, Math.min(AI_COPILOT_DEFAULT_PANEL_HEIGHT, maxAllowed));
+      setAiCopilotMinPanelHeight((prev) => (prev > 0 ? prev : baseline));
+      setAiCopilotPanelHeight((prev) => {
+        if (prev > 0) return Math.min(Math.max(prev, baseline), maxAllowed);
+        return baseline;
+      });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [aiCopilotOpen]);
