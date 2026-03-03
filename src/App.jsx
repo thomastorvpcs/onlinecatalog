@@ -1393,6 +1393,8 @@ export default function App() {
   const [historySeedUserId, setHistorySeedUserId] = useState("");
   const [historySeedLoading, setHistorySeedLoading] = useState(false);
   const [historySeedNotice, setHistorySeedNotice] = useState("");
+  const [historyChatResetLoading, setHistoryChatResetLoading] = useState(false);
+  const [historyChatResetNotice, setHistoryChatResetNotice] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserCompany, setNewUserCompany] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
@@ -3015,6 +3017,43 @@ export default function App() {
       setHistorySeedLoading(false);
     }
   };
+
+  const resetAiChatHistoryForUserAsAdmin = () => {
+    if (!historySeedUserId) {
+      setUsersError("Select a user first.");
+      return;
+    }
+    try {
+      setHistoryChatResetLoading(true);
+      setUsersError("");
+      setHistoryChatResetNotice("");
+      const target = users.find((u) => String(u.id) === String(historySeedUserId));
+      if (!target) {
+        setUsersError("Selected user was not found.");
+        return;
+      }
+      const targetEmail = normalizeEmail(target.email);
+      const targetStateKey = `${AI_COPILOT_STATE_KEY_PREFIX}${String(target.id || "anon")}.${targetEmail}`;
+      const targetWelcomedKey = `${AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX}${String(target.id || "anon")}.${targetEmail}`;
+      localStorage.removeItem(targetStateKey);
+      sessionStorage.removeItem(targetWelcomedKey);
+
+      if (String(user?.id || "") === String(target.id || "") && normalizeEmail(user?.email) === targetEmail) {
+        setAiCopilotMessages([]);
+        setAiCopilotInput("");
+        setAiCopilotError("");
+        setAiCopilotOpen(false);
+        setAiCopilotPanelHeight(0);
+        setAiCopilotMinPanelHeight(0);
+      }
+
+      setHistoryChatResetNotice(`AI chat history was cleared for ${target.email}.`);
+    } catch (error) {
+      setUsersError(error.message || "Failed to clear AI chat history.");
+    } finally {
+      setHistoryChatResetLoading(false);
+    }
+  };
   const matchesOtherFilters = (device, excludedField, activeFilters) => {
     for (const field of fields) {
       if (field.key === excludedField) continue;
@@ -3828,11 +3867,15 @@ export default function App() {
                       </option>
                     ))}
                   </select>
-                  <button type="button" style={{ width: "auto" }} onClick={seedHistoryForUserAsAdmin} disabled={historySeedLoading || !historySeedUserId}>
+                  <button type="button" style={{ width: "auto" }} onClick={seedHistoryForUserAsAdmin} disabled={historySeedLoading || historyChatResetLoading || !historySeedUserId}>
                     {historySeedLoading ? "Creating..." : "Create 20 Completed Estimates"}
+                  </button>
+                  <button type="button" className="delete-btn" style={{ width: "auto" }} onClick={resetAiChatHistoryForUserAsAdmin} disabled={historySeedLoading || historyChatResetLoading || !historySeedUserId}>
+                    {historyChatResetLoading ? "Clearing..." : "Clear AI Chat History"}
                   </button>
                 </div>
                 {historySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historySeedNotice}</p> : null}
+                {historyChatResetNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historyChatResetNotice}</p> : null}
               </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">
