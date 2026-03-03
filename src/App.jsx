@@ -1429,6 +1429,8 @@ export default function App() {
   const [aiCopilotLoading, setAiCopilotLoading] = useState(false);
   const [aiCopilotError, setAiCopilotError] = useState("");
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
+  const [aiCopilotPanelHeight, setAiCopilotPanelHeight] = useState(0);
+  const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -1438,6 +1440,8 @@ export default function App() {
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
   const aiCopilotFeedRef = useRef(null);
+  const aiCopilotPanelRef = useRef(null);
+  const aiCopilotResizeRef = useRef({ active: false, startY: 0, startHeight: 0 });
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
 
@@ -1516,6 +1520,8 @@ export default function App() {
     setAiCopilotInput("");
     setAiCopilotError("");
     setAiCopilotOpen(false);
+    setAiCopilotPanelHeight(0);
+    setAiCopilotMinPanelHeight(0);
     aiCopilotPendingResultCheckRef.current = null;
     setAdminAiAnomalies([]);
     setAdminAiInsights(null);
@@ -1861,6 +1867,8 @@ export default function App() {
       : [];
     setAiCopilotMessages(messages);
     setAiCopilotOpen(state?.open === true);
+    setAiCopilotPanelHeight(Number.isFinite(Number(state?.panelHeight)) ? Math.max(0, Math.round(Number(state.panelHeight))) : 0);
+    setAiCopilotMinPanelHeight(0);
     aiCopilotStateLoadedRef.current = true;
   }, [aiCopilotStateKey]);
 
@@ -1868,9 +1876,28 @@ export default function App() {
     if (!aiCopilotStateKey || !aiCopilotStateLoadedRef.current) return;
     writeJson(localStorage, aiCopilotStateKey, {
       open: aiCopilotOpen,
-      messages: aiCopilotMessages.slice(-30)
+      messages: aiCopilotMessages.slice(-30),
+      panelHeight: Number.isFinite(Number(aiCopilotPanelHeight)) ? Math.max(0, Math.round(Number(aiCopilotPanelHeight))) : 0
     });
-  }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages]);
+  }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages, aiCopilotPanelHeight]);
+
+  useEffect(() => {
+    if (!aiCopilotOpen) return;
+    const panelNode = aiCopilotPanelRef.current;
+    if (!panelNode) return;
+    const frame = window.requestAnimationFrame(() => {
+      const measured = Math.max(1, Math.round(panelNode.getBoundingClientRect().height));
+      setAiCopilotMinPanelHeight((prev) => (prev > 0 ? prev : measured));
+      setAiCopilotPanelHeight((prev) => (prev > 0 ? prev : measured));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [aiCopilotOpen]);
+
+  useEffect(() => () => {
+    window.removeEventListener("pointermove", handleAiCopilotResizeMove);
+    window.removeEventListener("pointerup", stopAiCopilotResize);
+    window.removeEventListener("pointercancel", stopAiCopilotResize);
+  }, []);
 
   useEffect(() => {
     setAiRequestReview(null);
@@ -2399,6 +2426,40 @@ export default function App() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading]);
+
+  function handleAiCopilotResizeMove(event) {
+    const state = aiCopilotResizeRef.current;
+    if (!state.active) return;
+    const minHeight = Math.max(1, Math.round(aiCopilotMinPanelHeight || state.startHeight));
+    const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight - 24));
+    const delta = state.startY - Number(event.clientY || 0);
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, Math.round(state.startHeight + delta)));
+    setAiCopilotPanelHeight(nextHeight);
+  }
+
+  function stopAiCopilotResize() {
+    aiCopilotResizeRef.current = { active: false, startY: 0, startHeight: 0 };
+    window.removeEventListener("pointermove", handleAiCopilotResizeMove);
+    window.removeEventListener("pointerup", stopAiCopilotResize);
+    window.removeEventListener("pointercancel", stopAiCopilotResize);
+  }
+
+  function startAiCopilotResize(event) {
+    if (!aiCopilotOpen) return;
+    const panelNode = aiCopilotPanelRef.current;
+    if (!panelNode) return;
+    event.preventDefault();
+    const measured = Math.max(1, Math.round(panelNode.getBoundingClientRect().height));
+    const startHeight = Math.max(aiCopilotMinPanelHeight || measured, aiCopilotPanelHeight || measured);
+    aiCopilotResizeRef.current = {
+      active: true,
+      startY: Number(event.clientY || 0),
+      startHeight
+    };
+    window.addEventListener("pointermove", handleAiCopilotResizeMove);
+    window.addEventListener("pointerup", stopAiCopilotResize);
+    window.addEventListener("pointercancel", stopAiCopilotResize);
+  }
 
   const runAiCopilot = async () => {
     if (!authToken || !user || aiCopilotLoading) return;
@@ -3773,7 +3834,21 @@ export default function App() {
 
       <div className={`ai-chatbot ${aiCopilotOpen ? "open" : "closed"}`}>
         {aiCopilotOpen ? (
-          <div className="ai-chatbot-panel">
+          <div
+            className="ai-chatbot-panel"
+            ref={aiCopilotPanelRef}
+            style={{
+              ...(aiCopilotPanelHeight > 0 ? { height: aiCopilotPanelHeight } : {}),
+              ...(aiCopilotMinPanelHeight > 0 ? { minHeight: aiCopilotMinPanelHeight } : {})
+            }}
+          >
+            <button
+              type="button"
+              className="ai-chatbot-resize-handle"
+              onPointerDown={startAiCopilotResize}
+              aria-label="Resize chat box height"
+              title="Drag up or down to resize"
+            />
             <div className="ai-chatbot-head">
               <div className="ai-chatbot-head-title">
                 <span className="ai-chatbot-icon" aria-hidden="true">
