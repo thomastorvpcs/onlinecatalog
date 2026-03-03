@@ -3888,7 +3888,17 @@ export default function App() {
                 </span>
                 <div className="small">Available across the app</div>
               </div>
-              <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setAiCopilotOpen(false)}>Minimize</button>
+              <button
+                type="button"
+                className="ai-chatbot-minimize-btn"
+                onClick={() => setAiCopilotOpen(false)}
+                aria-label="Minimize chatbot"
+                title="Minimize"
+              >
+                <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+                  <path d="M5 12.75h14a.75.75 0 0 0 0-1.5H5a.75.75 0 0 0 0 1.5z" />
+                </svg>
+              </button>
             </div>
             <div className="ai-copilot-feed" ref={aiCopilotFeedRef}>
               {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (

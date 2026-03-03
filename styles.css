@@ -1043,6 +1043,33 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 4px;
 }
 
+.ai-chatbot-minimize-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid #c8d3e6;
+  background: #fff;
+  color: #0f4fbf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ai-chatbot-minimize-btn:hover {
+  background: #edf4ff;
+  border-color: #98b9eb;
+}
+
+.ai-chatbot-minimize-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  display: block;
+}
+
 .ai-chatbot-icon {
   width: 24px;
   height: 24px;
