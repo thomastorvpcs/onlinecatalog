@@ -1842,16 +1842,111 @@ function buildCopilotUserOrderHistoryContext(user) {
     .sort((a, b) => b.units - a.units || a.model.localeCompare(b.model))
     .slice(0, 40);
 
+  const recentOrders = (() => {
+    const clauses = [];
+    const params = [];
+    if (user?.role !== "admin") {
+      clauses.push("qr.company = ?");
+      params.push(String(user?.company || "").trim());
+    }
+    const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return db.prepare(`
+      SELECT
+        qr.request_number AS requestNumber,
+        qr.status AS status,
+        qr.total_amount AS totalAmount,
+        qr.currency_code AS currencyCode,
+        qr.created_at AS createdAt,
+        COUNT(qrl.id) AS lineCount
+      FROM quote_requests qr
+      LEFT JOIN quote_request_lines qrl ON qrl.request_id = qr.id
+      ${whereSql}
+      GROUP BY qr.id, qr.request_number, qr.status, qr.total_amount, qr.currency_code, qr.created_at
+      ORDER BY qr.created_at DESC
+      LIMIT 8
+    `).all(...params).map((row) => ({
+      requestNumber: String(row.requestNumber || "").trim(),
+      status: String(row.status || "").trim(),
+      totalAmount: Number(row.totalAmount || 0),
+      currencyCode: String(row.currencyCode || "USD").trim(),
+      createdAt: String(row.createdAt || "").trim(),
+      lineCount: Number(row.lineCount || 0)
+    }));
+  })();
+
   return {
     scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`,
     totalLineItems: lines.length,
-    topModelPriceStats
+    topModelPriceStats,
+    recentOrders
   };
 }
 
 function isOrderHistoryQuestion(messageRaw) {
   const text = String(messageRaw || "").toLowerCase();
   return /(last time|previous order|previously|what price|price did|average price|avg price|paid|bought|historical|order history)/.test(text);
+}
+
+function isOrderDetailsQuestion(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  return /(entire order|whole order|order details|show order|order summary|what is in order|line items|lines in order|details about order)/.test(text)
+    || /\b(req-\d{4}-\d{4}|hist-\d{4}|hist-est-\d{4}|est-\d{4}-\d{4})\b/i.test(text);
+}
+
+function extractOrderReference(messageRaw) {
+  const message = String(messageRaw || "");
+  const match = message.match(/\b(req-\d{4}-\d{4}|hist-\d{4}|hist-est-\d{4}|est-\d{4}-\d{4})\b/i);
+  return match ? String(match[1] || "").toUpperCase() : "";
+}
+
+function queryOrdersForCopilot(user, limit = 8) {
+  const clauses = [];
+  const params = [];
+  if (user?.role !== "admin") {
+    clauses.push("company = ?");
+    params.push(String(user?.company || "").trim());
+  }
+  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  return db.prepare(`
+    SELECT *
+    FROM quote_requests
+    ${whereSql}
+    ORDER BY created_at DESC
+    LIMIT ${Math.max(1, Math.min(40, Number(limit || 8)))}
+  `).all(...params);
+}
+
+function answerOrderDetailsQuestion(user, message) {
+  const orderRef = extractOrderReference(message);
+  const rows = queryOrdersForCopilot(user, 15);
+  if (!rows.length) return null;
+
+  const targetRow = orderRef
+    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
+    : rows[0];
+
+  if (orderRef && !targetRow) {
+    return {
+      reply: `I couldn't find order ${orderRef} in your accessible order history.`,
+      action: null
+    };
+  }
+
+  if (!targetRow) return null;
+  const mapped = mapRequestRow(targetRow);
+  const lineDetails = Array.isArray(mapped.lines) ? mapped.lines : [];
+  const linePreview = lineDetails.slice(0, 8).map((line) => {
+    const qty = Number(line.quantity || 0);
+    const price = Number(line.offerPrice || 0);
+    return `${line.model} (${line.grade}) x${qty} @ ${formatUsdValue(price)} = ${formatUsdValue(qty * price)}`;
+  });
+  const moreCount = Math.max(0, lineDetails.length - linePreview.length);
+  const header = `Order ${mapped.requestNumber} is ${mapped.status}. Created ${new Date(mapped.createdAt).toLocaleDateString("en-US")}. Total ${formatUsdValue(mapped.total)} (${lineDetails.length} lines).`;
+  const linesText = linePreview.length ? ` Lines: ${linePreview.join("; ")}${moreCount ? `; +${moreCount} more line(s).` : "."}` : " This order has no line items.";
+  return {
+    reply: `${header}${linesText}`,
+    action: null
+  };
 }
 
 function answerOrderHistoryQuestion(user, message, selectedCategory) {
@@ -2085,6 +2180,7 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Only return valid values from the allowed lists; if unknown, omit that filter.",
     "When user asks about historical/completed sales, trends, or suggestions, base your answer on the provided historical context.",
     "When user asks about previous order prices or averages, base your answer on user order-history context.",
+    "When user asks for order details, summarize full order-level details from user order-history context.",
     "Set intent to apply_filters when the user asks to find/search/filter products.",
     "Set intent to choose_filters when ambiguous across multiple categories.",
     "Set intent to none when no filter action should be suggested.",
@@ -2149,6 +2245,11 @@ async function runAiCopilot(user, body) {
   }
 
   try {
+    const deterministicOrderDetailsAnswer = isOrderDetailsQuestion(message)
+      ? answerOrderDetailsQuestion(user, message)
+      : null;
+    if (deterministicOrderDetailsAnswer) return deterministicOrderDetailsAnswer;
+
     const deterministicHistoryAnswer = isOrderHistoryQuestion(message)
       ? answerOrderHistoryQuestion(user, message, selectedCategory)
       : null;
