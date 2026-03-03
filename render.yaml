@@ -2,10 +2,16 @@ services:
   - type: web
     name: onlinecatalog
     env: node
-    plan: free
+    plan: starter
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
+    disk:
+      name: onlinecatalog-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
+      - key: DB_PATH
+        value: /var/data/catalog.sqlite
       - key: AUTO_SEED_REAL_ON_STARTUP
         value: "false"
