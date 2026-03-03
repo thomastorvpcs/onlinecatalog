@@ -308,11 +308,7 @@ function initDb() {
   if (count === 0) {
     db.exec(readFileSync(seedPath, "utf8"));
   }
-  if (AUTO_SEED_REAL_ON_STARTUP) {
-    db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
-  } else {
-    ensureLargeCatalog();
-  }
+  ensureLargeCatalog();
   ensureDeployRealSeed();
   ensureDefaultUsers();
   ensureHistoricalCompletedEstimates();
@@ -320,6 +316,11 @@ function initDb() {
 
 function ensureDeployRealSeed() {
   if (!AUTO_SEED_REAL_ON_STARTUP) return;
+  const existingAdminRealCount = Number(
+    db.prepare("SELECT COUNT(*) AS count FROM devices WHERE id LIKE 'adminreal-%'").get().count || 0
+  );
+  if (existingAdminRealCount > 0) return;
+  db.exec("DELETE FROM devices WHERE id LIKE 'gen-%'");
   seedAdminRealDevicesPerCategory(DEPLOY_REAL_SEED_COUNT);
 }
 
