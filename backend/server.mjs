@@ -1250,6 +1250,24 @@ async function verifyAuth0AccessToken(accessToken) {
   return payload;
 }
 
+async function fetchAuth0UserInfo(accessToken) {
+  const token = String(accessToken || "").trim();
+  if (!token || !AUTH0_DOMAIN) return null;
+  try {
+    const userInfo = await requestJson(`https://${AUTH0_DOMAIN}/userinfo`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      errorPrefix: "Auth0 userinfo request"
+    });
+    return userInfo && typeof userInfo === "object" ? userInfo : null;
+  } catch {
+    return null;
+  }
+}
+
 function inferCompanyFromEmail(email) {
   const normalized = normalizeEmail(email);
   const domain = normalized.split("@")[1] || "";
@@ -1257,9 +1275,9 @@ function inferCompanyFromEmail(email) {
   return root.slice(0, 60).toUpperCase() || "Unknown";
 }
 
-function upsertUserFromAuth0Claims(claims) {
+function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
   const auth0Sub = String(claims?.sub || "").trim();
-  const email = normalizeEmail(claims?.email || "");
+  const email = normalizeEmail(claims?.email || fallbackEmail || "");
   if (!auth0Sub) {
     throw new Error("Auth0 token missing subject (sub).");
   }
@@ -4129,7 +4147,8 @@ const server = createServer(async (req, res) => {
       const accessToken = String(body.accessToken || getAuthToken(req) || "").trim();
       try {
         const claims = await verifyAuth0AccessToken(accessToken);
-        const row = upsertUserFromAuth0Claims(claims);
+        const userInfo = await fetchAuth0UserInfo(accessToken);
+        const row = upsertUserFromAuth0Claims(claims, String(userInfo?.email || ""));
         if (!row?.id) {
           json(req, res, 401, { error: "Unauthorized." });
           return;
