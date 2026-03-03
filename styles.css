@@ -230,16 +230,29 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 10px;
 }
 
-.auth0-chip {
-  width: fit-content;
-  border-radius: 999px;
-  border: 1px solid #bfd2f2;
-  background: #edf4ff;
-  color: #0f4fbf;
-  font-size: 0.78rem;
+.auth0-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.auth0-provider {
+  color: #2563eb;
+  font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: 0.2px;
-  padding: 6px 10px;
+}
+
+.auth0-ai-pill {
+  border-radius: 999px;
+  border: 1px solid #9fd2ff;
+  background: linear-gradient(180deg, #f1f9ff 0%, #e6f4ff 100%);
+  color: #075985;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.15px;
+  padding: 5px 10px;
 }
 
 .auth0-title {

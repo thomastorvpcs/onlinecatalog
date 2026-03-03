@@ -4405,7 +4405,10 @@ function Login({
             <p className="auth-hero-text">Sign in with Auth0 to continue.</p>
           </aside>
           <div className="auth-card auth0-card">
-            <div className="auth0-chip">Secure Login by Auth0</div>
+            <div className="auth0-meta-row">
+              <div className="auth0-provider">Auth0 SSO</div>
+              <div className="auth0-ai-pill" aria-label="AI powered">AI Powered</div>
+            </div>
             <h1 className="auth-title auth0-title">Sign In To Continue</h1>
             <p className="auth0-subtitle">Use your company account to access catalog, requests, and AI copilot.</p>
             <div className="auth0-actions">
