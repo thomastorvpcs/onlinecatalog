@@ -1774,6 +1774,81 @@ function buildCopilotNoMatchReply(payload) {
   return "I cannot find matching devices right now. Try broadening your filters or search text.";
 }
 
+function parseCopilotRequestedQuantity(messageRaw) {
+  const message = String(messageRaw || "");
+  const directQty = message.match(/\bqty\s*[:=]?\s*(\d{1,4})\b/i)
+    || message.match(/\b(\d{1,4})\s*(x|units?|pcs?|pieces?)\b/i)
+    || message.match(/\badd\s+(\d{1,4})\b/i);
+  const qty = Number(directQty?.[1] || 1);
+  if (!Number.isInteger(qty) || qty < 1) return 1;
+  return Math.min(9999, qty);
+}
+
+function parseCopilotRequestedOfferPrice(messageRaw) {
+  const message = String(messageRaw || "");
+  const explicit = message.match(/\b(?:offer\s*price|price|at)\s*[:=]?\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/i);
+  const dollar = message.match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+  const value = Number(explicit?.[1] || dollar?.[1] || NaN);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Number(value.toFixed(2));
+}
+
+function isCopilotAddToRequestIntent(messageRaw) {
+  const message = String(messageRaw || "").toLowerCase();
+  return /\b(add|include|put|request|quote|order)\b/.test(message)
+    && /\b(device|phone|phones|item|items|tablet|laptop|watch|accessor|airpods|iphone|pixel|galaxy)\b/.test(message);
+}
+
+function getCopilotDeviceCandidates(payload, limit = 6) {
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  return allDevices
+    .filter((device) => deviceMatchesCopilotPayload(device, payload))
+    .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || String(a.model).localeCompare(String(b.model)))
+    .slice(0, limit);
+}
+
+function buildCopilotAddToRequestAction(message, payload) {
+  const quantity = parseCopilotRequestedQuantity(message);
+  const offerPriceRequested = parseCopilotRequestedOfferPrice(message);
+  const candidates = getCopilotDeviceCandidates(payload, 6);
+  if (!candidates.length) return null;
+
+  if (candidates.length === 1) {
+    const device = candidates[0];
+    return {
+      reply: `I found ${device.manufacturer} ${device.model}. I can add ${quantity} unit${quantity === 1 ? "" : "s"} to Requested items.`,
+      action: {
+        type: "add_to_request",
+        payload: {
+          deviceId: device.id,
+          quantity,
+          offerPrice: offerPriceRequested !== null ? offerPriceRequested : Number(device.price || 0),
+          note: "Added by AI copilot"
+        }
+      }
+    };
+  }
+
+  const options = candidates.map((device) => ({
+    id: `dev-${String(device.id).replace(/[^a-zA-Z0-9_-]+/g, "-")}`,
+    label: `${device.manufacturer} ${device.model}`,
+    description: `${device.category} | ${device.grade} | ${Number(device.available || 0)} available`,
+    payload: {
+      type: "add_to_request",
+      payload: {
+        deviceId: device.id,
+        quantity,
+        offerPrice: offerPriceRequested !== null ? offerPriceRequested : Number(device.price || 0),
+        note: "Added by AI copilot"
+      }
+    }
+  }));
+  return {
+    reply: `I found multiple matching devices. Which one should I add (${quantity} unit${quantity === 1 ? "" : "s"})?`,
+    action: { type: "choose_devices", options }
+  };
+}
+
 async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history) {
   const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
   const schema = {
@@ -1881,9 +1956,24 @@ async function runAiCopilot(user, body) {
     const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
+    const heuristicPayload = parseAiFilters(message, selectedCategory);
+    const heuristicHasFilters = Object.keys(heuristicPayload.filters || {}).length > 0 || String(heuristicPayload.search || "").trim().length > 0;
+    const payloadForAdd = hasFilters ? normalizedPayload : (heuristicHasFilters ? heuristicPayload : normalizedPayload);
     const suggestedName = buildCopilotSuggestedFilterName(normalizedPayload);
     const options = buildCopilotFilterOptions(message, normalizedPayload);
     const intent = String(plan?.intent || "none").trim();
+    const addIntent = isCopilotAddToRequestIntent(message);
+
+    if (addIntent && (hasFilters || heuristicHasFilters)) {
+      const addAction = buildCopilotAddToRequestAction(message, payloadForAdd);
+      if (!addAction) {
+        return {
+          reply: buildCopilotNoMatchReply(payloadForAdd),
+          action: null
+        };
+      }
+      return addAction;
+    }
 
     let action = null;
     if (intent === "choose_filters" && options.length > 1) {

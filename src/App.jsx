@@ -2128,7 +2128,27 @@ export default function App() {
   };
 
   const applyCopilotAction = (action) => {
-    if (!action || action.type !== "apply_filters") return;
+    if (!action || typeof action !== "object") return;
+    if (action.type === "add_to_request") {
+      const payload = action.payload && typeof action.payload === "object" ? action.payload : {};
+      const deviceId = String(payload.deviceId || payload.productId || "").trim();
+      const product = products.find((p) => String(p.id) === deviceId);
+      if (!product) {
+        setAiCopilotMessages((prev) => [...prev, {
+          role: "assistant",
+          text: "I couldn't find that device in the current catalog, so I could not add it.",
+          action: null,
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+      const quantity = Math.max(1, Math.min(9999, Math.floor(Number(payload.quantity || 1))));
+      const offerPrice = Number.isFinite(Number(payload.offerPrice)) ? Number(payload.offerPrice) : Number(product.price || 0);
+      const note = String(payload.note || "Added by AI copilot").slice(0, 200);
+      addToCart(product, quantity, note, offerPrice);
+      return;
+    }
+    if (action.type !== "apply_filters") return;
     const payload = sanitizeFilterPayload(action.payload);
     const matchingCount = products.filter((p) => deviceMatchesFilterPayload(p, payload)).length;
     if (matchingCount <= 0) {
@@ -3499,7 +3519,12 @@ export default function App() {
                         Apply Suggested Filters
                       </button>
                     ) : null}
-                    {message.role === "assistant" && message.action?.type === "choose_filters" && Array.isArray(message.action.options) ? (
+                    {message.role === "assistant" && message.action?.type === "add_to_request" ? (
+                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                        Add To Requested Items
+                      </button>
+                    ) : null}
+                    {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && Array.isArray(message.action.options) ? (
                       <div className="ai-copilot-choice-list">
                         {message.action.options.map((option) => (
                           <button
@@ -3507,7 +3532,12 @@ export default function App() {
                             type="button"
                             className="ai-copilot-choice-btn"
                             title={option.description || option.label}
-                            onClick={() => applyCopilotAction({ type: "apply_filters", payload: option.payload })}
+                            onClick={() => {
+                              const nextAction = option?.payload && typeof option.payload === "object" && option.payload.type
+                                ? option.payload
+                                : { type: "apply_filters", payload: option.payload };
+                              applyCopilotAction(nextAction);
+                            }}
                           >
                             {option.label}
                           </button>
