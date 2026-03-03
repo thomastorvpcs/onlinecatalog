@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
@@ -284,6 +285,9 @@ const OPENAI_BASE_URL = String(process.env.OPENAI_BASE_URL || "https://api.opena
 const AI_COPILOT_MODEL = String(process.env.AI_COPILOT_MODEL || "gpt-4o-mini").trim();
 const AI_COPILOT_REAL_MODEL_ENABLED = String(process.env.AI_COPILOT_REAL_MODEL_ENABLED || (OPENAI_API_KEY ? "true" : "false")).toLowerCase() === "true";
 const AI_COPILOT_DEBUG_ERRORS = String(process.env.AI_COPILOT_DEBUG_ERRORS || "false").toLowerCase() === "true";
+const AUTH0_DOMAIN = String(process.env.AUTH0_DOMAIN || process.env.VITE_AUTH0_DOMAIN || "").trim();
+const AUTH0_AUDIENCE = String(process.env.AUTH0_AUDIENCE || process.env.VITE_AUTH0_AUDIENCE || "").trim();
+const AUTH0_ISSUER = String(process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : "")).trim();
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -296,6 +300,7 @@ const CORS_ALLOWED_ORIGINS = (() => {
   return origins;
 })();
 const sessions = new Map();
+let auth0Jwks = null;
 const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
 const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
 
@@ -349,6 +354,9 @@ function ensureUsersColumns() {
   if (!cols.includes("reset_code_expires_at")) {
     db.exec("ALTER TABLE users ADD COLUMN reset_code_expires_at TEXT");
   }
+  if (!cols.includes("auth0_sub")) {
+    db.exec("ALTER TABLE users ADD COLUMN auth0_sub TEXT");
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS refresh_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +370,7 @@ function ensureUsersColumns() {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth0_sub ON users(auth0_sub)");
 }
 
 function ensureQuoteSchema() {
@@ -1211,6 +1220,94 @@ function getAuthToken(req) {
   const [scheme, token] = auth.split(" ");
   if (scheme !== "Bearer" || !token) return null;
   return token;
+}
+
+function getAuth0Jwks() {
+  if (!AUTH0_DOMAIN) {
+    throw new Error("Auth0 is not configured (missing AUTH0_DOMAIN).");
+  }
+  if (!auth0Jwks) {
+    auth0Jwks = createRemoteJWKSet(new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`));
+  }
+  return auth0Jwks;
+}
+
+async function verifyAuth0AccessToken(accessToken) {
+  const token = String(accessToken || "").trim();
+  if (!token) {
+    throw new Error("Auth0 access token is required.");
+  }
+  if (!AUTH0_ISSUER) {
+    throw new Error("Auth0 issuer is not configured (AUTH0_ISSUER or AUTH0_DOMAIN).");
+  }
+  const options = {
+    issuer: AUTH0_ISSUER
+  };
+  if (AUTH0_AUDIENCE) {
+    options.audience = AUTH0_AUDIENCE;
+  }
+  const { payload } = await jwtVerify(token, getAuth0Jwks(), options);
+  return payload;
+}
+
+function inferCompanyFromEmail(email) {
+  const normalized = normalizeEmail(email);
+  const domain = normalized.split("@")[1] || "";
+  const root = domain.split(".")[0] || "Unknown";
+  return root.slice(0, 60).toUpperCase() || "Unknown";
+}
+
+function upsertUserFromAuth0Claims(claims) {
+  const auth0Sub = String(claims?.sub || "").trim();
+  const email = normalizeEmail(claims?.email || "");
+  if (!auth0Sub) {
+    throw new Error("Auth0 token missing subject (sub).");
+  }
+  if (!email) {
+    throw new Error("Auth0 token missing email claim.");
+  }
+
+  let user = db.prepare(`
+    SELECT id, email, company, role, is_active, created_at, auth0_sub
+    FROM users
+    WHERE auth0_sub = ?
+    LIMIT 1
+  `).get(auth0Sub);
+
+  if (!user) {
+    user = db.prepare(`
+      SELECT id, email, company, role, is_active, created_at, auth0_sub
+      FROM users
+      WHERE email = ?
+      LIMIT 1
+    `).get(email);
+  }
+
+  if (user?.id) {
+    if (!String(user.auth0_sub || "").trim()) {
+      db.prepare("UPDATE users SET auth0_sub = ? WHERE id = ?").run(auth0Sub, user.id);
+    }
+    return db.prepare(`
+      SELECT id, email, company, role, is_active, created_at
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `).get(user.id);
+  }
+
+  const company = inferCompanyFromEmail(email);
+  const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
+  db.prepare(`
+    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
+    VALUES (?, ?, 'buyer', ?, 1, ?)
+  `).run(email, company, randomPasswordHash, auth0Sub);
+
+  return db.prepare(`
+    SELECT id, email, company, role, is_active, created_at
+    FROM users
+    WHERE email = ?
+    LIMIT 1
+  `).get(email);
 }
 
 function getAuthUser(req) {
@@ -4024,6 +4121,34 @@ const server = createServer(async (req, res) => {
       const issued = createSession(row);
       const refreshToken = issueRefreshToken(row.id);
       json(req, res, 200, { token: issued.token, refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/auth0-exchange") {
+      const body = await parseBody(req);
+      const accessToken = String(body.accessToken || getAuthToken(req) || "").trim();
+      try {
+        const claims = await verifyAuth0AccessToken(accessToken);
+        const row = upsertUserFromAuth0Claims(claims);
+        if (!row?.id) {
+          json(req, res, 401, { error: "Unauthorized." });
+          return;
+        }
+        if (Number(row.is_active) !== 1) {
+          json(req, res, 200, { pendingApproval: true, email: row.email, company: row.company });
+          return;
+        }
+        const issued = createSession(row);
+        const refreshToken = issueRefreshToken(row.id);
+        json(req, res, 200, {
+          token: issued.token,
+          refreshToken,
+          accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(),
+          user: makePublicUser(row)
+        });
+      } catch (error) {
+        json(req, res, 401, { error: error.message || "Auth0 token verification failed." });
+      }
       return;
     }
 

@@ -1345,6 +1345,9 @@ function PhoneNavIcon() {
 export default function App() {
   const {
     loginWithRedirect,
+    logout: auth0Logout,
+    isAuthenticated: auth0IsAuthenticated,
+    getAccessTokenSilently,
     error: auth0SdkError,
     isLoading: auth0SdkLoading
   } = useAuth0();
@@ -1353,6 +1356,7 @@ export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
   const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem("pcs.refreshToken") || "");
   const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState(() => localStorage.getItem("pcs.accessTokenExpiresAt") || "");
+  const [authBootstrapError, setAuthBootstrapError] = useState("");
   const [sessionTimeLeftMs, setSessionTimeLeftMs] = useState(null);
   const [refreshingSession, setRefreshingSession] = useState(false);
   const [user, setUser] = useState(null);
@@ -1455,6 +1459,7 @@ export default function App() {
   const aiCopilotResizeRef = useRef({ active: false, startY: 0, startHeight: 0 });
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
+  const auth0ExchangeInFlightRef = useRef(false);
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
@@ -1506,6 +1511,7 @@ export default function App() {
     setAuthToken("");
     setRefreshToken("");
     setAccessTokenExpiresAt("");
+    setAuthBootstrapError("");
     setSessionTimeLeftMs(null);
     setUser(null);
     setCart([]);
@@ -1561,8 +1567,55 @@ export default function App() {
 
   useEffect(() => {
     let ignore = false;
+    async function exchangeAuth0Session() {
+      if (!auth0IsAuthenticated) return;
+      if (authToken || refreshToken || user) return;
+      if (auth0ExchangeInFlightRef.current) return;
+      try {
+        auth0ExchangeInFlightRef.current = true;
+        setAuthLoading(true);
+        setAuthBootstrapError("");
+        const accessToken = await getAccessTokenSilently();
+        const issued = await apiRequest("/api/auth/auth0-exchange", {
+          method: "POST",
+          body: { accessToken },
+          skipRefresh: true
+        });
+        if (ignore) return;
+        if (issued?.pendingApproval) {
+          setAuthBootstrapError(`Account pending approval for ${issued.email || "this user"}.`);
+          setAuthLoading(false);
+          return;
+        }
+        applyAuthTokens(issued);
+        setAiCopilotOpen(false);
+        setAiCopilotGreetingTyping(false);
+        setAiCopilotWelcomePending(true);
+        resetViewStateToHome();
+      } catch (error) {
+        if (!ignore) {
+          setAuthBootstrapError(error.message || "Auth0 sign-in exchange failed.");
+          setAuthLoading(false);
+          setUser(null);
+        }
+      } finally {
+        auth0ExchangeInFlightRef.current = false;
+      }
+    }
+    exchangeAuth0Session();
+    return () => {
+      ignore = true;
+    };
+  }, [auth0IsAuthenticated, authToken, refreshToken, user, getAccessTokenSilently]);
+
+  useEffect(() => {
+    let ignore = false;
     async function loadMe() {
       if (!authToken && !refreshToken) {
+        if (auth0IsAuthenticated) {
+          setAuthLoading(true);
+          return;
+        }
         setAuthLoading(false);
         setUser(null);
         return;
@@ -1592,7 +1645,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, [authToken, refreshToken]);
+  }, [authToken, refreshToken, auth0IsAuthenticated]);
 
   useEffect(() => {
     if (!accessTokenExpiresAt) {
@@ -2901,6 +2954,13 @@ export default function App() {
     }).catch(() => {});
     clearAuthState();
     resetViewStateToHome();
+    if (auth0IsAuthenticated) {
+      auth0Logout({
+        logoutParams: {
+          returnTo: window.location.origin
+        }
+      });
+    }
   };
 
   const createUserAsAdmin = async (e) => {
@@ -2992,14 +3052,11 @@ export default function App() {
   if (!user) {
     return (
       <Login
-        onLogin={handleLogin}
-        onRegister={handleRegister}
-        onRequestPasswordReset={handleRequestPasswordReset}
-        onResetPassword={handleResetPassword}
         onAuth0Login={handleAuth0Login}
         onAuth0Signup={handleAuth0Signup}
         auth0Loading={auth0SdkLoading}
-        auth0ErrorText={auth0SdkError?.message || ""}
+        auth0ErrorText={authBootstrapError || auth0SdkError?.message || ""}
+        auth0Only={true}
       />
     );
   }
@@ -4318,7 +4375,8 @@ function Login({
   onAuth0Login,
   onAuth0Signup,
   auth0Loading,
-  auth0ErrorText
+  auth0ErrorText,
+  auth0Only = false
 }) {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [mode, setMode] = useState("login");
@@ -4334,6 +4392,34 @@ function Login({
   const [notice, setNotice] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
+
+  if (auth0Only) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-layout">
+          <aside className="auth-hero">
+            <div className="auth-hero-logo-wrap">
+              <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
+            </div>
+            <h2 className="auth-hero-title">PCS Online Catalog</h2>
+            <p className="auth-hero-text">Sign in with Auth0 to continue.</p>
+          </aside>
+          <div className="auth-card">
+            <h1 className="auth-title">Sign In</h1>
+            <div style={{ display: "grid", gap: 8 }}>
+              <button type="button" className="auth-submit-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
+                {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
+              </button>
+              <button type="button" className="ghost-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
+                {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
+              </button>
+            </div>
+            {auth0ErrorText ? <p className="auth-error" style={{ marginTop: 10 }}>Auth0 error: {auth0ErrorText}</p> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const submit = async (e) => {
     e.preventDefault();

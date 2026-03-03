@@ -14,6 +14,7 @@ createRoot(document.getElementById("root")).render(
       clientId={auth0ClientId}
       authorizationParams={{
         redirect_uri: window.location.origin,
+        scope: "openid profile email",
         ...(auth0Audience ? { audience: auth0Audience } : {})
       }}
     >

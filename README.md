@@ -163,6 +163,14 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
   - `VITE_AUTH0_DOMAIN`
   - `VITE_AUTH0_CLIENT_ID`
   - `VITE_AUTH0_AUDIENCE` (optional, once API is created in Auth0)
+- Configure backend env vars for unified user mapping:
+  - `AUTH0_DOMAIN`
+  - `AUTH0_AUDIENCE` (if your Auth0 API audience is configured)
+  - `AUTH0_ISSUER` (optional override; defaults to `https://<AUTH0_DOMAIN>/`)
+- Unified flow:
+  - Frontend authenticates with Auth0.
+  - Frontend exchanges Auth0 access token at `POST /api/auth/auth0-exchange`.
+  - Backend links/creates local user by `email` + `auth0_sub` and issues existing local session tokens.
 - Auth0 Application settings (must be configured to avoid callback/logout/origin mismatches):
   - Allowed Callback URLs:
     - `http://localhost:5173`
