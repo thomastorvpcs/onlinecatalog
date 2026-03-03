@@ -2356,8 +2356,6 @@ function getCopilotWeeklySpecialCandidates(message, selectedCategory, limit = 6)
   let weekly = allDevices.filter((device) => device.weeklySpecial === true);
   if (parsedHasFilters) {
     weekly = weekly.filter((device) => deviceMatchesCopilotPayload(device, parsedPayload));
-  } else if (selectedCategory && selectedCategory !== "__ALL__") {
-    weekly = weekly.filter((device) => String(device.category || "") === String(selectedCategory));
   }
   return weekly
     .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || Number(a.price || 0) - Number(b.price || 0))
