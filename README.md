@@ -130,10 +130,14 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
 - Preferred config via env vars (OAuth2 + subscription key):
   - `INVENTORY_API_URL` (for example: `https://api-test.pcsww.com/v1/md/inventory`)
   - `INVENTORY_SUBSCRIPTION_KEY`
+  - `INVENTORY_SUBSCRIPTION_HEADER` (optional; default `subscription-key`, common alternative `Ocp-Apim-Subscription-Key`)
   - `INVENTORY_OAUTH_TOKEN_URL`
   - `INVENTORY_OAUTH_CLIENT_ID`
   - `INVENTORY_OAUTH_CLIENT_SECRET`
-  - `INVENTORY_OAUTH_SCOPE`
+  - `INVENTORY_OAUTH_SCOPE` (optional depending on provider)
+  - `INVENTORY_OAUTH_RESOURCE` (optional; for providers expecting `resource`)
+  - `INVENTORY_OAUTH_AUDIENCE` (optional; for providers expecting `audience`)
+  - `INVENTORY_OAUTH_CLIENT_AUTH_MODE` (optional; `body` default or `basic`)
 - Backward-compatible fallback (legacy basic auth):
   - `BOOMI_INVENTORY_URL`
   - `BOOMI_CUSTOMER_ID`

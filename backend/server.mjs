@@ -269,10 +269,14 @@ const BOOMI_EXTRA_AUTH = process.env.BOOMI_EXTRA_AUTH || "";
 const BOOMI_TLS_INSECURE = String(process.env.BOOMI_TLS_INSECURE || "false").toLowerCase() === "true";
 const INVENTORY_API_URL = process.env.INVENTORY_API_URL || "";
 const INVENTORY_SUBSCRIPTION_KEY = process.env.INVENTORY_SUBSCRIPTION_KEY || "";
+const INVENTORY_SUBSCRIPTION_HEADER = String(process.env.INVENTORY_SUBSCRIPTION_HEADER || "subscription-key").trim() || "subscription-key";
 const INVENTORY_OAUTH_TOKEN_URL = process.env.INVENTORY_OAUTH_TOKEN_URL || "";
 const INVENTORY_OAUTH_CLIENT_ID = process.env.INVENTORY_OAUTH_CLIENT_ID || "";
 const INVENTORY_OAUTH_CLIENT_SECRET = process.env.INVENTORY_OAUTH_CLIENT_SECRET || "";
 const INVENTORY_OAUTH_SCOPE = process.env.INVENTORY_OAUTH_SCOPE || "";
+const INVENTORY_OAUTH_RESOURCE = process.env.INVENTORY_OAUTH_RESOURCE || "";
+const INVENTORY_OAUTH_AUDIENCE = process.env.INVENTORY_OAUTH_AUDIENCE || "";
+const INVENTORY_OAUTH_CLIENT_AUTH_MODE = String(process.env.INVENTORY_OAUTH_CLIENT_AUTH_MODE || "body").trim().toLowerCase();
 const NETSUITE_AI_REVIEW_RESTLET_URL = String(process.env.NETSUITE_AI_REVIEW_RESTLET_URL || "").trim();
 const NETSUITE_AI_REVIEW_AUTH_HEADER = String(process.env.NETSUITE_AI_REVIEW_AUTH_HEADER || "").trim();
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "").trim();
@@ -3232,18 +3236,37 @@ async function requestJsonStrict(url, options = {}) {
 }
 
 async function fetchInventoryOAuthToken() {
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: INVENTORY_OAUTH_CLIENT_ID,
-    client_secret: INVENTORY_OAUTH_CLIENT_SECRET,
-    scope: INVENTORY_OAUTH_SCOPE
-  }).toString();
+  const tokenParams = new URLSearchParams({
+    grant_type: "client_credentials"
+  });
+  if (INVENTORY_OAUTH_CLIENT_AUTH_MODE === "basic") {
+    tokenParams.set("client_id", INVENTORY_OAUTH_CLIENT_ID);
+  } else {
+    tokenParams.set("client_id", INVENTORY_OAUTH_CLIENT_ID);
+    tokenParams.set("client_secret", INVENTORY_OAUTH_CLIENT_SECRET);
+  }
+  if (String(INVENTORY_OAUTH_SCOPE || "").trim()) {
+    tokenParams.set("scope", INVENTORY_OAUTH_SCOPE);
+  }
+  if (String(INVENTORY_OAUTH_RESOURCE || "").trim()) {
+    tokenParams.set("resource", INVENTORY_OAUTH_RESOURCE);
+  }
+  if (String(INVENTORY_OAUTH_AUDIENCE || "").trim()) {
+    tokenParams.set("audience", INVENTORY_OAUTH_AUDIENCE);
+  }
 
   const tokenPayload = await requestJson(INVENTORY_OAUTH_TOKEN_URL, {
     method: "POST",
     contentType: "application/x-www-form-urlencoded",
-    body,
-    headers: { Accept: "application/json" }
+    body: tokenParams.toString(),
+    headers: {
+      Accept: "application/json",
+      ...(INVENTORY_OAUTH_CLIENT_AUTH_MODE === "basic"
+        ? {
+          Authorization: `Basic ${Buffer.from(`${INVENTORY_OAUTH_CLIENT_ID}:${INVENTORY_OAUTH_CLIENT_SECRET}`).toString("base64")}`
+        }
+        : {})
+    }
   });
 
   const accessToken = String(tokenPayload?.access_token || "").trim();
@@ -3259,8 +3282,7 @@ async function fetchBoomiInventory() {
     INVENTORY_SUBSCRIPTION_KEY,
     INVENTORY_OAUTH_TOKEN_URL,
     INVENTORY_OAUTH_CLIENT_ID,
-    INVENTORY_OAUTH_CLIENT_SECRET,
-    INVENTORY_OAUTH_SCOPE
+    INVENTORY_OAUTH_CLIENT_SECRET
   };
   const oauthKeys = Object.keys(oauthConfig);
   const hasAnyOAuthConfig = oauthKeys.some((k) => String(oauthConfig[k] || "").trim().length > 0);
@@ -3274,13 +3296,21 @@ async function fetchBoomiInventory() {
   let payload;
   if (hasOAuthConfig) {
     const accessToken = await fetchInventoryOAuthToken();
+    const subscriptionHeaderName = INVENTORY_SUBSCRIPTION_HEADER;
+    const requestHeaders = {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [subscriptionHeaderName]: INVENTORY_SUBSCRIPTION_KEY
+    };
+    if (subscriptionHeaderName.toLowerCase() !== "ocp-apim-subscription-key") {
+      requestHeaders["Ocp-Apim-Subscription-Key"] = INVENTORY_SUBSCRIPTION_KEY;
+    }
+    if (subscriptionHeaderName.toLowerCase() !== "subscription-key") {
+      requestHeaders["subscription-key"] = INVENTORY_SUBSCRIPTION_KEY;
+    }
     payload = await requestJson(INVENTORY_API_URL, {
       method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        "subscription-key": INVENTORY_SUBSCRIPTION_KEY
-      }
+      headers: requestHeaders
     });
   } else {
     if (!BOOMI_CUSTOMER_ID || !BOOMI_BASIC_USERNAME || !BOOMI_BASIC_PASSWORD) {
