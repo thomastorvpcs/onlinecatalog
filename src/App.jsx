@@ -787,8 +787,56 @@ async function demoApiRequest(path, options = {}) {
   }
 
   if (method === "POST" && pathname === "/api/ai/copilot") {
-    requireAuth();
+    const auth = requireAuth();
     const all = productsSeed.map((p) => normalizeDevice(p));
+    const msgText = String(body.message || "").trim();
+    const lowered = msgText.toLowerCase();
+    const addFromHistoryIntent = /(add|include|reorder|repeat|same as|use)/.test(lowered)
+      && /(last order|previous order|historic|history|past order|before|req-\d{4}-\d{4}|est-\d{4}-\d{4})/.test(lowered);
+    if (addFromHistoryIntent) {
+      const requests = getDemoRequests(auth.company)
+        .slice()
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      const target = requests[0] || null;
+      if (!target) {
+        return { reply: "I couldn't find previous orders to copy from.", action: null };
+      }
+      const addLines = [];
+      const unavailable = [];
+      for (const line of Array.isArray(target.lines) ? target.lines : []) {
+        const model = String(line.model || "").trim();
+        const match = all
+          .filter((d) => String(d.model || "").toLowerCase() === model.toLowerCase())
+          .sort((a, b) => Number(b.available || 0) - Number(a.available || 0))[0];
+        const available = Number(match?.available || 0);
+        if (!match || available <= 0) {
+          unavailable.push(model);
+          continue;
+        }
+        addLines.push({
+          deviceId: match.id,
+          quantity: Math.min(Math.max(1, Number(line.quantity || 1)), available),
+          offerPrice: Number(line.offerPrice || match.price || 0),
+          note: `From historical order ${target.requestNumber}`
+        });
+      }
+      if (!addLines.length) {
+        return {
+          reply: `I found ${target.requestNumber}, but none of its items are currently available in inventory.${unavailable.length ? ` Unavailable: ${unavailable.slice(0, 5).join(", ")}.` : ""}`,
+          action: null
+        };
+      }
+      return {
+        reply: `I prepared ${addLines.length} item${addLines.length === 1 ? "" : "s"} from ${target.requestNumber}. I skipped unavailable items${unavailable.length ? `: ${unavailable.slice(0, 5).join(", ")}` : ""}.`,
+        action: {
+          type: "add_lines_to_request",
+          payload: {
+            sourceOrder: target.requestNumber,
+            lines: addLines
+          }
+        }
+      };
+    }
     const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
     const suggestedName = buildCopilotSuggestedFilterName(parsed);
@@ -2217,6 +2265,63 @@ export default function App() {
 
   const applyCopilotAction = (action) => {
     if (!action || typeof action !== "object") return;
+    if (action.type === "add_lines_to_request") {
+      const lines = Array.isArray(action?.payload?.lines) ? action.payload.lines : [];
+      if (!lines.length) {
+        setAiCopilotMessages((prev) => [...prev, {
+          role: "assistant",
+          text: "I couldn't find any available items to add from that historical order.",
+          action: null,
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+      let next = [...cart];
+      let applied = 0;
+      for (const rawLine of lines) {
+        const deviceId = String(rawLine?.deviceId || rawLine?.productId || "").trim();
+        const product = products.find((p) => String(p.id) === deviceId);
+        if (!product) continue;
+        const quantity = Math.max(1, Math.min(9999, Math.floor(Number(rawLine.quantity || 1))));
+        const offerPrice = Number.isFinite(Number(rawLine.offerPrice)) ? Number(rawLine.offerPrice) : Number(product.price || 0);
+        const note = String(rawLine.note || "Added by AI copilot").slice(0, 200);
+        const existing = next.find((i) => i.productId === product.id && i.note === note);
+        if (existing) {
+          next = next.map((i) => (i.id === existing.id
+            ? { ...i, quantity: Math.min(9999, Number(i.quantity || 0) + quantity), offerPrice }
+            : i));
+        } else {
+          next.push({
+            id: crypto.randomUUID(),
+            productId: product.id,
+            model: product.model,
+            grade: product.grade,
+            quantity,
+            offerPrice,
+            note
+          });
+        }
+        applied += 1;
+      }
+      if (!applied) {
+        setAiCopilotMessages((prev) => [...prev, {
+          role: "assistant",
+          text: "I couldn't add those historical items because none were found in the current catalog.",
+          action: null,
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+      updateCart(next);
+      setCartNotice(`Added ${applied} historical item${applied === 1 ? "" : "s"} to Requested items.`);
+      if (cartNoticeTimerRef.current) {
+        clearTimeout(cartNoticeTimerRef.current);
+      }
+      cartNoticeTimerRef.current = setTimeout(() => {
+        setCartNotice("");
+      }, 2200);
+      return;
+    }
     if (action.type === "add_to_request") {
       const payload = action.payload && typeof action.payload === "object" ? action.payload : {};
       const deviceId = String(payload.deviceId || payload.productId || "").trim();
@@ -3660,6 +3765,11 @@ export default function App() {
                     {message.role === "assistant" && message.action?.type === "add_to_request" ? (
                       <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
                         Add To Requested Items
+                      </button>
+                    ) : null}
+                    {message.role === "assistant" && message.action?.type === "add_lines_to_request" ? (
+                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                        Add Available Items
                       </button>
                     ) : null}
                     {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && Array.isArray(message.action.options) ? (

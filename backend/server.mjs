@@ -2085,6 +2085,97 @@ function answerOrderDetailsQuestion(user, message) {
   };
 }
 
+function isAddFromHistoryIntent(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  const asksToAdd = /\b(add|include|reorder|repeat|same as|use)\b/.test(text);
+  const referencesHistory = /\b(last order|previous order|historic|history|past order|before)\b/.test(text)
+    || /\b(req-\d{4}-\d{4}|hist-\d{4}|hist-est-\d{4}|est-\d{4}-\d{4})\b/i.test(text);
+  return asksToAdd && referencesHistory;
+}
+
+function buildAddFromHistoricalOrderAction(user, message) {
+  const rows = queryOrdersForCopilot(user, 25);
+  if (!rows.length) return null;
+  const orderRef = extractOrderReference(message);
+  const targetRow = orderRef
+    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
+    : rows[0];
+  if (!targetRow) {
+    return {
+      reply: `I couldn't find order ${orderRef} in your accessible order history.`,
+      action: null
+    };
+  }
+
+  const request = mapRequestRow(targetRow);
+  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  const addLines = [];
+  const unavailableModels = [];
+  const adjustedModels = [];
+
+  for (const line of Array.isArray(request.lines) ? request.lines : []) {
+    const lineModel = String(line.model || "").trim();
+    const lineGrade = String(line.grade || "").trim();
+    if (!lineModel) continue;
+    const candidates = allDevices
+      .filter((d) => String(d.model || "").toLowerCase() === lineModel.toLowerCase()
+        && (!lineGrade || String(d.grade || "").toLowerCase() === lineGrade.toLowerCase()))
+      .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
+    const fallbackCandidates = candidates.length
+      ? candidates
+      : allDevices
+        .filter((d) => String(d.model || "").toLowerCase().includes(lineModel.toLowerCase()))
+        .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
+    const chosen = fallbackCandidates[0];
+    const available = Number(chosen?.available || 0);
+    if (!chosen || available <= 0) {
+      unavailableModels.push(lineModel);
+      continue;
+    }
+    const requestedQty = Math.max(1, Math.floor(Number(line.quantity || 1)));
+    const quantity = Math.min(requestedQty, available);
+    if (quantity < requestedQty) {
+      adjustedModels.push(`${lineModel} (${requestedQty} requested, ${quantity} added)`);
+    }
+    addLines.push({
+      deviceId: chosen.id,
+      quantity,
+      offerPrice: Number.isFinite(Number(line.offerPrice)) ? Number(line.offerPrice) : Number(chosen.price || 0),
+      note: `From historical order ${request.requestNumber}`
+    });
+  }
+
+  if (!addLines.length) {
+    const unavailableText = unavailableModels.length
+      ? ` Unavailable: ${unavailableModels.slice(0, 5).join(", ")}.`
+      : "";
+    return {
+      reply: `I found ${request.requestNumber}, but none of its items are currently available in inventory.${unavailableText}`,
+      action: null
+    };
+  }
+
+  const addedCount = addLines.length;
+  const skippedCount = unavailableModels.length;
+  const adjustmentsText = adjustedModels.length
+    ? ` Quantities adjusted due to inventory limits: ${adjustedModels.slice(0, 4).join("; ")}.`
+    : "";
+  const skippedText = skippedCount
+    ? ` I skipped ${skippedCount} unavailable item${skippedCount === 1 ? "" : "s"}: ${unavailableModels.slice(0, 5).join(", ")}.`
+    : "";
+
+  return {
+    reply: `I prepared ${addedCount} item${addedCount === 1 ? "" : "s"} from ${request.requestNumber} and will add only what is currently in inventory.${skippedText}${adjustmentsText}`,
+    action: {
+      type: "add_lines_to_request",
+      payload: {
+        sourceOrder: request.requestNumber,
+        lines: addLines
+      }
+    }
+  };
+}
+
 function answerOrderHistoryQuestion(user, message, selectedCategory) {
   const rows = queryOrderHistoryLineRows(user, message, selectedCategory, 250);
   if (!rows.length) return null;
@@ -2381,6 +2472,11 @@ async function runAiCopilot(user, body) {
   }
 
   try {
+    const deterministicAddFromHistory = isAddFromHistoryIntent(message)
+      ? buildAddFromHistoricalOrderAction(user, message)
+      : null;
+    if (deterministicAddFromHistory) return deterministicAddFromHistory;
+
     const deterministicOrderDetailsAnswer = isOrderDetailsQuestion(message)
       ? answerOrderDetailsQuestion(user, message)
       : null;
