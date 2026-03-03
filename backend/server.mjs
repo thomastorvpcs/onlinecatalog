@@ -571,6 +571,132 @@ function ensureHistoricalCompletedEstimates() {
   }
 }
 
+function seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw = 20) {
+  const targetUserId = Number(targetUserIdRaw);
+  if (!Number.isInteger(targetUserId) || targetUserId < 1) {
+    throw new Error("Valid targetUserId is required.");
+  }
+  const count = Math.max(1, Math.min(100, Math.floor(Number(countRaw || 20))));
+  const targetUser = db.prepare("SELECT id, email, company FROM users WHERE id = ?").get(targetUserId);
+  if (!targetUser?.id) {
+    throw new Error("User not found.");
+  }
+
+  const deviceRows = db.prepare(`
+    SELECT
+      d.id,
+      d.model_name AS model,
+      d.grade,
+      d.base_price AS price,
+      c.name AS category
+    FROM devices d
+    JOIN categories c ON c.id = d.category_id
+    WHERE d.is_active = 1
+    ORDER BY c.name ASC, d.model_name ASC
+  `).all();
+  if (!deviceRows.length) {
+    throw new Error("No active devices available for seeding.");
+  }
+
+  const byCategory = new Map();
+  for (const row of deviceRows) {
+    const key = String(row.category || "Other");
+    const list = byCategory.get(key) || [];
+    list.push(row);
+    byCategory.set(key, list);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) => a.localeCompare(b));
+  if (!categories.length) {
+    throw new Error("No categories available for seeding.");
+  }
+
+  const requestInsert = db.prepare(`
+    INSERT INTO quote_requests (
+      id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code,
+      netsuite_estimate_id, netsuite_estimate_number, netsuite_status, netsuite_last_sync_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'Completed', ?, 'USD', ?, ?, 'Completed', ?, ?, ?)
+  `);
+  const lineInsert = db.prepare(`
+    INSERT INTO quote_request_lines (
+      request_id, device_id, model, grade, quantity, offer_price, note
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const eventInsert = db.prepare(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json, created_at)
+    VALUES (?, 'admin_seeded_history', ?, ?)
+  `);
+
+  let created = 0;
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (let i = 0; i < count; i += 1) {
+      const requestId = `usrhist-${targetUser.id}-${randomBytes(8).toString("hex")}`;
+      const requestNumber = getNextRequestNumber();
+      const estimateId = `usrhist-est-${randomBytes(8).toString("hex")}`;
+      const estimateNumber = getNextDummyEstimateNumber();
+      const createdAt = new Date(Date.now() - ((count - i + 3) * 24 * 60 * 60 * 1000)).toISOString();
+      const lineCount = 3 + ((i + targetUser.id) % 3);
+      const lines = [];
+      let total = 0;
+
+      for (let j = 0; j < lineCount; j += 1) {
+        const categoryName = categories[(i + j) % categories.length];
+        const list = byCategory.get(categoryName) || deviceRows;
+        const device = list[(i * 7 + j * 11 + targetUser.id) % list.length];
+        const quantity = 50 + ((i * 13 + j * 19 + targetUser.id) % 120);
+        const multiplier = 0.64 + (((i + j + targetUser.id) % 8) * 0.05);
+        const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+        total += quantity * offerPrice;
+        lines.push({
+          deviceId: device.id,
+          model: device.model,
+          grade: device.grade || "A",
+          quantity,
+          offerPrice,
+          note: `Admin seeded history (${categoryName}).`
+        });
+      }
+      total = Number(total.toFixed(2));
+
+      requestInsert.run(
+        requestId,
+        requestNumber,
+        targetUser.company || "PCSWW",
+        targetUser.id,
+        targetUser.email,
+        total,
+        estimateId,
+        estimateNumber,
+        createdAt,
+        createdAt,
+        createdAt
+      );
+
+      for (const line of lines) {
+        lineInsert.run(requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note);
+      }
+
+      eventInsert.run(requestId, JSON.stringify({ seededByAdmin: true, lineCount: lines.length, total, targetUserId: targetUser.id }), createdAt);
+      created += 1;
+    }
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    ok: true,
+    created,
+    targetUser: {
+      id: targetUser.id,
+      email: targetUser.email,
+      company: targetUser.company
+    }
+  };
+}
+
 function splitCsv(value) {
   if (!value) return [];
   return value
@@ -3808,6 +3934,24 @@ const server = createServer(async (req, res) => {
       }
       db.prepare("DELETE FROM users WHERE id = ?").run(userId);
       json(req, res, 200, { ok: true });
+      return;
+    }
+
+    const userSeedHistoryMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/seed-history$/);
+    if (req.method === "POST" && userSeedHistoryMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const targetUserId = Number(userSeedHistoryMatch[1]);
+      const body = await parseBody(req);
+      const count = Number(body?.count || 20);
+      try {
+        const result = seedHistoricalCompletedEstimatesForUser(targetUserId, count);
+        json(req, res, 200, result);
+      } catch (error) {
+        const message = String(error?.message || "Failed to seed historical estimates.");
+        const statusCode = message === "User not found." ? 404 : 400;
+        json(req, res, statusCode, { error: message });
+      }
       return;
     }
 

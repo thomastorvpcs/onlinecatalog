@@ -1084,6 +1084,80 @@ async function demoApiRequest(path, options = {}) {
     return { ok: true };
   }
 
+  const demoSeedHistoryMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/seed-history$/);
+  if (demoSeedHistoryMatch && method === "POST") {
+    requireAdmin();
+    const targetId = Number(demoSeedHistoryMatch[1]);
+    const targetUser = users.find((u) => Number(u.id) === targetId);
+    if (!targetUser) throwApiError("User not found.", 404);
+    const count = Math.max(1, Math.min(100, Math.floor(Number(body.count || 20))));
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    if (!all.length) throwApiError("No devices available for seeding.", 400);
+    const byCategory = new Map();
+    for (const device of all) {
+      const key = String(device.category || "Other");
+      const list = byCategory.get(key) || [];
+      list.push(device);
+      byCategory.set(key, list);
+    }
+    const categories = [...byCategory.keys()];
+    if (!categories.length) throwApiError("No categories available for seeding.", 400);
+
+    const requests = getDemoRequests(targetUser.company);
+    const year = new Date().getFullYear();
+    for (let i = 0; i < count; i += 1) {
+      const requestCount = requests.filter((r) => String(r.requestNumber || "").startsWith(`REQ-${year}-`)).length + 1;
+      const estimateCount = requests.filter((r) => String(r.netsuiteEstimateNumber || "").startsWith(`EST-${year}-`)).length + 1;
+      const lineCount = 3 + ((i + targetId) % 3);
+      const lines = [];
+      let total = 0;
+      for (let j = 0; j < lineCount; j += 1) {
+        const categoryName = categories[(i + j) % categories.length];
+        const list = byCategory.get(categoryName) || all;
+        const device = list[(i * 7 + j * 5 + targetId) % list.length];
+        const quantity = 50 + ((i * 11 + j * 17 + targetId) % 120);
+        const multiplier = 0.64 + (((i + j + targetId) % 8) * 0.05);
+        const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+        total += quantity * offerPrice;
+        lines.push({
+          productId: device.id,
+          model: device.model,
+          grade: device.grade,
+          quantity,
+          offerPrice,
+          note: `Admin seeded history (${categoryName}).`
+        });
+      }
+      const createdAt = new Date(Date.now() - ((count - i + 3) * 24 * 60 * 60 * 1000)).toISOString();
+      requests.push({
+        id: crypto.randomUUID(),
+        requestNumber: `REQ-${year}-${String(requestCount).padStart(4, "0")}`,
+        company: targetUser.company,
+        createdBy: targetUser.email,
+        createdAt,
+        updatedAt: createdAt,
+        status: "Completed",
+        total: Number(total.toFixed(2)),
+        currencyCode: "USD",
+        netsuiteEstimateId: `dummy-est-${crypto.randomUUID().slice(0, 8)}`,
+        netsuiteEstimateNumber: `EST-${year}-${String(estimateCount).padStart(4, "0")}`,
+        netsuiteStatus: "Completed",
+        netsuiteUpdatedAt: createdAt,
+        lines
+      });
+    }
+    setDemoRequests(targetUser.company, requests);
+    return {
+      ok: true,
+      created: count,
+      targetUser: {
+        id: targetUser.id,
+        email: targetUser.email,
+        company: targetUser.company
+      }
+    };
+  }
+
   if (method === "POST" && pathname === "/api/admin/catalog/apply-image-mapping") {
     requireAdmin();
     return { ok: true, mappedFamilies: 0, updatedFamilies: 0, updatedDeviceRows: 0, unmatchedFamilies: [] };
@@ -1266,6 +1340,9 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
+  const [historySeedUserId, setHistorySeedUserId] = useState("");
+  const [historySeedLoading, setHistorySeedLoading] = useState(false);
+  const [historySeedNotice, setHistorySeedNotice] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserCompany, setNewUserCompany] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
@@ -1999,6 +2076,17 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!users.length) {
+      if (historySeedUserId) setHistorySeedUserId("");
+      return;
+    }
+    const exists = users.some((u) => String(u.id) === String(historySeedUserId));
+    if (!historySeedUserId || !exists) {
+      setHistorySeedUserId(String(users[0].id));
+    }
+  }, [users, historySeedUserId]);
+
   const refreshRequests = async () => {
     if (!user || !authToken) return;
     try {
@@ -2684,6 +2772,34 @@ export default function App() {
     }
     const value = fieldKey === "modelFamily" ? (device.modelFamily || modelFamilyOf(device.model)) : device[fieldKey];
     return value ? [value] : [];
+  };
+
+  const seedHistoryForUserAsAdmin = async () => {
+    if (!historySeedUserId) {
+      setUsersError("Select a user first.");
+      return;
+    }
+    try {
+      setHistorySeedLoading(true);
+      setUsersError("");
+      setHistorySeedNotice("");
+      const payload = await apiRequest(`/api/admin/users/${encodeURIComponent(historySeedUserId)}/seed-history`, {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { count: 20 }
+      });
+      const created = Number(payload?.created || 0);
+      const email = String(payload?.targetUser?.email || "");
+      setHistorySeedNotice(`Created ${created} completed historical estimates for ${email || "selected user"}.`);
+      await Promise.all([refreshRequests(), loadAdminAiInsights()]);
+    } catch (error) {
+      setUsersError(error.message || "Failed to seed user estimate history.");
+    } finally {
+      setHistorySeedLoading(false);
+    }
   };
   const matchesOtherFilters = (device, excludedField, activeFilters) => {
     for (const field of fields) {
@@ -3442,6 +3558,28 @@ export default function App() {
                 </div>
                 {weeklyBannerError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{weeklyBannerError}</p> : null}
                 {weeklyDeviceError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{weeklyDeviceError}</p> : null}
+              </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Seed Estimate History</h3>
+                <p className="small" style={{ marginTop: 0 }}>Create 20 completed historical estimates for a selected user.</p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <select
+                    value={historySeedUserId}
+                    onChange={(e) => setHistorySeedUserId(e.target.value)}
+                    disabled={historySeedLoading || usersLoading || !users.length}
+                    style={{ minWidth: 260 }}
+                  >
+                    {users.map((u) => (
+                      <option key={`seed-user-${u.id}`} value={String(u.id)}>
+                        {u.email} ({u.company})
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" style={{ width: "auto" }} onClick={seedHistoryForUserAsAdmin} disabled={historySeedLoading || !historySeedUserId}>
+                    {historySeedLoading ? "Creating..." : "Create 20 Completed Estimates"}
+                  </button>
+                </div>
+                {historySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historySeedNotice}</p> : null}
               </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">
