@@ -310,13 +310,19 @@ function initDb() {
   ensureDeviceSchema();
   ensureQuoteSchema();
   ensureSavedFiltersSchema();
+  const existingDeviceCount = Number(db.prepare("SELECT COUNT(*) AS count FROM devices").get().count || 0);
+  const shouldRunCatalogSeed = existingDeviceCount === 0;
   const countStmt = db.prepare("SELECT COUNT(*) AS count FROM categories");
   const count = Number(countStmt.get().count || 0);
   if (count === 0) {
     db.exec(readFileSync(seedPath, "utf8"));
   }
-  ensureLargeCatalog();
-  ensureDeployRealSeed();
+  if (shouldRunCatalogSeed) {
+    ensureLargeCatalog();
+    ensureDeployRealSeed();
+  } else {
+    console.log(`[startup] Catalog seeding skipped because ${existingDeviceCount} device(s) already exist.`);
+  }
   ensureDefaultUsers();
   ensureHistoricalCompletedEstimates();
 }
