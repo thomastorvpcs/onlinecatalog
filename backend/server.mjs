@@ -303,12 +303,111 @@ const sessions = new Map();
 let auth0Jwks = null;
 const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
 const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
+const LOCATION_MAPPING_CSV_PATH = String(process.env.LOCATION_MAPPING_CSV_PATH || join(dbDir, "Locations936.csv")).trim();
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === "\"") {
+      if (inQuotes && line[i + 1] === "\"") {
+        current += "\"";
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function loadPcsLocationMap(csvPath) {
+  const map = new Map();
+  if (!csvPath || !existsSync(csvPath)) {
+    console.warn(`[startup] PCS location mapping file not found at ${csvPath}. Using stored location names.`);
+    return map;
+  }
+  try {
+    const raw = readFileSync(csvPath, "utf8");
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return map;
+    const headers = parseCsvLine(lines[0]).map((value) => String(value || "").trim().toLowerCase());
+    const internalIdIndex = headers.indexOf("internal id");
+    const pcsPhysicalLocationIndex = headers.indexOf("pcs physical location");
+    if (internalIdIndex < 0 || pcsPhysicalLocationIndex < 0) {
+      console.warn("[startup] PCS location mapping CSV is missing required columns: Internal ID and PCS Physical Location.");
+      return map;
+    }
+    for (let i = 1; i < lines.length; i += 1) {
+      const values = parseCsvLine(lines[i]);
+      const internalId = String(values[internalIdIndex] || "").trim();
+      const pcsPhysicalLocation = String(values[pcsPhysicalLocationIndex] || "").trim();
+      if (!internalId || !pcsPhysicalLocation) continue;
+      map.set(internalId, pcsPhysicalLocation);
+    }
+    console.log(`[startup] Loaded ${map.size} PCS location mappings from ${csvPath}`);
+  } catch (error) {
+    console.warn(`[startup] Failed to load PCS location mapping from ${csvPath}: ${error.message || error}`);
+  }
+  return map;
+}
+
+const PCS_LOCATION_BY_INTERNAL_ID = loadPcsLocationMap(LOCATION_MAPPING_CSV_PATH);
+
+function getDisplayLocationName(storedName, externalId) {
+  const key = String(externalId || "").trim();
+  const mapped = key ? PCS_LOCATION_BY_INTERNAL_ID.get(key) : "";
+  return mapped || String(storedName || "").trim();
+}
 
 const db = new DatabaseSync(dbPath);
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
   console.log(`[startup] Using SQLite DB path: ${dbPath}`);
+}
+
+function getStoredAndDisplayLocations() {
+  const rows = db.prepare("SELECT name, external_id AS externalId FROM locations ORDER BY id").all();
+  return rows.map((row) => {
+    const storedName = String(row.name || "").trim();
+    return {
+      storedName,
+      displayName: getDisplayLocationName(storedName, row.externalId)
+    };
+  });
+}
+
+function getDisplayRegions() {
+  const names = new Set();
+  for (const row of getStoredAndDisplayLocations()) {
+    if (row.displayName) names.add(row.displayName);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+function resolveStoredLocationNames(regionFilters) {
+  const targets = new Set((Array.isArray(regionFilters) ? regionFilters : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean));
+  if (!targets.size) return [];
+  const resolved = new Set();
+  for (const row of getStoredAndDisplayLocations()) {
+    if (targets.has(row.storedName) || targets.has(row.displayName)) {
+      resolved.add(row.storedName);
+    }
+  }
+  return [...resolved];
 }
 
 function initDb() {
@@ -1388,11 +1487,15 @@ function getDevices(url) {
   addInFilter("d.grade", grades, "grade");
   addInFilter("d.storage_capacity", storages, "storage");
   if (regions.length) {
-    const keys = regions.map((_, idx) => `$regionAvail${idx}`);
-    regions.forEach((value, idx) => {
-      params[`$regionAvail${idx}`] = value;
-    });
-    filters.push(`
+    const storedRegionNames = resolveStoredLocationNames(regions);
+    if (!storedRegionNames.length) {
+      filters.push("1 = 0");
+    } else {
+      const keys = storedRegionNames.map((_, idx) => `$regionAvail${idx}`);
+      storedRegionNames.forEach((value, idx) => {
+        params[`$regionAvail${idx}`] = value;
+      });
+      filters.push(`
       EXISTS (
         SELECT 1
         FROM device_inventory di_r
@@ -1402,6 +1505,7 @@ function getDevices(url) {
           AND l_r.name IN (${keys.join(", ")})
       )
     `);
+    }
   }
 
   const whereSql = filters.length ? `WHERE d.is_active = 1 AND ${filters.join(" AND ")}` : "WHERE d.is_active = 1";
@@ -1463,6 +1567,7 @@ function getDevices(url) {
   const locationStmt = db.prepare(`
     SELECT
       l.name AS location,
+      l.external_id AS externalId,
       COALESCE(di.quantity, 0) AS quantity
     FROM locations l
     LEFT JOIN device_inventory di
@@ -1482,7 +1587,9 @@ function getDevices(url) {
     const imageRows = imagesStmt.all(d.id);
     const locations = {};
     for (const row of locationRows) {
-      locations[row.location] = Number(row.quantity || 0);
+      const displayLocation = getDisplayLocationName(row.location, row.externalId);
+      if (!displayLocation) continue;
+      locations[displayLocation] = Number(locations[displayLocation] || 0) + Number(row.quantity || 0);
     }
     const images = imageRows.map((r) => r.image_url).filter(Boolean);
     const fallbackImage = d.image || undefined;
@@ -1551,7 +1658,7 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
       .filter(([family, category]) => family && category)
   );
   const storages = db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => r.name);
-  const regions = db.prepare("SELECT name FROM locations ORDER BY id").all().map((r) => r.name);
+  const regions = getDisplayRegions();
   const filters = {};
   const warnings = [];
 
@@ -1743,6 +1850,27 @@ async function fetchNetsuiteInventoryForReview(lines, selectedLocation) {
   }
 }
 
+function getDeviceQuantityByDisplayLocation(deviceId, displayLocationName) {
+  const normalizedDeviceId = String(deviceId || "").trim();
+  const normalizedDisplay = String(displayLocationName || "").trim();
+  if (!normalizedDeviceId || !normalizedDisplay) return 0;
+  const storedNames = resolveStoredLocationNames([normalizedDisplay]);
+  if (!storedNames.length) return 0;
+  const params = { $deviceId: normalizedDeviceId };
+  const placeholders = storedNames.map((_, idx) => `$loc${idx}`);
+  storedNames.forEach((name, idx) => {
+    params[`$loc${idx}`] = name;
+  });
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(di.quantity), 0) AS quantity
+    FROM device_inventory di
+    JOIN locations l ON l.id = di.location_id
+    WHERE di.device_id = $deviceId
+      AND l.name IN (${placeholders.join(", ")})
+  `).get(params);
+  return Number(row?.quantity || 0);
+}
+
 async function validateRequestWithAi(body) {
   const lines = Array.isArray(body?.lines) ? body.lines : [];
   const selectedLocation = String(body?.selectedLocation || "").trim();
@@ -1752,15 +1880,6 @@ async function validateRequestWithAi(body) {
     warnings.push({ code: "EMPTY_REQUEST", message: "Request has no lines." });
     return { warnings, suggestions, inventorySource: "local" };
   }
-
-  const locationByDevice = db.prepare(`
-    SELECT COALESCE(di.quantity, 0) AS quantity
-    FROM devices d
-    JOIN locations l ON l.name = ?
-    LEFT JOIN device_inventory di ON di.device_id = d.id AND di.location_id = l.id
-    WHERE d.id = ?
-    LIMIT 1
-  `);
 
   const netsuiteInventory = await fetchNetsuiteInventoryForReview(lines, selectedLocation);
   if (netsuiteInventory.warning) {
@@ -1780,8 +1899,7 @@ async function validateRequestWithAi(body) {
     if (selectedLocation && deviceId) {
       const externalKey = `${deviceId}|${selectedLocation}`;
       const externalAvailable = netsuiteInventory.map.has(externalKey) ? Number(netsuiteInventory.map.get(externalKey)) : null;
-      const row = locationByDevice.get(selectedLocation, deviceId);
-      const localAvailable = Number(row?.quantity || 0);
+      const localAvailable = getDeviceQuantityByDisplayLocation(deviceId, selectedLocation);
       const available = externalAvailable !== null ? externalAvailable : localAvailable;
       if (Number.isInteger(quantity) && quantity > available) {
         warnings.push({
@@ -1896,13 +2014,24 @@ function runAiCopilotHeuristic(user, body) {
 
   if (/best location|fulfill|fulfillment|shortage/.test(lowered)) {
     const locationRows = db.prepare(`
-      SELECT l.name AS location, COALESCE(SUM(di.quantity), 0) AS total
+      SELECT l.name AS location, l.external_id AS externalId, COALESCE(SUM(di.quantity), 0) AS total
       FROM locations l
       LEFT JOIN device_inventory di ON di.location_id = l.id
       GROUP BY l.id, l.name
       ORDER BY total DESC, l.name ASC
     `).all();
-    const best = locationRows[0];
+    const totalsByDisplay = new Map();
+    for (const row of locationRows) {
+      const displayLocation = getDisplayLocationName(row.location, row.externalId);
+      if (!displayLocation) continue;
+      totalsByDisplay.set(
+        displayLocation,
+        Number(totalsByDisplay.get(displayLocation) || 0) + Number(row.total || 0)
+      );
+    }
+    const best = [...totalsByDisplay.entries()]
+      .map(([location, total]) => ({ location, total }))
+      .sort((a, b) => b.total - a.total || a.location.localeCompare(b.location))[0];
     if (best?.location) {
       return {
         reply: `For broad fulfillment, ${best.location} currently has the highest total available inventory (${Number(best.total || 0)}).`,
@@ -1931,7 +2060,7 @@ function buildCopilotCatalogContext() {
     modelFamilies: db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => String(r.name || "").trim()).filter(Boolean),
     grades: ["A", "B", "C", "CPO"],
     storages: db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => String(r.name || "").trim()).filter(Boolean),
-    regions: db.prepare("SELECT DISTINCT name FROM locations ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean)
+    regions: getDisplayRegions()
   };
 }
 
@@ -3644,6 +3773,7 @@ function getInventoryByDeviceId(deviceId) {
     SELECT
       l.id AS locationId,
       l.name AS location,
+      l.external_id AS externalId,
       COALESCE(di.quantity, 0) AS quantity
     FROM locations l
     LEFT JOIN device_inventory di
@@ -3657,7 +3787,7 @@ function getInventoryByDeviceId(deviceId) {
     model: device.model_name,
     locations: rows.map((r) => ({
       locationId: Number(r.locationId),
-      location: r.location,
+      location: getDisplayLocationName(r.location, r.externalId),
       quantity: Number(r.quantity || 0)
     })),
     total

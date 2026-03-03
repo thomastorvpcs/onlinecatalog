@@ -1,0 +1,268 @@
+Internal ID,Name,Phone,City,State/Province,Country,Receiving Location,Parent Location,PCS Physical Location,Finished Goods,Physical Locations
+165,11 Vreeland,,Florham Park,NJ,US,No,,US New Jersey,No,
+181,NJ 11: 3PL Intercompany,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+180,NJ 11: ATI Intercompany,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,No,	US New Jersey
+179,NJ 11: Authorized Repair,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+178,NJ 11: DR Finished Goods,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,Yes,	US New Jersey
+177,NJ 11: DR Finished Goods Damaged,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,Yes,	US New Jersey
+176,NJ 11: DR Intercompany,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,No,	US New Jersey
+175,NJ 11: Dubai Intercompany,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+166,NJ 11: Finished Goods,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,Yes,	US New Jersey
+174,NJ 11: Finished Goods Staging,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,Yes,	US New Jersey
+173,NJ 11: Inventory Recount,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+170,NJ 11: Inventory Recount Misc,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+171,NJ 11: Inventory Relocation,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+172,NJ 11: Japan Intercompany,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,No,	US New Jersey
+168,NJ 11: Netherlands Intercompany,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,No,	US New Jersey
+169,NJ 11: RMA,,Florham Park,NJ,US,No,11 Vreeland,US New Jersey,No,	US New Jersey
+167,NJ 11: Unprocessed,,Florham Park,NJ,US,Yes,11 Vreeland,US New Jersey,No,	US New Jersey
+17,ANZ PTY LTD,,,,US,Yes,,AU Australia,No,	AU Australia
+370,Apple Distribution UK,,,,GB,Yes,,UK Bracknell,No,UK Bracknell
+62,Australia,,,,,No,,AU Australia,No,	AU Australia
+20,"Australia, PTY LTD",,,,US,Yes,,AU Australia,Yes,	AU Australia
+129,AU: Trade-in FG Hold,,,,US,No,"Australia, PTY LTD",AU Australia,Yes,
+128,AU: Trade-in FG Staging,,,,US,No,"Australia, PTY LTD",AU Australia,Yes,
+130,AU: Trade-in Finished Goods,,,,US,No,"Australia, PTY LTD",AU Australia,Yes,
+127,AU: Trade-in Unprocessed,,,,US,Yes,"Australia, PTY LTD",AU Australia,No,
+52,Chile,,,,US,No,,CL Chile,No,CL Chile
+93,China,,,,US,No,,CN China,No,CN China
+89,China (PCS Trading Shenzhen),,,,US,Yes,,CN China,Yes,CN China
+91,China: Finished Good,,,,US,Yes,China,CN China,Yes,CN China
+113,Columbia,,,,,No,,TBD,No,TBD
+77,Consumer Trade-In,,Florham Park,NJ,US,Yes,,US Miami Lakes,No,US Miami Lakes
+155,ATI : Inventory Relocation,,Florham Park,NJ,US,No,Consumer Trade-In,US Miami Lakes,No,US Miami Lakes
+79,ATI: Finished Goods,(973) 805 7400,Florham Park,NJ,US,No,Consumer Trade-In,US Miami Lakes,Yes,US Miami Lakes
+92,ATI: Finished Goods Damaged,(973) 805 7400,Florham Park,NJ,US,No,Consumer Trade-In,US Miami Lakes,Yes,US Miami Lakes
+80,ATI: Finished Goods Staging,,Florham Park,NJ,US,No,Consumer Trade-In,US Miami Lakes,No,US Miami Lakes
+108,ATI: Inventory Recount,,Florham Park,NJ,US,No,Consumer Trade-In,US Miami Lakes,No,US Miami Lakes
+78,ATI: Unprocessed,,Florham Park,NJ,US,Yes,Consumer Trade-In,US Miami Lakes,No,US Miami Lakes
+343,Consumer Trade-In Chile,,,,CL,No,,CL Chile,No,CL Chile
+360,ATI CL: Finished Goods,,,,CL,Yes,Consumer Trade-In Chile,CL Chile,Yes,CL Chile
+362,ATI CL: Finished Goods Damaged,,,,CL,No,Consumer Trade-In Chile,CL Chile,Yes,CL Chile
+354,ATI CL: Unprocessed,,,,CL,Yes,Consumer Trade-In Chile,CL Chile,No,CL Chile
+131,Consumer Trade-In Miami Lakes,,Miami Lakes,FL,US,Yes,,US Miami Lakes,No,US Miami Lakes
+376,ATI FL: EOY Quarantine,,,,US,Yes,Consumer Trade-In Miami Lakes,US Miami Lakes,No,US Miami Lakes
+132,ATI FL: Finished Goods,,Miami Lakes,FL,US,No,Consumer Trade-In Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+133,ATI FL: Finished Goods Damaged,,Miami Lakes,FL,US,No,Consumer Trade-In Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+134,ATI FL: Finished Goods Staging,,Miami Lakes,FL,US,No,Consumer Trade-In Miami Lakes,US Miami Lakes,No,US Miami Lakes
+135,ATI FL: Inventory Recount,,Miami Lakes,FL,US,No,Consumer Trade-In Miami Lakes,US Miami Lakes,No,US Miami Lakes
+137,ATI FL: Inventory Relocation,,Miami Lakes,FL,US,No,Consumer Trade-In Miami Lakes,US Miami Lakes,No,US Miami Lakes
+136,ATI FL: Unprocessed,,Miami Lakes,FL,US,Yes,Consumer Trade-In Miami Lakes,US Miami Lakes,No,US Miami Lakes
+190,Consumer Trade-In Netherlands,,Rosmalen,,NL,Yes,,NL Rosmalen,No,NL Rosmalen
+191,ATI NL: Finished Goods,,Rosmalen,,NL,No,Consumer Trade-In Netherlands,NL Rosmalen,Yes,NL Rosmalen
+192,ATI NL: Finished Goods Damaged,,Rosmalen,,NL,No,Consumer Trade-In Netherlands,NL Rosmalen,Yes,NL Rosmalen
+193,ATI NL: Finished Goods Staging,,Rosmalen,,NL,No,Consumer Trade-In Netherlands,NL Rosmalen,No,NL Rosmalen
+194,ATI NL: Inventory Recount,,Rosmalen,,NL,No,Consumer Trade-In Netherlands,NL Rosmalen,No,NL Rosmalen
+195,ATI NL: Inventory Relocation,,Rosmalen,,NL,No,Consumer Trade-In Netherlands,NL Rosmalen,No,NL Rosmalen
+196,ATI NL: Unprocessed,,Rosmalen,,NL,Yes,Consumer Trade-In Netherlands,NL Rosmalen,No,NL Rosmalen
+369,Consumer Trade-In Saudi Arabia,,,,SA,Yes,,,No,Saudia Arabia   
+381,ATI KSA : Finished Goods,,,,SA,No,Consumer Trade-In Saudi Arabia,Saudia Arabia,Yes,Saudia Arabia   
+380,ATI KSA : Unprocessed,,,,SA,Yes,Consumer Trade-In Saudi Arabia,Saudia Arabia,No,Saudia Arabia   
+182,Consumer Trade-In United Kingdom,,Bracknell,Berks.,GB,Yes,,UK Bracknell,No,UK Bracknell
+197,ATI UK: Finished Goods,,Bracknell,Berks.,GB,No,Consumer Trade-In United Kingdom,UK Bracknell,Yes,UK Bracknell
+198,ATI UK: Finished Goods Damaged,,Bracknell,Berks.,GB,No,Consumer Trade-In United Kingdom,UK Bracknell,Yes,UK Bracknell
+199,ATI UK: Finished Goods Staging,,Bracknell,Berks.,GB,No,Consumer Trade-In United Kingdom,UK Bracknell,No,UK Bracknell
+200,ATI UK: Inventory Recount,,Bracknell,Berks.,GB,No,Consumer Trade-In United Kingdom,UK Bracknell,No,UK Bracknell
+201,ATI UK: Inventory Relocation,,Bracknell,Berks.,GB,No,Consumer Trade-In United Kingdom,UK Bracknell,No,UK Bracknell
+202,ATI UK: Unprocessed,,Bracknell,Berks.,GB,Yes,Consumer Trade-In United Kingdom,UK Bracknell,No,UK Bracknell
+225,Consumer Trade-In Vietnam,,,,,Yes,,VN Vietnam,No,VN Vietnam
+232,ATI VN: Finished Goods,,,,VN,No,Consumer Trade-In Vietnam,VN Vietnam,Yes,VN Vietnam
+227,ATI VN: Finished Goods Damaged,,,,VN,No,Consumer Trade-In Vietnam,VN Vietnam,Yes,VN Vietnam
+228,ATI VN: Finished Goods Staging,,,,VN,No,Consumer Trade-In Vietnam,VN Vietnam,No,VN Vietnam
+229,ATI VN: Inventory Recount,,,,VN,No,Consumer Trade-In Vietnam,VN Vietnam,No,VN Vietnam
+230,ATI VN: Inventory Relocation,,,,VN,No,Consumer Trade-In Vietnam,VN Vietnam,No,VN Vietnam
+231,ATI VN: Unprocessed,,,,VN,Yes,Consumer Trade-In Vietnam,VN Vietnam,No,VN Vietnam
+9,Dominican Republic,,Santo Domingo Este,Santo Domingo,DO,No,,DR Santo Domingo,No,	DR Santo Domingo
+366,DR: Buffing,,Santo Domingo Este,Santo Domingo,DO,Yes,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+11,DR: Finished Goods,809.373.1801,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+25,DR: Finished Goods Damaged,,Santo Domingo Este,Santo Domingo,DO,Yes,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+37,DR: Finished Goods Dmg Hold,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+36,DR: Finished Goods Dmg Hold Stg,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+28,DR: Finished Goods Dmg Staging,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+27,DR: Finished Goods Staging,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,Yes,	DR Santo Domingo
+204,DR: FL Intercompany,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+82,DR: Inventory Recount,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+48,DR: NJ Intercompany,,Santo Domingo Este,Santo Domingo,DO,Yes,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+29,DR: RMA,,Santo Domingo Este,Santo Domingo,DO,No,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+10,DR: Unprocessed,,Santo Domingo Este,Santo Domingo,DO,Yes,Dominican Republic,DR Santo Domingo,No,	DR Santo Domingo
+43,Dubai,,Dubai,United Arab Emirates,AE,No,,DU United Arab Emirates,No,DU United Arab Emirates
+23,Dubai FG,+971 4 3588 469,Dubai,United Arab Emirates,AE,Yes,Dubai,DU United Arab Emirates,Yes,DU United Arab Emirates
+161,Dubai: Finished Goods Dmg Hold,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,Yes,DU United Arab Emirates
+352,Dubai: Hong Kong Intercompany,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+365,Dubai: Intercompany,,,,US,Yes,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+84,Dubai: Inventory Recount,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+224,Dubai: Missing Inventory,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+30,Dubai: RMA,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+353,Dubai: Service Inventory,,Dubai,United Arab Emirates,AE,No,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+53,Dubai: Unprocessed,,Dubai,United Arab Emirates,AE,Yes,Dubai,DU United Arab Emirates,No,DU United Arab Emirates
+18,Eleven Vreeland,,Florham Park,NJ,US,No,,US New Jersey,No,	US New Jersey
+387,Far East Cellular,,,,JP,Yes,,JP Shinagawa-ku,No,JP Shinagawa-ku
+389,ATI JP: Finished Goods,,,,JP,No,Far East Cellular,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+390,ATI JP: Finished Goods Damaged,,,,JP,Yes,Far East Cellular,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+388,ATI JP: Unprocessed,,,,JP,Yes,Far East Cellular,JP Shinagawa-ku,No,JP Shinagawa-ku
+13,Far East Cellular GK,,,,US,Yes,,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+114,Florida WH,,Miami Lakes,FL,US,No,,US Miami Lakes,No,US Miami Lakes
+87,Glyde,,,,US,No,,TBD,No,TBD
+88,Glyde: Finished Goods,,,,US,Yes,Glyde,TBD,No,TBD
+33,HK Corporate,,,,US,Yes,,HK Tsuen Wan,Yes,HK Tsuen Wan
+54,HK Mobile,,,,US,Yes,,HK Tsuen Wan,No,
+32,Hong Kong,,Tsuen Wan,NT,HK,Yes,,HK Tsuen Wan,Yes,HK Tsuen Wan
+351,Helen And Hani Electronics Fzco,,,,,No,,TBD,No,TBD
+49,IGWT,,,,,No,,TBD,No,TBD
+42,IGWT: Finished Goods,,Miami,FL,US,Yes,IGWT,TBD,Yes,TBD
+14,Ireland LTD,,Dublin,Ireland,IE,Yes,,TBD,Yes,TBD
+72,Ireland: RMA,,,,US,No,Ireland LTD,TBD,No,TBD
+57,Japan,,Shinagawa-ku,Tokyo,JP,No,,JP Shinagawa-ku,No,JP Shinagawa-ku
+67,Japan - Elim,,Shinagawa-ku,Tokyo,JP,No,,JP Shinagawa-ku,No,JP Shinagawa-ku
+38,Japan LTD,,Shinagawa-ku,Tokyo,JP,No,,JP Shinagawa-ku,No,JP Shinagawa-ku
+393,Japan LTD (Yen),,,,JP,No,,JP Shinagawa-ku,No,JP Shinagawa-ku
+394,Japan: Finished Goods (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,Yes,JP Shinagawa-ku
+395,Japan: Inventory Recount (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,No,JP Shinagawa-ku
+401,Japan: RMA  (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,No,JP Shinagawa-ku
+396,Japan: Trade-in FG Hold (Yen),,,,US,No,Japan LTD (Yen),JP Shinagawa-ku,Yes,JP Shinagawa-ku
+397,Japan: Trade-in FG Staging (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,Yes,JP Shinagawa-ku
+398,Japan: Trade-in Finished Goods (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,Yes,JP Shinagawa-ku
+399,Japan: Trade-in Unprocessed (Yen),,,,JP,No,Japan LTD (Yen),JP Shinagawa-ku,No,JP Shinagawa-ku
+400,Japan: Unprocessed (Yen),,,,JP,Yes,Japan LTD (Yen),JP Shinagawa-ku,No,JP Shinagawa-ku
+76,Japan: Buyback Pilot,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,No,JP Shinagawa-ku
+83,Japan: Inventory Recount,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,No,JP Shinagawa-ku
+31,Japan: RMA,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,No,JP Shinagawa-ku
+117,Japan: Trade-in FG Hold,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+116,Japan: Trade-in FG Staging,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+118,Japan: Trade-in Finished Goods,,Shinagawa-ku,Tokyo,JP,No,Japan LTD,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+115,Japan: Trade-in Unprocessed,,Shinagawa-ku,Tokyo,JP,Yes,Japan LTD,JP Shinagawa-ku,No,JP Shinagawa-ku
+34,Japan: Unprocessed,,Shinagawa-ku,Tokyo,JP,Yes,Japan LTD,JP Shinagawa-ku,No,JP Shinagawa-ku
+12,OLD Japan: Finished Goods,080-7045-4138,,東京都,JP,Yes,Japan LTD,JP Shinagawa-ku,Yes,JP Shinagawa-ku
+51,Mexico,,,,US,No,,TBD,No,TBD
+26,Miami,,Miami Lakes,FL,US,Yes,,US Miami Lakes,Yes,US Miami Lakes
+138,Miami Lakes,,Miami Lakes,FL,US,No,,US Miami Lakes,No,US Miami Lakes
+392,AETI: Unprocessed,,Miami Lakes,FL,US,Yes,Miami Lakes,,No,
+384,AFS: Unprocessed,,Miami Lakes,FL,US,Yes,Miami Lakes,,No,
+139,FL: 3PL Intercompany,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+140,FL: ATI Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+141,FL: Authorized Repair,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+142,FL: DR Finished Goods,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+143,FL: DR Finished Goods Damaged,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+144,FL: DR Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+145,FL: Dubai Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+377,FL: EOY Quarantine,,,,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+146,FL: Finished Goods,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+147,FL: Finished Goods Staging,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+382,FL: FTZ Finished Goods,,Miami,FL,US,Yes,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+148,FL: Inventory Recount,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+149,FL: Inventory Recount Misc,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+150,FL: Inventory Relocation,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+151,FL: Japan Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+152,FL: Netherlands Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+164,FL: NJ Intercompany,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+337,FL: PCS Direct Finished Goods,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,Yes,US Miami Lakes
+339,FL: PCS Direct Finished Goods Staging,,,,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+338,FL: PCS Direct Unprocessed,,,,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+153,FL: RMA,,Miami Lakes,FL,US,No,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+235,FL: Supply Closet,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+234,FL: Supply Closet Unprocessed,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+154,FL: Unprocessed,,Miami Lakes,FL,US,Yes,Miami Lakes,US Miami Lakes,No,US Miami Lakes
+367,Montreal,,Montreal,QC,CA,Yes,Montreal,CA Canada,Yes,CA Canada
+371,Montreal: Finished Goods,,Montreal,QC,CA,No,Montreal,CA Canada,Yes,CA Canada
+372,Montreal: Unprocessed,,Montreal,QC,CA,Yes,Montreal,CA Canada,No,CA Canada
+6,Murray Road,(973) 805-7400,East Hanover,NJ,US,No,,US New Jersey,No,	US New Jersey
+364,DR Finished Goods Staging,,,,US,Yes,Murray Road,US New Jersey,Yes,
+98,NJ: 3PL Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+86,NJ: ATI Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,	US New Jersey
+107,NJ: Authorized Repair,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+44,NJ: DR Finished Goods,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,Yes,	US New Jersey
+45,NJ: DR Finished Goods Damaged,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,Yes,	US New Jersey
+47,NJ: DR Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,	US New Jersey
+341,NJ: DR Inventory Recount,,East Hanover,NJ,US,No,Murray Road,US New Jersey,No,	US New Jersey
+95,NJ: Dubai Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+7,NJ: Finished Goods,(973) 805 7400 #178,East Hanover,NJ,US,No,Murray Road,US New Jersey,Yes,	US New Jersey
+24,NJ: Finished Goods Staging,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,Yes,
+66,NJ: Inventory Recount,,East Hanover,NJ,US,No,Murray Road,US New Jersey,No,	US New Jersey
+81,NJ: Inventory Recount Misc,,East Hanover,NJ,US,No,Murray Road,US New Jersey,No,	US New Jersey
+156,NJ: Inventory Relocation,,East Hanover,NJ,US,No,Murray Road,US New Jersey,No,	US New Jersey
+96,NJ: Japan Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+157,NJ: Miami Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+97,NJ: Netherlands Intercompany,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,
+8,NJ: Unprocessed,,East Hanover,NJ,US,Yes,Murray Road,US New Jersey,No,	US New Jersey
+361,N/A,,,,,No,,,No,
+237,Netherland LTD,,Rosmalen,,NL,Yes,,NL Rosmalen,No,NL Rosmalen
+239,Netherland: Buyback Pilot,,Rosmalen,,US,No,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+240,Netherland: Finished Goods,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+241,Netherland: Finished Goods Dmg Hold,,Rosmalen,,US,No,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+242,Netherland: Finished Goods Staging,,East Hanover,NJ,US,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+243,Netherland: Inventory Recount,,Rosmalen,,US,No,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+244,Netherland: RMA,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+245,Netherland: Unprocessed,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+246,NL: Trade-in FG Hold,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+247,NL: Trade-in FG Staging,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+248,NL: Trade-in Finished Goods,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+249,NL: Trade-in Unprocessed,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+385,Rosmalen: ATI Finished Goods Damaged,,,,NL,No,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+250,Rosmalen: ATI Intercompany,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+251,Rosmalen: Finished Goods,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+252,Rosmalen: Finished Goods Dmg Hold,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,Yes,NL Rosmalen
+253,Rosmalen: Inventory Recount,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+254,Rosmalen: Inventory Relocation,,Rosmalen,,NL,No,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+255,Rosmalen: RMA,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+256,Rosmalen: Unprocessed,,Rosmalen,,NL,Yes,Netherland LTD,NL Rosmalen,No,NL Rosmalen
+39,Netherland LTD-OLD,,Rosmalen,,NL,No,,NL Rosmalen,No,NL Rosmalen
+159,Netherland: Finished Goods Dmg Hold-OLD,,Rosmalen,,US,No,Netherland LTD-OLD,NL Rosmalen,Yes,NL Rosmalen
+41,Netherland: Finished Goods-OLD,,Rosmalen,,NL,Yes,Netherland LTD-OLD,NL Rosmalen,Yes,NL Rosmalen
+85,Netherland: Inventory Recount-OLD,,Rosmalen,,US,No,Netherland LTD-OLD,NL Rosmalen,No,NL Rosmalen
+74,Netherland: RMA-OLD,,Rosmalen,,NL,Yes,Netherland LTD-OLD,NL Rosmalen,No,NL Rosmalen
+40,Netherland: Unprocessed-OLD,,Rosmalen,,NL,Yes,Netherland LTD-OLD,NL Rosmalen,No,NL Rosmalen
+121,NL: Trade-in FG Hold-OLD,,Rosmalen,,NL,Yes,Netherland LTD-OLD,NL Rosmalen,Yes,NL Rosmalen
+122,NL: Trade-in Finished Goods-OLD,,Rosmalen,,NL,No,Netherland LTD-OLD,NL Rosmalen,Yes,NL Rosmalen
+205,Netherlands Services,,Rosmalen,,NL,No,,NL Rosmalen,No,NL Rosmalen
+345,"NEW Australia, PTY LTD",,,,AU,Yes,,AU Australia,No,	AU Australia
+375,NEW AU: Inventory Recount,,,,AU,No,"NEW Australia, PTY LTD",AU Australia,No,	AU Australia
+349,NEW AU: Trade-in FG Hold,,,,AU,Yes,"NEW Australia, PTY LTD",AU Australia,No,	AU Australia
+347,NEW AU: Trade-in FG Staging,,,,AU,Yes,"NEW Australia, PTY LTD",AU Australia,No,	AU Australia
+350,NEW AU: Trade-in Finished Goods,,,,AU,Yes,"NEW Australia, PTY LTD",AU Australia,Yes,	AU Australia
+346,NEW AU: Trade-in Unprocessed,,,,AU,Yes,"NEW Australia, PTY LTD",AU Australia,No,	AU Australia
+55,PCS,,Florham Park,NJ,US,No,,TBD,No,TBD
+56,PCS & Subs,,Florham Park,NJ,US,No,,TBD,No,TBD
+357,PCS Chile,,,,CL,Yes,,CL Chile,No,CL Chile
+359,CL: Finished Goods,,,,CL,Yes,PCS Chile,CL Chile,Yes,CL Chile
+363,CL: Finished Goods Damaged,,,,CL,No,PCS Chile,CL Chile,Yes,CL Chile
+374,CL: Inventory Recount,,,,CL,No,PCS Chile,CL Chile,No,CL Chile
+61,PCS Coop,,,,,No,,NL Rosmalen,No,NL Rosmalen
+15,PCS Corporate,,Florham Park,NJ,US,Yes,,US New Jersey,Yes,	US New Jersey
+50,Spain,,,,US,No,,TBD,No,TBD
+68,PCS Elim,,,,,No,,TBD,No,TBD
+238,PCS Europe (NL Cooperatief UA),,,,US,No,,NL Rosmalen,Yes,NL Rosmalen
+105,PCS Excelsior Cooperatief UA,,,,NL,Yes,,NL Rosmalen,No,NL Rosmalen
+59,PCS HK,,,,,No,,HK Tsuen Wan,No,HK Tsuen Wan
+60,PCS Ireland,,,,,No,,TBD,No,TBD
+391,PCS Services,,,,,,,,,
+355,PCS Vietnam,,,,VN,Yes,,VN Vietnam,No,VN Vietnam
+356,VN: Finished Goods,,,,VN,Yes,PCS Vietnam,VN Vietnam,Yes,VN Vietnam
+373,VN: Finished Goods Dmg Hold,,,,VN,No,PCS Vietnam,VN Vietnam,Yes,VN Vietnam
+213,PCS Wireless and Accessories FZCO,+971 4 3588 469,Dubai,,AE,Yes,,DU United Arab Emirates,No,DU United Arab Emirates
+214,PCS Wireless and Accessories FZCO: FG,+971 4 3588 469,Dubai,,US,Yes,PCS Wireless and Accessories FZCO,DU United Arab Emirates,Yes,DU United Arab Emirates
+106,PCS Wireless Taiwan Ltd.,,,,TW,Yes,,TW Taiwan,No,TW Taiwan
+342,PCS Wireless United Kingdom Conversion,,,,GB,No,,UK Bracknell,No,UK Bracknell
+111,PCSWW Singapore,,,,SG,No,,SG Singapore,No,SG Singapore
+112,PCSWW SG: Finished Goods,,,,SG,Yes,,SG Singapore,Yes,SG Singapore
+233,Philippines,,,,,No,,TBD,No,TBD
+109,Singapore,,,,SG,No,,SG Singapore,No,SG Singapore
+110,SG: Finished Goods,,,,SG,Yes,Singapore,SG Singapore,Yes,SG Singapore
+64,South Korea,,,,,No,,TBD,No,TBD
+94,UK Corp,,Bracknell,Berks.,GB,No,,UK Bracknell,No,UK Bracknell
+99,United Kingdom Corp,,Bracknell,Berks.,GB,Yes,,UK Bracknell,No,UK Bracknell
+125,UK: Trade-in FG Hold,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+124,UK: Trade-in FG Staging,,Bracknell,Berks.,GB,No,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+126,UK: Trade-in Finished Goods,,Bracknell,Berks.,GB,No,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+223,UK: Trade-in Finished Goods Damaged,,Bracknell,,GB,No,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+379,UK: Trade-in GTI Hold,,,,GB,Yes,United Kingdom Corp,UK Bracknell,No,UK Bracknell
+123,UK: Trade-in Unprocessed,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,No,UK Bracknell
+386,United Kingdom: ATI Finished Goods Damaged,,,,GB,No,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+217,United Kingdom: Finish Goods Damage,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+218,United Kingdom: Finish Goods Damage Staging,,Bracknell,,GB,Yes,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+101,United Kingdom: Finished Goods,+44 796013614,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+160,United Kingdom: Finished Goods Dmg Hold,,Bracknell,Berks.,GB,No,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+215,United Kingdom: Finished Goods Staging,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,Yes,UK Bracknell
+219,United Kingdom: Intercompany,,Bracknell,Banffshire,GB,Yes,United Kingdom Corp,UK Bracknell,No,UK Bracknell
+162,United Kingdom: Inventory Recount,,Bracknell,Berks.,GB,No,United Kingdom Corp,UK Bracknell,No,UK Bracknell
+163,United Kingdom: RMA,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,No,UK Bracknell
+158,United Kingdom: Unprocessed,,Bracknell,Berks.,GB,Yes,United Kingdom Corp,UK Bracknell,No,UK Bracknell
