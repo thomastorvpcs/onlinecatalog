@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
+const IS_RENDER_RUNTIME = String(process.env.RENDER || "").toLowerCase() === "true" || Boolean(process.env.RENDER_SERVICE_ID);
 
 function stripEnvValue(value) {
   const trimmed = String(value || "").trim();
@@ -42,7 +43,8 @@ function loadLocalEnv(rootDir) {
 loadLocalEnv(projectRoot);
 
 const dbDir = join(__dirname, "db");
-const dbPath = String(process.env.DB_PATH || "").trim() || join(dbDir, "catalog.sqlite");
+const defaultDbPath = IS_RENDER_RUNTIME ? "/var/data/catalog.sqlite" : join(dbDir, "catalog.sqlite");
+const dbPath = String(process.env.DB_PATH || "").trim() || defaultDbPath;
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
 const distDir = join(projectRoot, "dist");
@@ -294,6 +296,11 @@ const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "C
 const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
 
 const db = new DatabaseSync(dbPath);
+if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
+  console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
+} else {
+  console.log(`[startup] Using SQLite DB path: ${dbPath}`);
+}
 
 function initDb() {
   db.exec("PRAGMA foreign_keys = ON;");
