@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 
 const productsSeed = [
   { id: "p1", manufacturer: "Apple", model: "iPhone 15 Pro Max 128GB", category: "Smartphones", grade: "A", region: "Miami", storage: "128GB", price: 100, available: 100, image: "images/iphone_15_Pro.png", locations: { Miami: 40, Dubai: 20, "Hong Kong": 25, Japan: 15 } },
@@ -1342,6 +1343,11 @@ function PhoneNavIcon() {
 }
 
 export default function App() {
+  const {
+    loginWithRedirect,
+    error: auth0SdkError,
+    isLoading: auth0SdkLoading
+  } = useAuth0();
   const persistedViewState = readJson(localStorage, UI_VIEW_STATE_KEY, {});
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("pcs.authToken") || "");
@@ -2862,6 +2868,18 @@ export default function App() {
     return { pendingApproval: false };
   };
 
+  const handleAuth0Login = async () => {
+    await loginWithRedirect();
+  };
+
+  const handleAuth0Signup = async () => {
+    await loginWithRedirect({
+      authorizationParams: {
+        screen_hint: "signup"
+      }
+    });
+  };
+
   const handleRegister = async (email, password, company) => {
     await apiRequest("/api/auth/register", { method: "POST", body: { email, password, company } });
   };
@@ -2972,7 +2990,18 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onLogin={handleLogin} onRegister={handleRegister} onRequestPasswordReset={handleRequestPasswordReset} onResetPassword={handleResetPassword} />;
+    return (
+      <Login
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+        onRequestPasswordReset={handleRequestPasswordReset}
+        onResetPassword={handleResetPassword}
+        onAuth0Login={handleAuth0Login}
+        onAuth0Signup={handleAuth0Signup}
+        auth0Loading={auth0SdkLoading}
+        auth0ErrorText={auth0SdkError?.message || ""}
+      />
+    );
   }
 
   const navItems = user.role === "admin"
@@ -4281,7 +4310,16 @@ export default function App() {
   );
 }
 
-function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword }) {
+function Login({
+  onLogin,
+  onRegister,
+  onRequestPasswordReset,
+  onResetPassword,
+  onAuth0Login,
+  onAuth0Signup,
+  auth0Loading,
+  auth0ErrorText
+}) {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -4417,6 +4455,20 @@ function Login({ onLogin, onRegister, onRequestPasswordReset, onResetPassword })
           {mode === "login" ? <p className="auth-link-text">Don&apos;t have an account? <button type="button" className="link-btn auth-inline-link" onClick={() => { setMode("register"); setError(""); setNotice(""); }}>Create user</button></p> : null}
           {(mode === "register" || mode === "reset-request" || mode === "reset-confirm") ? <button type="button" className="link-btn" onClick={() => { setMode("login"); setError(""); setNotice(""); }}>Back to sign in</button> : null}
         </div>
+        {mode === "login" && typeof onAuth0Login === "function" && typeof onAuth0Signup === "function" ? (
+          <div style={{ marginTop: 12 }}>
+            <div className="small" style={{ marginBottom: 6, textAlign: "center" }}>or continue with Auth0</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <button type="button" className="ghost-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
+                {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
+              </button>
+              <button type="button" className="ghost-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
+                {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
+              </button>
+            </div>
+            {auth0ErrorText ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>Auth0 error: {auth0ErrorText}</p> : null}
+          </div>
+        ) : null}
           </>
         )}
         </div>

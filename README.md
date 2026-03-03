@@ -157,4 +157,22 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
   - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `true`)
   - `DEPLOY_REAL_SEED_COUNT` (default `100`, max `1000`)
 
+## Auth0 (React SDK)
+- SDK installed: `@auth0/auth0-react`
+- Configure frontend env vars:
+  - `VITE_AUTH0_DOMAIN`
+  - `VITE_AUTH0_CLIENT_ID`
+  - `VITE_AUTH0_AUDIENCE` (optional, once API is created in Auth0)
+- Auth0 Application settings (must be configured to avoid callback/logout/origin mismatches):
+  - Allowed Callback URLs:
+    - `http://localhost:5173`
+    - `https://onlinecatalog.onrender.com`
+  - Allowed Logout URLs:
+    - `http://localhost:5173`
+    - `https://onlinecatalog.onrender.com`
+  - Allowed Web Origins:
+    - `http://localhost:5173`
+    - `https://onlinecatalog.onrender.com`
+- Vite dev server is pinned to strict port `5173` via `npm run dev`.
+
 
