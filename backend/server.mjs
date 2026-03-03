@@ -3322,12 +3322,41 @@ async function fetchBoomiInventory() {
     });
   }
 
+  const extracted = extractBoomiRowsFromPayload(payload);
+  if (Array.isArray(extracted)) return extracted;
+  const topLevelKeys = payload && typeof payload === "object"
+    ? Object.keys(payload).slice(0, 12).join(", ")
+    : typeof payload;
+  throw new Error(`Unexpected Boomi payload format. Top-level keys/type: ${topLevelKeys || "none"}`);
+}
+
+function extractBoomiRowsFromPayload(payload) {
   if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.inventory)) return payload.inventory;
-  if (Array.isArray(payload?.content)) return payload.content;
-  if (Array.isArray(payload?.items)) return payload.items;
-  if (Array.isArray(payload?.data)) return payload.data;
-  throw new Error("Unexpected Boomi payload format.");
+  if (!payload || typeof payload !== "object") return null;
+
+  const directKeys = ["inventory", "content", "items", "data", "results", "result", "records", "rows", "value"];
+  for (const key of directKeys) {
+    if (Array.isArray(payload[key])) return payload[key];
+  }
+
+  // Breadth-first search for nested arrays of row objects (common Boomi wrapper patterns).
+  const queue = [{ value: payload, depth: 0 }];
+  while (queue.length) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== "object" || depth > 4) continue;
+    for (const nested of Object.values(value)) {
+      if (Array.isArray(nested)) {
+        if (!nested.length) return nested;
+        const first = nested[0];
+        if (first && typeof first === "object" && !Array.isArray(first)) {
+          return nested;
+        }
+      } else if (nested && typeof nested === "object") {
+        queue.push({ value: nested, depth: depth + 1 });
+      }
+    }
+  }
+  return null;
 }
 
 function syncBoomiInventoryRows(rows) {
