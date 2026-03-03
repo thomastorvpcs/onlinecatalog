@@ -164,7 +164,6 @@ const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
-const AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX = "pcs.aiCopilotWelcomed.";
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1431,8 +1430,10 @@ export default function App() {
   const [aiCopilotMessages, setAiCopilotMessages] = useState([]);
   const [aiCopilotInput, setAiCopilotInput] = useState("");
   const [aiCopilotLoading, setAiCopilotLoading] = useState(false);
+  const [aiCopilotGreetingTyping, setAiCopilotGreetingTyping] = useState(false);
   const [aiCopilotError, setAiCopilotError] = useState("");
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
+  const [aiCopilotWelcomePending, setAiCopilotWelcomePending] = useState(false);
   const [aiCopilotPanelHeight, setAiCopilotPanelHeight] = useState(0);
   const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
@@ -1453,9 +1454,6 @@ export default function App() {
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
   const aiCopilotStateKey = user
     ? `${AI_COPILOT_STATE_KEY_PREFIX}${String(user.id || "anon")}.${normalizeEmail(user.email)}`
-    : "";
-  const aiCopilotWelcomedSessionKey = user
-    ? `${AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX}${String(user.id || "anon")}.${normalizeEmail(user.email)}`
     : "";
   const categoryNames = useMemo(() => [...new Set(products.map((p) => p.category))].sort((a, b) => {
     const aIndex = CATEGORY_ORDER.indexOf(a);
@@ -1525,8 +1523,10 @@ export default function App() {
     setAiRequestReviewError("");
     setAiCopilotMessages([]);
     setAiCopilotInput("");
+    setAiCopilotGreetingTyping(false);
     setAiCopilotError("");
     setAiCopilotOpen(false);
+    setAiCopilotWelcomePending(false);
     setAiCopilotPanelHeight(0);
     setAiCopilotMinPanelHeight(0);
     aiCopilotPendingResultCheckRef.current = null;
@@ -1873,9 +1873,10 @@ export default function App() {
         .slice(-30)
       : [];
     setAiCopilotMessages(messages);
-    setAiCopilotOpen(state?.open === true);
+    setAiCopilotOpen(false);
     setAiCopilotPanelHeight(Number.isFinite(Number(state?.panelHeight)) ? Math.max(0, Math.round(Number(state.panelHeight))) : 0);
     setAiCopilotMinPanelHeight(0);
+    setAiCopilotGreetingTyping(false);
     aiCopilotStateLoadedRef.current = true;
   }, [aiCopilotStateKey]);
 
@@ -1889,17 +1890,23 @@ export default function App() {
   }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages, aiCopilotPanelHeight]);
 
   useEffect(() => {
-    if (!aiCopilotOpen || !aiCopilotWelcomedSessionKey) return;
-    const alreadyWelcomed = sessionStorage.getItem(aiCopilotWelcomedSessionKey) === "1";
-    if (alreadyWelcomed) return;
-    sessionStorage.setItem(aiCopilotWelcomedSessionKey, "1");
-    setAiCopilotMessages((prev) => [...prev, {
-      role: "assistant",
-      text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request.",
-      action: null,
-      timestamp: new Date().toISOString()
-    }]);
-  }, [aiCopilotOpen, aiCopilotWelcomedSessionKey]);
+    if (!aiCopilotOpen || !aiCopilotWelcomePending) return;
+    setAiCopilotGreetingTyping(true);
+    const timer = window.setTimeout(() => {
+      setAiCopilotMessages((prev) => [...prev, {
+        role: "assistant",
+        text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request.",
+        action: null,
+        timestamp: new Date().toISOString()
+      }]);
+      setAiCopilotGreetingTyping(false);
+      setAiCopilotWelcomePending(false);
+    }, 850);
+    return () => {
+      window.clearTimeout(timer);
+      setAiCopilotGreetingTyping(false);
+    };
+  }, [aiCopilotOpen, aiCopilotWelcomePending]);
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
@@ -2848,6 +2855,9 @@ export default function App() {
       return { pendingApproval: true, email: data.email };
     }
     applyAuthTokens(data);
+    setAiCopilotOpen(false);
+    setAiCopilotGreetingTyping(false);
+    setAiCopilotWelcomePending(true);
     resetViewStateToHome();
     return { pendingApproval: false };
   };
@@ -3034,15 +3044,15 @@ export default function App() {
       }
       const targetEmail = normalizeEmail(target.email);
       const targetStateKey = `${AI_COPILOT_STATE_KEY_PREFIX}${String(target.id || "anon")}.${targetEmail}`;
-      const targetWelcomedKey = `${AI_COPILOT_WELCOMED_SESSION_KEY_PREFIX}${String(target.id || "anon")}.${targetEmail}`;
       localStorage.removeItem(targetStateKey);
-      sessionStorage.removeItem(targetWelcomedKey);
 
       if (String(user?.id || "") === String(target.id || "") && normalizeEmail(user?.email) === targetEmail) {
         setAiCopilotMessages([]);
         setAiCopilotInput("");
+        setAiCopilotGreetingTyping(false);
         setAiCopilotError("");
         setAiCopilotOpen(false);
+        setAiCopilotWelcomePending(false);
         setAiCopilotPanelHeight(0);
         setAiCopilotMinPanelHeight(0);
       }
@@ -4013,7 +4023,7 @@ export default function App() {
               )) : (
                 <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
               )}
-              {aiCopilotLoading ? (
+              {(aiCopilotLoading || aiCopilotGreetingTyping) ? (
                 <div className="ai-copilot-row assistant">
                   <span className="ai-copilot-avatar" aria-hidden="true">
                     <svg viewBox="0 0 24 24" role="img" focusable="false">
