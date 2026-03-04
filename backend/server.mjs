@@ -1937,7 +1937,7 @@ function getDevices(url) {
     LEFT JOIN device_inventory di ON di.device_id = d.id
     ${whereSql}
     GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes, d.weekly_special
-    ORDER BY c.id, m.name, d.model_name
+    ORDER BY c.name, m.name, d.model_name
   `;
 
   const countSql = `
