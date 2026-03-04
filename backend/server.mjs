@@ -4668,6 +4668,220 @@ function updateDummyEstimateStatus(user, requestId, nextStatus) {
   return getRequestByIdForUser(user, requestId);
 }
 
+async function getRequestLinesPostgres(requestId) {
+  if (!pgClient) return [];
+  const result = await pgClient.query(`
+    SELECT device_id, model, grade, quantity, offer_price, note
+    FROM quote_request_lines
+    WHERE request_id = $1
+    ORDER BY id
+  `, [requestId]);
+  return (result.rows || []).map((line) => ({
+    productId: line.device_id || "",
+    model: line.model,
+    grade: line.grade,
+    quantity: Number(line.quantity || 0),
+    offerPrice: Number(line.offer_price || 0),
+    note: line.note || ""
+  }));
+}
+
+function mapRequestRowWithLines(row, lines) {
+  return {
+    id: row.id,
+    requestNumber: row.request_number,
+    company: row.company,
+    createdBy: row.created_by_email,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    total: Number(row.total_amount || 0),
+    currencyCode: row.currency_code || "USD",
+    netsuiteEstimateId: row.netsuite_estimate_id || null,
+    netsuiteEstimateNumber: row.netsuite_estimate_number || null,
+    netsuiteStatus: row.netsuite_status || null,
+    netsuiteUpdatedAt: row.netsuite_last_sync_at || null,
+    lines: Array.isArray(lines) ? lines : []
+  };
+}
+
+async function mapRequestRowPostgres(row) {
+  const lines = await getRequestLinesPostgres(row.id);
+  return mapRequestRowWithLines(row, lines);
+}
+
+async function getRequestsForUserPostgres(user) {
+  if (!pgClient) return [];
+  const result = user.role === "admin"
+    ? await pgClient.query("SELECT * FROM quote_requests ORDER BY created_at DESC")
+    : await pgClient.query("SELECT * FROM quote_requests WHERE company = $1 ORDER BY created_at DESC", [user.company]);
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const mapped = [];
+  for (const row of rows) {
+    mapped.push(await mapRequestRowPostgres(row));
+  }
+  return mapped;
+}
+
+async function getRequestByIdForUserPostgres(user, requestId) {
+  if (!pgClient) return null;
+  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const row = result.rows?.[0];
+  if (!row?.id) return null;
+  if (user.role !== "admin" && row.company !== user.company) return null;
+  return mapRequestRowPostgres(row);
+}
+
+async function getNextRequestNumberPostgres() {
+  if (!pgClient) return getNextRequestNumber();
+  const year = new Date().getFullYear();
+  const prefix = `REQ-${year}-`;
+  const result = await pgClient.query("SELECT COUNT(*)::bigint AS count FROM quote_requests WHERE request_number LIKE $1", [`${prefix}%`]);
+  const next = Number(result.rows?.[0]?.count || 0) + 1;
+  return `${prefix}${String(next).padStart(4, "0")}`;
+}
+
+async function getNextDummyEstimateNumberPostgres() {
+  if (!pgClient) return getNextDummyEstimateNumber();
+  const year = new Date().getFullYear();
+  const prefix = `EST-${year}-`;
+  const result = await pgClient.query("SELECT COUNT(*)::bigint AS count FROM quote_requests WHERE netsuite_estimate_number LIKE $1", [`${prefix}%`]);
+  const next = Number(result.rows?.[0]?.count || 0) + 1;
+  return `${prefix}${String(next).padStart(4, "0")}`;
+}
+
+async function createRequestForUserPostgres(user, body) {
+  if (!pgClient) return createRequestForUser(user, body);
+  const lines = validateRequestLines(body.lines);
+  const requestId = randomBytes(16).toString("hex");
+  const requestNumber = await getNextRequestNumberPostgres();
+  const total = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
+
+  await pgClient.query("BEGIN");
+  try {
+    await pgClient.query(`
+      INSERT INTO quote_requests (
+        id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, 'New', $6, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [requestId, requestNumber, user.company, user.id, user.email, total]);
+
+    for (const line of lines) {
+      await pgClient.query(`
+        INSERT INTO quote_request_lines (
+          request_id, device_id, model, grade, quantity, offer_price, note
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null]);
+    }
+
+    await pgClient.query(`
+      INSERT INTO quote_request_events (request_id, event_type, payload_json)
+      VALUES ($1, 'request_created', $2)
+    `, [requestId, JSON.stringify({ lineCount: lines.length, total })]);
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+
+  return getRequestByIdForUserPostgres(user, requestId);
+}
+
+async function createDummyEstimateForRequestPostgres(user, requestId) {
+  if (!pgClient) return createDummyEstimateForRequest(user, requestId);
+  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const row = result.rows?.[0];
+  if (!row?.id) {
+    throw new Error("Request not found.");
+  }
+  if (user.role !== "admin" && row.company !== user.company) {
+    throw new Error("Forbidden");
+  }
+  if (row.netsuite_estimate_id) {
+    return getRequestByIdForUserPostgres(user, requestId);
+  }
+
+  const estimateId = `dummy-est-${randomBytes(6).toString("hex")}`;
+  const estimateNumber = await getNextDummyEstimateNumberPostgres();
+  const syncAt = new Date().toISOString();
+  await pgClient.query(`
+    UPDATE quote_requests
+    SET status = 'Estimate Created',
+        netsuite_estimate_id = $1,
+        netsuite_estimate_number = $2,
+        netsuite_status = 'Estimate Created',
+        netsuite_last_sync_at = $3,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $4
+  `, [estimateId, estimateNumber, syncAt, requestId]);
+  await pgClient.query(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    VALUES ($1, 'dummy_estimate_created', $2)
+  `, [requestId, JSON.stringify({ estimateId, estimateNumber, syncedAt: syncAt })]);
+  return getRequestByIdForUserPostgres(user, requestId);
+}
+
+async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
+  if (!pgClient) return updateDummyEstimateStatus(user, requestId, nextStatus);
+  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const row = result.rows?.[0];
+  if (!row?.id) {
+    throw new Error("Request not found.");
+  }
+  if (user.role !== "admin" && row.company !== user.company) {
+    throw new Error("Forbidden");
+  }
+  const status = normalizeRequestStatus(nextStatus, row.status || "New");
+  const syncAt = new Date().toISOString();
+  await pgClient.query(`
+    UPDATE quote_requests
+    SET status = $1,
+        netsuite_status = $2,
+        netsuite_last_sync_at = $3,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $4
+  `, [status, status, syncAt, requestId]);
+  await pgClient.query(`
+    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    VALUES ($1, 'dummy_status_update', $2)
+  `, [requestId, JSON.stringify({ status, syncedAt: syncAt })]);
+  return getRequestByIdForUserPostgres(user, requestId);
+}
+
+async function getRequestsForUserRuntime(user) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return getRequestsForUserPostgres(user);
+  }
+  return getRequestsForUser(user);
+}
+
+async function getRequestByIdForUserRuntime(user, requestId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return getRequestByIdForUserPostgres(user, requestId);
+  }
+  return getRequestByIdForUser(user, requestId);
+}
+
+async function createRequestForUserRuntime(user, body) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return createRequestForUserPostgres(user, body);
+  }
+  return createRequestForUser(user, body);
+}
+
+async function createDummyEstimateForRequestRuntime(user, requestId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return createDummyEstimateForRequestPostgres(user, requestId);
+  }
+  return createDummyEstimateForRequest(user, requestId);
+}
+
+async function updateDummyEstimateStatusRuntime(user, requestId, status) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return updateDummyEstimateStatusPostgres(user, requestId, status);
+  }
+  return updateDummyEstimateStatus(user, requestId, status);
+}
+
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
 
 function normalizeSavedFilterViewKey(raw) {
@@ -5369,7 +5583,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(req, res, 200, getRequestsForUser(user));
+      json(req, res, 200, await getRequestsForUserRuntime(user));
       return;
     }
 
@@ -5381,7 +5595,7 @@ const server = createServer(async (req, res) => {
       }
       const body = await parseBody(req);
       try {
-        const request = createRequestForUser(user, body);
+        const request = await createRequestForUserRuntime(user, body);
         json(req, res, 201, request);
       } catch (error) {
         json(req, res, 400, { error: error.message || "Failed to create request." });
@@ -5397,7 +5611,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const requestId = decodeURIComponent(requestByIdMatch[1]);
-      const request = getRequestByIdForUser(user, requestId);
+      const request = await getRequestByIdForUserRuntime(user, requestId);
       if (!request) {
         json(req, res, 404, { error: "Request not found." });
         return;
@@ -5419,7 +5633,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        const request = createDummyEstimateForRequest(user, requestId);
+        const request = await createDummyEstimateForRequestRuntime(user, requestId);
         json(req, res, 200, { ok: true, request });
       } catch (error) {
         const message = error.message || "Failed to create dummy estimate.";
@@ -5447,7 +5661,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        const request = updateDummyEstimateStatus(user, requestId, status);
+        const request = await updateDummyEstimateStatusRuntime(user, requestId, status);
         json(req, res, 200, { ok: true, request });
       } catch (error) {
         const message = error.message || "Failed to update dummy estimate status.";
