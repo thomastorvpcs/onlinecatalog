@@ -227,13 +227,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .auth0-card {
   display: grid;
   align-content: center;
-  gap: 10px;
+  gap: 12px;
+  position: relative;
+  background:
+    radial-gradient(420px 200px at 88% -15%, rgba(46, 132, 255, 0.15) 0%, rgba(46, 132, 255, 0) 72%),
+    #ffffff;
 }
 
 .auth0-meta-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -256,13 +260,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .auth0-title {
-  margin-bottom: 2px;
+  margin: 0;
+  font-size: 2.6rem;
+  line-height: 1.05;
+  letter-spacing: -0.4px;
 }
 
 .auth0-subtitle {
-  margin: 0 0 4px;
-  color: #4b5563;
-  line-height: 1.45;
+  margin: 0;
+  color: #475569;
+  line-height: 1.35;
+  font-size: 0.95rem;
 }
 
 .auth0-actions {
@@ -273,21 +281,27 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .auth0-primary-btn {
   margin-top: 0;
-  min-height: 46px;
-  font-size: 0.98rem;
-  border-radius: 10px;
+  min-height: 48px;
+  font-size: 1rem;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1c76db 0%, #0f4fbf 100%);
+  border-color: #0f4fbf;
+  box-shadow: 0 8px 18px rgba(15, 79, 191, 0.24);
 }
 
 .auth0-secondary-btn {
   min-height: 44px;
-  border-radius: 10px;
+  border-radius: 12px;
   font-size: 0.95rem;
+  border-color: #c8d7ef;
+  color: #0f4fbf;
 }
 
 .auth0-note {
   margin: 2px 0 0;
-  font-size: 0.82rem;
-  color: #6b7280;
+  font-size: 0.74rem;
+  color: #7b8696;
+  letter-spacing: 0.2px;
 }
 
 .auth0-error {

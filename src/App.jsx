@@ -4825,24 +4825,23 @@ function Login({
               <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
             </div>
             <h2 className="auth-hero-title">PCS Online Catalog</h2>
-            <p className="auth-hero-text">Sign in with Auth0 to continue.</p>
+            <p className="auth-hero-text">AI-assisted sourcing and request management.</p>
           </aside>
           <div className="auth-card auth0-card">
             <div className="auth0-meta-row">
-              <div className="auth0-provider">Auth0 SSO</div>
               <div className="auth0-ai-pill" aria-label="AI powered">AI Powered</div>
             </div>
-            <h1 className="auth-title auth0-title">Sign In To Continue</h1>
-            <p className="auth0-subtitle">Use your company account to access catalog, requests, and AI copilot.</p>
+            <h1 className="auth-title auth0-title">AI Catalog Copilot</h1>
+            <p className="auth0-subtitle">Sign in to continue.</p>
             <div className="auth0-actions">
               <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
+                {auth0Loading ? "Redirecting..." : "Sign in"}
               </button>
               <button type="button" className="ghost-btn auth0-secondary-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
+                {auth0Loading ? "Redirecting..." : "Create account"}
               </button>
             </div>
-            <p className="auth0-note">You will be redirected to Universal Login.</p>
+            <p className="auth0-note">Secure sign-in by Auth0</p>
             {auth0ErrorText ? <p className="auth-error auth0-error">Auth0 error: {auth0ErrorText}</p> : null}
           </div>
         </div>
