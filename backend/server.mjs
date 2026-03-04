@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import pgPkg from "pg";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
@@ -48,6 +49,8 @@ const defaultDbPath = IS_RENDER_RUNTIME ? "/var/data/catalog.sqlite" : join(dbDi
 const dbPath = String(process.env.DB_PATH || "").trim() || defaultDbPath;
 const DB_ENGINE = String(process.env.DB_ENGINE || "sqlite").trim().toLowerCase();
 const POSTGRES_RUNTIME_EXPERIMENTAL = String(process.env.POSTGRES_RUNTIME_EXPERIMENTAL || "false").toLowerCase() === "true";
+const POSTGRES_URL = String(process.env.DATABASE_URL || "").trim();
+const PG_SCHEMA = String(process.env.PG_SCHEMA || "public").trim() || "public";
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
 const distDir = join(projectRoot, "dist");
@@ -518,16 +521,219 @@ if (DB_ENGINE === "postgres" && !POSTGRES_RUNTIME_EXPERIMENTAL) {
   console.warn("[startup] DB_ENGINE=postgres requested, but Postgres runtime is not enabled yet. Falling back to SQLite. Set POSTGRES_RUNTIME_EXPERIMENTAL=true only after migration verification.");
 }
 const effectiveDbEngine = (DB_ENGINE === "postgres" && POSTGRES_RUNTIME_EXPERIMENTAL) ? "postgres" : "sqlite";
-if (effectiveDbEngine === "postgres") {
-  throw new Error("Postgres runtime engine is not implemented yet in this build. Keep DB_ENGINE=sqlite and use migration scripts for staged cutover.");
+if (effectiveDbEngine === "postgres" && !POSTGRES_URL) {
+  throw new Error("Postgres runtime requested but DATABASE_URL is missing.");
 }
-const db = new DatabaseSync(dbPath);
+const { Client } = pgPkg;
+const sqliteDb = new DatabaseSync(dbPath);
+let db = sqliteDb;
+let pgClient = null;
+let postgresMirrorEnabled = false;
+let postgresMirrorRunning = false;
+const postgresMirrorQueue = [];
+const postgresMirrorLoggedFailures = new Set();
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
   console.log(`[startup] Using SQLite DB path: ${dbPath}`);
 }
 console.log(`[startup] Database engine: ${effectiveDbEngine}`);
+
+function quoteIdent(name) {
+  return `"${String(name || "").replace(/"/g, "\"\"")}"`;
+}
+
+function postgresTableRef(tableName) {
+  return `${quoteIdent(PG_SCHEMA)}.${quoteIdent(tableName)}`;
+}
+
+function normalizeBindParams(args) {
+  if (!Array.isArray(args) || args.length === 0) return [];
+  if (args.length === 1 && Array.isArray(args[0])) return args[0];
+  return args;
+}
+
+function normalizeBindValue(value) {
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return value;
+}
+
+function sqliteToPostgresParams(args) {
+  return normalizeBindParams(args).map((value) => normalizeBindValue(value));
+}
+
+function sqlStartsWith(sql, token) {
+  const normalized = String(sql || "").trim().toUpperCase();
+  return normalized.startsWith(token);
+}
+
+function isWriteSql(sql) {
+  const normalized = String(sql || "").trim().toUpperCase();
+  return normalized.startsWith("INSERT ")
+    || normalized.startsWith("UPDATE ")
+    || normalized.startsWith("DELETE ")
+    || normalized.startsWith("REPLACE ")
+    || normalized.startsWith("CREATE ")
+    || normalized.startsWith("ALTER ")
+    || normalized.startsWith("DROP ")
+    || normalized.startsWith("BEGIN")
+    || normalized.startsWith("COMMIT")
+    || normalized.startsWith("ROLLBACK");
+}
+
+function sqliteSqlToPostgres(sql) {
+  let index = 0;
+  return String(sql || "").replace(/\?/g, () => {
+    index += 1;
+    return `$${index}`;
+  });
+}
+
+function queuePostgresMirror(sql, params = []) {
+  if (!postgresMirrorEnabled || !pgClient) return;
+  const statement = String(sql || "").trim();
+  if (!statement || !isWriteSql(statement)) return;
+  postgresMirrorQueue.push({ sql: statement, params });
+  if (!postgresMirrorRunning) {
+    void flushPostgresMirrorQueue();
+  }
+}
+
+async function flushPostgresMirrorQueue() {
+  if (postgresMirrorRunning || !pgClient) return;
+  postgresMirrorRunning = true;
+  try {
+    while (postgresMirrorQueue.length > 0) {
+      const item = postgresMirrorQueue.shift();
+      if (!item) continue;
+      try {
+        await pgClient.query(item.sql, item.params);
+      } catch (error) {
+        const key = `${item.sql}::${error?.message || error}`;
+        if (!postgresMirrorLoggedFailures.has(key)) {
+          postgresMirrorLoggedFailures.add(key);
+          console.error(`[postgres-mirror] Failed statement: ${item.sql}`);
+          console.error(`[postgres-mirror] ${error?.message || error}`);
+        }
+      }
+    }
+  } finally {
+    postgresMirrorRunning = false;
+  }
+}
+
+function createMirroredDbAdapter(sqliteHandle) {
+  return {
+    exec(sqlText) {
+      sqliteHandle.exec(sqlText);
+      const statements = String(sqlText || "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      for (const statement of statements) {
+        if (sqlStartsWith(statement, "PRAGMA ")) continue;
+        queuePostgresMirror(statement);
+      }
+    },
+    prepare(sqlText) {
+      const statement = sqliteHandle.prepare(sqlText);
+      const statementSql = String(sqlText || "");
+      return {
+        get(...args) {
+          return statement.get(...args);
+        },
+        all(...args) {
+          return statement.all(...args);
+        },
+        run(...args) {
+          const result = statement.run(...args);
+          if (isWriteSql(statementSql)) {
+            queuePostgresMirror(sqliteSqlToPostgres(statementSql), sqliteToPostgresParams(args));
+          }
+          return result;
+        }
+      };
+    }
+  };
+}
+
+async function getPostgresTableCount(tableName) {
+  if (!pgClient) return 0;
+  try {
+    const result = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef(tableName)}`);
+    return Number(result.rows?.[0]?.count || 0);
+  } catch {
+    return 0;
+  }
+}
+
+async function syncSqliteFromPostgres() {
+  if (!pgClient) return false;
+  const postgresDeviceCount = await getPostgresTableCount("devices");
+  if (postgresDeviceCount <= 0) {
+    console.warn("[startup] Postgres runtime is enabled but Postgres has no devices. Keeping current SQLite data.");
+    return false;
+  }
+
+  const tableRows = sqliteDb.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+    ORDER BY name
+  `).all();
+  const tableNames = tableRows.map((row) => String(row.name || "").trim()).filter(Boolean);
+  if (!tableNames.length) return false;
+
+  sqliteDb.exec("PRAGMA foreign_keys = OFF;");
+  sqliteDb.exec("BEGIN TRANSACTION");
+  try {
+    for (const tableName of tableNames) {
+      let rows = [];
+      try {
+        const result = await pgClient.query(`SELECT * FROM ${postgresTableRef(tableName)}`);
+        rows = Array.isArray(result.rows) ? result.rows : [];
+      } catch {
+        continue;
+      }
+
+      sqliteDb.prepare(`DELETE FROM ${quoteIdent(tableName)}`).run();
+      if (!rows.length) continue;
+
+      const colNames = Object.keys(rows[0] || {});
+      if (!colNames.length) continue;
+      const colList = colNames.map((name) => quoteIdent(name)).join(", ");
+      const marks = colNames.map(() => "?").join(", ");
+      const insertStmt = sqliteDb.prepare(`INSERT INTO ${quoteIdent(tableName)} (${colList}) VALUES (${marks})`);
+      for (const row of rows) {
+        const values = colNames.map((name) => normalizeBindValue(row[name]));
+        insertStmt.run(values);
+      }
+    }
+    sqliteDb.exec("COMMIT");
+    console.log("[startup] SQLite runtime cache hydrated from Postgres.");
+    return true;
+  } catch (error) {
+    sqliteDb.exec("ROLLBACK");
+    console.error(`[startup] Failed to hydrate SQLite from Postgres: ${error?.message || error}`);
+    return false;
+  } finally {
+    sqliteDb.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
+async function initializePostgresRuntime() {
+  if (effectiveDbEngine !== "postgres") return;
+  pgClient = new Client({
+    connectionString: POSTGRES_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  await pgClient.connect();
+  await syncSqliteFromPostgres();
+  db = createMirroredDbAdapter(sqliteDb);
+  postgresMirrorEnabled = true;
+  console.log("[startup] Postgres runtime mirroring is active.");
+}
 
 function getStoredAndDisplayLocations() {
   const rows = db.prepare("SELECT name, external_id AS externalId FROM locations ORDER BY id").all();
@@ -4410,7 +4616,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(req, res, 200, { ok: true });
+      json(req, res, 200, {
+        ok: true,
+        dbEngine: effectiveDbEngine,
+        postgresMirrorEnabled: Boolean(postgresMirrorEnabled),
+        postgresMirrorQueueDepth: Number(postgresMirrorQueue.length || 0)
+      });
       return;
     }
 
@@ -5333,7 +5544,17 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`API running on http://127.0.0.1:${port}`);
+async function startServer() {
+  if (effectiveDbEngine === "postgres") {
+    await initializePostgresRuntime();
+  }
+  server.listen(port, () => {
+    console.log(`API running on http://127.0.0.1:${port}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error(`[startup] ${error?.message || error}`);
+  process.exit(1);
 });
 
