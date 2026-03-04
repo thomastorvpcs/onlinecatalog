@@ -1551,11 +1551,14 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: #f8fbff;
   border-radius: 8px;
   padding: 10px;
+  scroll-margin-top: 90px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
 .grade-guide-item.selected {
-  border-color: #256fd6;
-  box-shadow: 0 0 0 1px rgba(37, 111, 214, 0.2) inset;
+  border-color: #0f4fbf;
+  background: #eaf3ff;
+  box-shadow: 0 0 0 2px rgba(37, 111, 214, 0.3), 0 8px 18px rgba(37, 111, 214, 0.16);
 }
 
 .grade-guide-head {

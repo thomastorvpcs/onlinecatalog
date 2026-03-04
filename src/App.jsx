@@ -1629,6 +1629,7 @@ export default function App() {
   const aiCopilotFeedRef = useRef(null);
   const aiCopilotPanelRef = useRef(null);
   const aiCopilotResizeRef = useRef({ active: false, startY: 0, startHeight: 0 });
+  const gradeGuideItemRefs = useRef(new Map());
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
   const auth0ExchangeInFlightRef = useRef(false);
@@ -1874,6 +1875,18 @@ export default function App() {
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [accessTokenExpiresAt]);
+
+  useEffect(() => {
+    if (!gradeGuideOpen) return;
+    const selectedCode = normalizeGradeCode(gradeGuideSelectedCode);
+    if (!selectedCode) return;
+    const target = gradeGuideItemRefs.current.get(selectedCode);
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [gradeGuideOpen, gradeGuideSelectedCode]);
 
   useEffect(() => {
     if (!user) return;
@@ -4472,6 +4485,11 @@ export default function App() {
                 <p className="small" style={{ margin: "4px 0 0" }}>
                   Industry-based references are included where available. Placeholder entries should be replaced with your internal SOP definitions.
                 </p>
+                {gradeGuideSelectedCode ? (
+                  <p className="small" style={{ margin: "4px 0 0", color: "#0f4fbf", fontWeight: 700 }}>
+                    Viewing: {normalizeGradeCode(gradeGuideSelectedCode)}
+                  </p>
+                ) : null}
               </div>
               <button className="close-btn" onClick={() => setGradeGuideOpen(false)}>X</button>
             </div>
@@ -4480,6 +4498,12 @@ export default function App() {
                 <section
                   key={`grade-def-${grade.code}`}
                   className={`grade-guide-item ${normalizeGradeCode(gradeGuideSelectedCode) === normalizeGradeCode(grade.code) ? "selected" : ""}`}
+                  ref={(node) => {
+                    const key = normalizeGradeCode(grade.code);
+                    if (!key) return;
+                    if (node) gradeGuideItemRefs.current.set(key, node);
+                    else gradeGuideItemRefs.current.delete(key);
+                  }}
                 >
                   <div className="grade-guide-head">
                     <strong>{grade.code}</strong>
