@@ -304,6 +304,49 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   letter-spacing: 0.2px;
 }
 
+.auth0-cancel-registration-btn {
+  margin-top: 4px;
+}
+
+.auth0-cancel-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 1400;
+  padding: 14px;
+}
+
+.auth0-cancel-modal {
+  width: min(480px, 100%);
+  background: #fff;
+  border: 1px solid #d9dde4;
+  border-radius: 14px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.22);
+  padding: 18px;
+}
+
+.auth0-cancel-modal h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.auth0-cancel-modal p {
+  margin: 10px 0 0;
+  color: #475569;
+}
+
+.auth0-cancel-modal-actions {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.auth0-danger-btn {
+  width: 100%;
+}
+
 .auth0-error {
   margin-top: 4px;
 }

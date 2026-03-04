@@ -5963,6 +5963,42 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/auth/cancel-registration") {
+      const body = await parseBody(req);
+      const accessToken = String(body.accessToken || getAuthToken(req) || "").trim();
+      try {
+        const claims = await verifyAuth0AccessToken(accessToken);
+        const userInfo = await fetchAuth0UserInfo(accessToken);
+        const auth0Sub = String(claims?.sub || "").trim();
+        const email = normalizeEmail(claims?.email || userInfo?.email || "");
+        if (!auth0Sub) {
+          json(req, res, 401, { error: "Auth0 token missing subject (sub)." });
+          return;
+        }
+        const bySub = await getUserByAuth0SubRuntime(auth0Sub, false);
+        const byEmail = !bySub?.id && email ? await getUserByEmailRuntime(email, false) : null;
+        const localUser = bySub?.id ? bySub : byEmail;
+
+        await deleteAuth0UserBySub(auth0Sub);
+
+        let deletedLocal = false;
+        if (localUser?.id) {
+          await deleteUserRuntime(localUser.id);
+          deletedLocal = true;
+          for (const [token, session] of sessions.entries()) {
+            if (Number(session?.user?.id || 0) === Number(localUser.id)) {
+              sessions.delete(token);
+            }
+          }
+        }
+
+        json(req, res, 200, { ok: true, deletedAuth0: true, deletedLocal });
+      } catch (error) {
+        json(req, res, 401, { error: error.message || "Cancel registration failed." });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/auth/refresh") {
       const body = await parseBody(req);
       const refreshToken = String(body.refreshToken || "").trim();

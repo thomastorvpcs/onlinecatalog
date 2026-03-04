@@ -3260,6 +3260,24 @@ export default function App() {
     });
   };
 
+  const returnToLoginAfterAuth0PendingFlow = async () => {
+    auth0LogoutInProgressRef.current = true;
+    markAuth0LogoutRequested();
+    clearAuth0InteractiveLoginPending();
+    setAuthProfileRequired(false);
+    setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
+    setAuthPendingApprovalEmail("");
+    setAuthBootstrapError("");
+    clearAuthState();
+    try {
+      await auth0Logout({
+        logoutParams: {
+          returnTo: window.location.origin
+        }
+      });
+    } catch {}
+  };
+
   const handleRegister = async (email, password, company) => {
     await apiRequest("/api/auth/register", { method: "POST", body: { email, password, company } });
   };
@@ -3278,6 +3296,20 @@ export default function App() {
       return { pendingApproval: true, email: payload.email || "" };
     }
     return { pendingApproval: false };
+  };
+
+  const handleAuth0ProfileContinueLater = async () => {
+    await returnToLoginAfterAuth0PendingFlow();
+  };
+
+  const handleAuth0CancelRegistration = async () => {
+    const accessToken = await getAccessTokenSilently();
+    await apiRequest("/api/auth/cancel-registration", {
+      method: "POST",
+      body: { accessToken },
+      skipRefresh: true
+    });
+    await returnToLoginAfterAuth0PendingFlow();
   };
 
   const handleRequestPasswordReset = async (email) => {
@@ -3399,6 +3431,8 @@ export default function App() {
         onAuth0Login={handleAuth0Login}
         onAuth0Signup={handleAuth0Signup}
         onAuth0CompleteProfile={handleCompleteAuth0Profile}
+        onAuth0ProfileContinueLater={handleAuth0ProfileContinueLater}
+        onAuth0CancelRegistration={handleAuth0CancelRegistration}
         onClearPendingApproval={() => {
           setAuthPendingApprovalEmail("");
           setAuthBootstrapError("");
@@ -4798,6 +4832,8 @@ function Login({
   onAuth0Login,
   onAuth0Signup,
   onAuth0CompleteProfile,
+  onAuth0ProfileContinueLater,
+  onAuth0CancelRegistration,
   onClearPendingApproval,
   auth0Loading,
   auth0ErrorText,
@@ -4825,6 +4861,9 @@ function Login({
   const [auth0Company, setAuth0Company] = useState("");
   const [auth0ProfileError, setAuth0ProfileError] = useState("");
   const [auth0ProfileSaving, setAuth0ProfileSaving] = useState(false);
+  const [auth0CancelConfirmOpen, setAuth0CancelConfirmOpen] = useState(false);
+  const [auth0CancelSubmitting, setAuth0CancelSubmitting] = useState(false);
+  const [auth0CancelError, setAuth0CancelError] = useState("");
   const activePendingEmail = pendingEmail || auth0PendingApprovalEmail;
 
   useEffect(() => {
@@ -4833,6 +4872,9 @@ function Login({
     setAuth0LastName(String(auth0ProfilePrefill?.lastName || ""));
     setAuth0Company("");
     setAuth0ProfileError("");
+    setAuth0CancelConfirmOpen(false);
+    setAuth0CancelSubmitting(false);
+    setAuth0CancelError("");
   }, [auth0ProfileRequired, auth0ProfilePrefill]);
 
   const submitAuth0Profile = async () => {
@@ -4886,6 +4928,38 @@ function Login({
     </div>
   );
 
+  const handleAuth0ContinueLater = async () => {
+    if (typeof onAuth0ProfileContinueLater !== "function") {
+      setAuth0CancelConfirmOpen(false);
+      return;
+    }
+    try {
+      setAuth0CancelSubmitting(true);
+      setAuth0CancelError("");
+      await onAuth0ProfileContinueLater();
+    } catch (error) {
+      setAuth0CancelError(error.message || "Could not return to sign in.");
+    } finally {
+      setAuth0CancelSubmitting(false);
+    }
+  };
+
+  const handleAuth0CancelRegistration = async () => {
+    if (typeof onAuth0CancelRegistration !== "function") {
+      setAuth0CancelConfirmOpen(false);
+      return;
+    }
+    try {
+      setAuth0CancelSubmitting(true);
+      setAuth0CancelError("");
+      await onAuth0CancelRegistration();
+    } catch (error) {
+      setAuth0CancelError(error.message || "Could not cancel registration.");
+    } finally {
+      setAuth0CancelSubmitting(false);
+    }
+  };
+
   if (auth0Only && auth0ProfileRequired) {
     return (
       <div className="auth-shell">
@@ -4906,8 +4980,54 @@ function Login({
               <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={submitAuth0Profile} disabled={auth0ProfileSaving}>
                 {auth0ProfileSaving ? "Saving..." : "Complete Registration"}
               </button>
+              <button
+                type="button"
+                className="ghost-btn auth0-cancel-registration-btn"
+                onClick={() => {
+                  setAuth0CancelError("");
+                  setAuth0CancelConfirmOpen(true);
+                }}
+                disabled={auth0ProfileSaving}
+              >
+                Cancel
+              </button>
             </div>
             {auth0ProfileError ? <p className="auth-error auth0-error">{auth0ProfileError}</p> : null}
+            {auth0CancelConfirmOpen ? (
+              <div className="auth0-cancel-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !auth0CancelSubmitting) setAuth0CancelConfirmOpen(false); }}>
+                <div className="auth0-cancel-modal" role="dialog" aria-modal="true" aria-label="Cancel registration" onMouseDown={(e) => e.stopPropagation()}>
+                  <h3>Finish Registration?</h3>
+                  <p>You can continue now, continue later, or cancel registration completely.</p>
+                  <div className="auth0-cancel-modal-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={handleAuth0ContinueLater}
+                      disabled={auth0CancelSubmitting}
+                    >
+                      {auth0CancelSubmitting ? "Working..." : "Continue Later"}
+                    </button>
+                    <button
+                      type="button"
+                      className="auth-submit-btn auth0-primary-btn"
+                      onClick={() => setAuth0CancelConfirmOpen(false)}
+                      disabled={auth0CancelSubmitting}
+                    >
+                      Continue Now
+                    </button>
+                    <button
+                      type="button"
+                      className="delete-btn auth0-danger-btn"
+                      onClick={handleAuth0CancelRegistration}
+                      disabled={auth0CancelSubmitting}
+                    >
+                      {auth0CancelSubmitting ? "Cancelling..." : "Cancel Registration"}
+                    </button>
+                  </div>
+                  {auth0CancelError ? <p className="auth-error auth0-error">{auth0CancelError}</p> : null}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
