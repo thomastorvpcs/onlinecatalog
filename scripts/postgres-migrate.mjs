@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { Client } from "pg";
+import pgPkg from "pg";
+const { Client } = pgPkg;
 
 const SQLITE_DB_PATH = resolve(process.env.SQLITE_DB_PATH || "backend/db/catalog.sqlite");
 const POSTGRES_URL = String(process.env.DATABASE_URL || "").trim();
@@ -126,4 +127,3 @@ main().catch((error) => {
   console.error(error?.message || String(error));
   process.exit(1);
 });
-
