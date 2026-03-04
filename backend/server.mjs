@@ -798,6 +798,30 @@ async function backfillPostgresTableFromSqliteIfEmpty(tableName) {
   }
 }
 
+async function ensurePostgresSerialSequence(tableName, columnName = "id") {
+  if (!pgClient) return;
+  const relationName = `${PG_SCHEMA}.${tableName}`;
+  const seqRes = await pgClient.query(
+    "SELECT pg_get_serial_sequence($1, $2) AS seq",
+    [relationName, columnName]
+  );
+  const seqName = String(seqRes.rows?.[0]?.seq || "").trim();
+  if (!seqName) return;
+  await pgClient.query(
+    `
+      SELECT setval(
+        $1::regclass,
+        GREATEST(
+          COALESCE((SELECT MAX(${quoteIdent(columnName)})::bigint FROM ${postgresTableRef(tableName)}), 0),
+          1
+        ),
+        true
+      )
+    `,
+    [seqName]
+  );
+}
+
 async function initializePostgresRuntime() {
   if (effectiveDbEngine !== "postgres") return;
   pgClient = new Client({
@@ -809,6 +833,17 @@ async function initializePostgresRuntime() {
   await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
+  await ensurePostgresSerialSequence("quote_request_lines", "id");
+  await ensurePostgresSerialSequence("quote_request_events", "id");
+  await ensurePostgresSerialSequence("refresh_tokens", "id");
+  await ensurePostgresSerialSequence("users", "id");
+  await ensurePostgresSerialSequence("device_images", "id");
+  await ensurePostgresSerialSequence("locations", "id");
+  await ensurePostgresSerialSequence("manufacturers", "id");
+  await ensurePostgresSerialSequence("categories", "id");
+  await ensurePostgresSerialSequence("user_saved_filters", "id");
+  await ensurePostgresSerialSequence("inventory_events", "id");
+  await ensurePostgresSerialSequence("boomi_inventory_raw", "id");
   await syncSqliteFromPostgres();
   db = createMirroredDbAdapter(sqliteDb);
   postgresMirrorEnabled = true;
