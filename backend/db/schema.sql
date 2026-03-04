@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('admin', 'buyer')),
   password_hash TEXT NOT NULL,
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  first_name TEXT,
+  last_name TEXT,
+  registration_completed INTEGER NOT NULL DEFAULT 0 CHECK (registration_completed IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

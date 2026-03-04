@@ -747,6 +747,9 @@ async function ensurePostgresRuntimeSchema() {
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS reset_code TEXT`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS reset_code_expires_at TEXT`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS auth0_sub TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS first_name TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS last_name TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS registration_completed BIGINT NOT NULL DEFAULT 0`);
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("refresh_tokens")} (
       id BIGSERIAL PRIMARY KEY,
@@ -980,6 +983,15 @@ function ensureUsersColumns() {
   }
   if (!cols.includes("auth0_sub")) {
     db.exec("ALTER TABLE users ADD COLUMN auth0_sub TEXT");
+  }
+  if (!cols.includes("first_name")) {
+    db.exec("ALTER TABLE users ADD COLUMN first_name TEXT");
+  }
+  if (!cols.includes("last_name")) {
+    db.exec("ALTER TABLE users ADD COLUMN last_name TEXT");
+  }
+  if (!cols.includes("registration_completed")) {
+    db.exec("ALTER TABLE users ADD COLUMN registration_completed INTEGER NOT NULL DEFAULT 0 CHECK (registration_completed IN (0, 1))");
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -1752,12 +1764,19 @@ function parseBody(req) {
 }
 
 function makePublicUser(row) {
+  const firstName = String(row.first_name || row.firstName || "").trim();
+  const lastName = String(row.last_name || row.lastName || "").trim();
+  const fullName = `${firstName} ${lastName}`.trim();
   return {
     id: row.id,
     email: row.email,
+    firstName,
+    lastName,
+    fullName,
     company: row.company,
     role: row.role,
     isActive: Number(row.is_active) === 1,
+    registrationCompleted: Number(row.registration_completed || row.registrationCompleted || 0) === 1,
     createdAt: row.created_at
   };
 }
@@ -2052,14 +2071,15 @@ async function syncAuth0UsersToLocalDb(options = {}) {
 
         const company = inferCompanyFromEmail(email);
         const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
-        await createUserRuntime({
-          email,
-          company,
-          role: "buyer",
-          passwordHash: randomPasswordHash,
-          isActive: false,
-          auth0Sub
-        });
+      await createUserRuntime({
+        email,
+        company,
+        role: "buyer",
+        passwordHash: randomPasswordHash,
+        isActive: false,
+        auth0Sub,
+        registrationCompleted: false
+      });
         created += 1;
       }
       if (rows.length < AUTH0_SYNC_PAGE_SIZE) break;
@@ -2121,6 +2141,10 @@ function normalizeCompanyName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
 }
 
+function normalizePersonName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
+}
+
 function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany = "") {
   const auth0Sub = String(claims?.sub || "").trim();
   const email = normalizeEmail(claims?.email || fallbackEmail || "");
@@ -2132,7 +2156,7 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany 
   }
 
   let user = db.prepare(`
-    SELECT id, email, company, role, is_active, created_at, auth0_sub
+    SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
     FROM users
     WHERE auth0_sub = ?
     LIMIT 1
@@ -2140,7 +2164,7 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany 
 
   if (!user) {
     user = db.prepare(`
-      SELECT id, email, company, role, is_active, created_at, auth0_sub
+      SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
       FROM users
       WHERE email = ?
       LIMIT 1
@@ -2156,7 +2180,7 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany 
       db.prepare("UPDATE users SET company = ? WHERE id = ?").run(normalizedPreferredCompany, user.id);
     }
     return db.prepare(`
-      SELECT id, email, company, role, is_active, created_at
+      SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -2166,12 +2190,12 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany 
   const company = normalizeCompanyName(preferredCompany) || inferCompanyFromEmail(email);
   const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
   db.prepare(`
-    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
-    VALUES (?, ?, 'buyer', ?, 0, ?)
+    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
+    VALUES (?, ?, 'buyer', ?, 0, ?, '', '', 0)
   `).run(email, company, randomPasswordHash, auth0Sub);
 
   return db.prepare(`
-    SELECT id, email, company, role, is_active, created_at
+    SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
     FROM users
     WHERE email = ?
     LIMIT 1
@@ -2183,15 +2207,15 @@ async function getUserByEmailRuntime(email, includePassword = false) {
   if (!normalized) return null;
   if (effectiveDbEngine === "postgres" && pgClient) {
     const fields = includePassword
-      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
-      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
     const result = await pgClient.query(`SELECT ${fields} FROM users WHERE email = $1 LIMIT 1`, [normalized]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
     includePassword
-      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE email = ? LIMIT 1"
-      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE email = ? LIMIT 1"
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE email = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE email = ? LIMIT 1"
   ).get(normalized);
 }
 
@@ -2200,15 +2224,15 @@ async function getUserByIdRuntime(userId, includePassword = false) {
   if (!Number.isInteger(id) || id < 1) return null;
   if (effectiveDbEngine === "postgres" && pgClient) {
     const fields = includePassword
-      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
-      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
     const result = await pgClient.query(`SELECT ${fields} FROM users WHERE id = $1 LIMIT 1`, [id]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
     includePassword
-      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE id = ? LIMIT 1"
-      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE id = ? LIMIT 1"
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE id = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE id = ? LIMIT 1"
   ).get(id);
 }
 
@@ -2217,35 +2241,45 @@ async function getUserByAuth0SubRuntime(auth0Sub, includePassword = false) {
   if (!sub) return null;
   if (effectiveDbEngine === "postgres" && pgClient) {
     const fields = includePassword
-      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
-      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
     const result = await pgClient.query(`SELECT ${fields} FROM users WHERE auth0_sub = $1 LIMIT 1`, [sub]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
     includePassword
-      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE auth0_sub = ? LIMIT 1"
-      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE auth0_sub = ? LIMIT 1"
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE auth0_sub = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed FROM users WHERE auth0_sub = ? LIMIT 1"
   ).get(sub);
 }
 
-async function createUserRuntime({ email, company, role = "buyer", passwordHash, isActive = false, auth0Sub = null }) {
+async function createUserRuntime({
+  email,
+  company,
+  role = "buyer",
+  passwordHash,
+  isActive = false,
+  auth0Sub = null,
+  firstName = "",
+  lastName = "",
+  registrationCompleted = false
+}) {
   const normalizedEmail = normalizeEmail(email);
   const safeCompany = String(company || "").trim();
   const safeRole = String(role || "").trim() === "admin" ? "admin" : "buyer";
   if (!normalizedEmail || !safeCompany || !passwordHash) throw new Error("Invalid user payload.");
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(`
-      INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, email, company, role, is_active, created_at, auth0_sub
-    `, [normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null]);
+      INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
+    `, [normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null, String(firstName || "").trim(), String(lastName || "").trim(), registrationCompleted ? 1 : 0]);
     return result.rows?.[0] || null;
   }
   db.prepare(`
-    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null);
+    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null, String(firstName || "").trim(), String(lastName || "").trim(), registrationCompleted ? 1 : 0);
   return getUserByEmailRuntime(normalizedEmail, false);
 }
 
@@ -2280,15 +2314,45 @@ async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
   db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?").run(passwordHash, id);
 }
 
+async function completeUserRegistrationRuntime(userId, firstName, lastName, company) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) throw new Error("User not found.");
+  const normalizedFirstName = normalizePersonName(firstName);
+  const normalizedLastName = normalizePersonName(lastName);
+  const normalizedCompany = normalizeCompanyName(company);
+  if (!normalizedFirstName || !normalizedLastName || !normalizedCompany) {
+    throw new Error("First name, last name and company are required.");
+  }
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(`
+      UPDATE users
+      SET first_name = $1,
+          last_name = $2,
+          company = $3,
+          registration_completed = 1
+      WHERE id = $4
+      RETURNING id
+    `, [normalizedFirstName, normalizedLastName, normalizedCompany, id]);
+    if (!result.rows?.[0]?.id) throw new Error("User not found.");
+    return;
+  }
+  const result = db.prepare(`
+    UPDATE users
+    SET first_name = ?, last_name = ?, company = ?, registration_completed = 1
+    WHERE id = ?
+  `).run(normalizedFirstName, normalizedLastName, normalizedCompany, id);
+  if (Number(result?.changes || 0) < 1) throw new Error("User not found.");
+}
+
 async function listUsersForAdminRuntime() {
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(
-      "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
+      "SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM users ORDER BY created_at DESC"
     );
     return (result.rows || []).map(makePublicUser);
   }
   return db.prepare(
-    "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
+    "SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM users ORDER BY created_at DESC"
   ).all().map(makePublicUser);
 }
 
@@ -2297,13 +2361,13 @@ async function getUserForAdminByIdRuntime(userId) {
   if (!Number.isInteger(id) || id < 1) return null;
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(
-      "SELECT id, email, auth0_sub, role, is_active, company, created_at FROM users WHERE id = $1 LIMIT 1",
+      "SELECT id, email, auth0_sub, role, is_active, registration_completed, company, first_name, last_name, created_at FROM users WHERE id = $1 LIMIT 1",
       [id]
     );
     return result.rows?.[0] || null;
   }
   return db.prepare(
-    "SELECT id, email, auth0_sub, role, is_active, company, created_at FROM users WHERE id = ? LIMIT 1"
+    "SELECT id, email, auth0_sub, role, is_active, registration_completed, company, first_name, last_name, created_at FROM users WHERE id = ? LIMIT 1"
   ).get(id);
 }
 
@@ -2320,6 +2384,10 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
     setParts.push("role = ?");
     params.push(updates.isAdmin ? "admin" : "buyer");
   }
+  if (typeof updates?.registrationCompleted === "boolean") {
+    setParts.push("registration_completed = ?");
+    params.push(updates.registrationCompleted ? 1 : 0);
+  }
   if (!setParts.length) throw new Error("No valid fields to update.");
 
   if (effectiveDbEngine === "postgres" && pgClient) {
@@ -2332,6 +2400,10 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
     if (typeof updates?.isAdmin === "boolean") {
       pgSet.push(`role = $${pgParams.length + 1}`);
       pgParams.push(updates.isAdmin ? "admin" : "buyer");
+    }
+    if (typeof updates?.registrationCompleted === "boolean") {
+      pgSet.push(`registration_completed = $${pgParams.length + 1}`);
+      pgParams.push(updates.registrationCompleted ? 1 : 0);
     }
     pgParams.push(id);
     const result = await pgClient.query(
@@ -2393,7 +2465,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   if (!email) throw new Error("Auth0 token missing email claim.");
 
   let result = await pgClient.query(`
-    SELECT id, email, company, role, is_active, created_at, auth0_sub
+    SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
     FROM users
     WHERE auth0_sub = $1
     LIMIT 1
@@ -2401,7 +2473,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   let user = result.rows?.[0] || null;
   if (!user) {
     result = await pgClient.query(`
-      SELECT id, email, company, role, is_active, created_at, auth0_sub
+      SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
       FROM users
       WHERE email = $1
       LIMIT 1
@@ -2417,7 +2489,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
       await pgClient.query("UPDATE users SET company = $1 WHERE id = $2", [normalizedPreferredCompany, user.id]);
     }
     const finalRes = await pgClient.query(`
-      SELECT id, email, company, role, is_active, created_at
+      SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
       FROM users
       WHERE id = $1
       LIMIT 1
@@ -2433,7 +2505,8 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
     role: "buyer",
     passwordHash: randomPasswordHash,
     isActive: false,
-    auth0Sub
+    auth0Sub,
+    registrationCompleted: false
   });
   return created;
 }
@@ -5787,7 +5860,7 @@ const server = createServer(async (req, res) => {
       }
 
       const passwordHash = hashPassword(password);
-      await createUserRuntime({ email, company, role: "buyer", passwordHash, isActive: false });
+      await createUserRuntime({ email, company, role: "buyer", passwordHash, isActive: false, registrationCompleted: true });
       json(req, res, 201, { ok: true });
       return;
     }
@@ -5825,6 +5898,16 @@ const server = createServer(async (req, res) => {
           json(req, res, 401, { error: "Unauthorized." });
           return;
         }
+        if (Number(row.registration_completed || 0) !== 1) {
+          json(req, res, 200, {
+            profileSetupRequired: true,
+            email: row.email,
+            firstName: String(row.first_name || ""),
+            lastName: String(row.last_name || ""),
+            company: String(row.company || "")
+          });
+          return;
+        }
         if (Number(row.is_active) !== 1) {
           json(req, res, 200, { pendingApproval: true, email: row.email, company: row.company });
           return;
@@ -5839,6 +5922,43 @@ const server = createServer(async (req, res) => {
         });
       } catch (error) {
         json(req, res, 401, { error: error.message || "Auth0 token verification failed." });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/complete-profile") {
+      const body = await parseBody(req);
+      const accessToken = String(body.accessToken || getAuthToken(req) || "").trim();
+      const firstName = normalizePersonName(body.firstName || "");
+      const lastName = normalizePersonName(body.lastName || "");
+      const company = normalizeCompanyName(body.company || "");
+      if (!firstName || !lastName || !company) {
+        json(req, res, 400, { error: "First name, last name and company are required." });
+        return;
+      }
+      try {
+        const claims = await verifyAuth0AccessToken(accessToken);
+        const userInfo = await fetchAuth0UserInfo(accessToken);
+        const row = await upsertUserFromAuth0ClaimsRuntime(claims, String(userInfo?.email || ""), company);
+        if (!row?.id) {
+          json(req, res, 401, { error: "Unauthorized." });
+          return;
+        }
+        await completeUserRegistrationRuntime(row.id, firstName, lastName, company);
+        const updated = await getUserByIdRuntime(row.id, false);
+        if (!updated?.id) {
+          json(req, res, 500, { error: "Failed to load user profile after completion." });
+          return;
+        }
+        json(req, res, 200, {
+          ok: true,
+          pendingApproval: Number(updated.is_active || 0) !== 1,
+          email: updated.email,
+          company: updated.company,
+          profileSetupRequired: false
+        });
+      } catch (error) {
+        json(req, res, 401, { error: error.message || "Profile completion failed." });
       }
       return;
     }
@@ -5965,6 +6085,8 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const email = normalizeEmail(body.email);
       const company = String(body.company || "").trim();
+      const firstName = normalizePersonName(body.firstName || "");
+      const lastName = normalizePersonName(body.lastName || "");
       const password = String(body.password || "");
       const isActive = body.isActive === true;
       const isAdmin = body.isAdmin === true;
@@ -5985,7 +6107,16 @@ const server = createServer(async (req, res) => {
 
       const role = isAdmin ? "admin" : "buyer";
       const hash = hashPassword(password);
-      await createUserRuntime({ email, company, role, passwordHash: hash, isActive });
+      await createUserRuntime({
+        email,
+        company,
+        role,
+        passwordHash: hash,
+        isActive,
+        firstName,
+        lastName,
+        registrationCompleted: true
+      });
       json(req, res, 201, { ok: true });
       return;
     }
@@ -5997,7 +6128,11 @@ const server = createServer(async (req, res) => {
       const userId = Number(userPatchMatch[1]);
       const body = await parseBody(req);
       try {
-        await updateUserAdminFieldsRuntime(userId, { isActive: body.isActive, isAdmin: body.isAdmin });
+        await updateUserAdminFieldsRuntime(userId, {
+          isActive: body.isActive,
+          isAdmin: body.isAdmin,
+          registrationCompleted: body.registrationCompleted
+        });
         json(req, res, 200, { ok: true });
       } catch (error) {
         const message = String(error?.message || "Failed to update user.");

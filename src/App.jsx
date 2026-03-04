@@ -1531,6 +1531,8 @@ export default function App() {
   const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState(() => localStorage.getItem("pcs.accessTokenExpiresAt") || "");
   const [authBootstrapError, setAuthBootstrapError] = useState("");
   const [authPendingApprovalEmail, setAuthPendingApprovalEmail] = useState("");
+  const [authProfileRequired, setAuthProfileRequired] = useState(false);
+  const [authProfilePrefill, setAuthProfilePrefill] = useState({ firstName: "", lastName: "", company: "", email: "" });
   const [sessionTimeLeftMs, setSessionTimeLeftMs] = useState(null);
   const [refreshingSession, setRefreshingSession] = useState(false);
   const [user, setUser] = useState(null);
@@ -1728,6 +1730,8 @@ export default function App() {
     }
     setAuthToken(data.token);
     setRefreshToken(data.refreshToken);
+    setAuthProfileRequired(false);
+    setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
     if (data.user) {
       setUser(data.user);
     }
@@ -1756,6 +1760,8 @@ export default function App() {
     setAccessTokenExpiresAt("");
     setAuthBootstrapError("");
     setAuthPendingApprovalEmail("");
+    setAuthProfileRequired(false);
+    setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
     setSessionTimeLeftMs(null);
     setUser(null);
     setCart([]);
@@ -1837,6 +1843,19 @@ export default function App() {
           skipRefresh: true
         });
         if (ignore) return;
+        if (issued?.profileSetupRequired) {
+          setAuthProfilePrefill({
+            firstName: String(issued.firstName || ""),
+            lastName: String(issued.lastName || ""),
+            company: String(issued.company || ""),
+            email: String(issued.email || "")
+          });
+          setAuthProfileRequired(true);
+          setAuthPendingApprovalEmail("");
+          setAuthBootstrapError("");
+          setAuthLoading(false);
+          return;
+        }
         if (issued?.pendingApproval) {
           setAuthPendingApprovalEmail(String(issued.email || ""));
           setAuthBootstrapError("");
@@ -1844,6 +1863,8 @@ export default function App() {
           return;
         }
         applyAuthTokens(issued);
+        setAuthProfileRequired(false);
+        setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
         setAuthPendingApprovalEmail("");
         clearAuth0InteractiveLoginPending();
         setAiCopilotOpen(false);
@@ -1853,6 +1874,7 @@ export default function App() {
       } catch (error) {
         clearAuth0InteractiveLoginPending();
         if (!ignore) {
+          setAuthProfileRequired(false);
           setAuthPendingApprovalEmail("");
           setAuthBootstrapError(error.message || "Auth0 sign-in exchange failed.");
           setAuthLoading(false);
@@ -3240,6 +3262,7 @@ export default function App() {
     markAuth0InteractiveLoginPending();
     setPendingAuth0SignupCompany("");
     setAuthPendingApprovalEmail("");
+    setAuthProfileRequired(false);
     await loginWithRedirect({
       authorizationParams: {
         prompt: "login"
@@ -3253,6 +3276,7 @@ export default function App() {
     markAuth0InteractiveLoginPending();
     setPendingAuth0SignupCompany(companyName);
     setAuthPendingApprovalEmail("");
+    setAuthProfileRequired(false);
     await loginWithRedirect({
       authorizationParams: {
         prompt: "login",
@@ -3263,6 +3287,22 @@ export default function App() {
 
   const handleRegister = async (email, password, company) => {
     await apiRequest("/api/auth/register", { method: "POST", body: { email, password, company } });
+  };
+
+  const handleCompleteAuth0Profile = async ({ firstName, lastName, company }) => {
+    const accessToken = await getAccessTokenSilently();
+    const payload = await apiRequest("/api/auth/complete-profile", {
+      method: "POST",
+      body: { accessToken, firstName, lastName, company },
+      skipRefresh: true
+    });
+    setAuthProfileRequired(false);
+    setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
+    if (payload?.pendingApproval) {
+      setAuthPendingApprovalEmail(String(payload.email || ""));
+      return { pendingApproval: true, email: payload.email || "" };
+    }
+    return { pendingApproval: false };
   };
 
   const handleRequestPasswordReset = async (email) => {
@@ -3383,13 +3423,17 @@ export default function App() {
       <Login
         onAuth0Login={handleAuth0Login}
         onAuth0Signup={handleAuth0Signup}
+        onAuth0CompleteProfile={handleCompleteAuth0Profile}
         onClearPendingApproval={() => {
           setAuthPendingApprovalEmail("");
           setAuthBootstrapError("");
+          setAuthProfileRequired(false);
         }}
         auth0Loading={auth0SdkLoading}
         auth0ErrorText={authBootstrapError || auth0SdkError?.message || ""}
         auth0PendingApprovalEmail={authPendingApprovalEmail}
+        auth0ProfileRequired={authProfileRequired}
+        auth0ProfilePrefill={authProfilePrefill}
         auth0Only={true}
       />
     );
@@ -3785,7 +3829,7 @@ export default function App() {
       <div className="content-shell">
         <header className="topbar">
           <div className="brand-wrap"><span className="dot" /><strong>PCS Wireless</strong></div>
-          <div className="top-actions"><span className="muted">{user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
+          <div className="top-actions"><span className="muted">{user.fullName || user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
         </header>
         <main className="view">
           {route === "products" && productsError && (
@@ -4345,12 +4389,14 @@ export default function App() {
                 <UsersTableSkeleton />
               ) : (
                 <table className="table">
-                  <thead><tr><th>Email</th><th>Company</th><th>Active</th><th>Admin</th><th>Created</th><th /></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Registered</th><th>Active</th><th>Admin</th><th>Created</th><th /></tr></thead>
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id}>
+                        <td>{u.fullName || "-"}</td>
                         <td>{u.email}</td>
                         <td>{u.company}</td>
+                        <td><input type="checkbox" checked={u.registrationCompleted === true} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "registrationCompleted", e.target.checked)} /></td>
                         <td><input type="checkbox" checked={u.isActive} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isActive", e.target.checked)} /></td>
                         <td><input type="checkbox" checked={u.role === "admin"} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isAdmin", e.target.checked)} /></td>
                         <td>{new Date(u.createdAt).toLocaleString()}</td>
@@ -4776,10 +4822,13 @@ function Login({
   onResetPassword,
   onAuth0Login,
   onAuth0Signup,
+  onAuth0CompleteProfile,
   onClearPendingApproval,
   auth0Loading,
   auth0ErrorText,
   auth0PendingApprovalEmail = "",
+  auth0ProfileRequired = false,
+  auth0ProfilePrefill = { firstName: "", lastName: "", company: "", email: "" },
   auth0Only = false
 }) {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
@@ -4798,6 +4847,11 @@ function Login({
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [auth0SignupCompany, setAuth0SignupCompany] = useState("");
   const [auth0SignupError, setAuth0SignupError] = useState("");
+  const [auth0FirstName, setAuth0FirstName] = useState("");
+  const [auth0LastName, setAuth0LastName] = useState("");
+  const [auth0Company, setAuth0Company] = useState("");
+  const [auth0ProfileError, setAuth0ProfileError] = useState("");
+  const [auth0ProfileSaving, setAuth0ProfileSaving] = useState(false);
   const activePendingEmail = pendingEmail || auth0PendingApprovalEmail;
 
   const triggerAuth0Signup = async () => {
@@ -4809,6 +4863,37 @@ function Login({
     }
     setAuth0SignupError("");
     await onAuth0Signup(companyName);
+  };
+
+  useEffect(() => {
+    if (!auth0ProfileRequired) return;
+    setAuth0FirstName(String(auth0ProfilePrefill?.firstName || ""));
+    setAuth0LastName(String(auth0ProfilePrefill?.lastName || ""));
+    setAuth0Company(String(auth0ProfilePrefill?.company || ""));
+    setAuth0ProfileError("");
+  }, [auth0ProfileRequired, auth0ProfilePrefill]);
+
+  const submitAuth0Profile = async () => {
+    if (typeof onAuth0CompleteProfile !== "function") return;
+    const firstName = String(auth0FirstName || "").trim();
+    const lastName = String(auth0LastName || "").trim();
+    const company = String(auth0Company || "").trim();
+    if (!firstName || !lastName || !company) {
+      setAuth0ProfileError("First name, last name and company are required.");
+      return;
+    }
+    try {
+      setAuth0ProfileSaving(true);
+      setAuth0ProfileError("");
+      const result = await onAuth0CompleteProfile({ firstName, lastName, company });
+      if (result?.pendingApproval) {
+        setPendingEmail(result.email || auth0ProfilePrefill?.email || "");
+      }
+    } catch (error) {
+      setAuth0ProfileError(error.message || "Could not complete registration.");
+    } finally {
+      setAuth0ProfileSaving(false);
+    }
   };
 
   const pendingApprovalView = (
@@ -4838,6 +4923,34 @@ function Login({
       </button>
     </div>
   );
+
+  if (auth0Only && auth0ProfileRequired) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-layout">
+          <aside className="auth-hero">
+            <div className="auth-hero-logo-wrap">
+              <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
+            </div>
+            <h2 className="auth-hero-title">Complete Registration</h2>
+            <p className="auth-hero-text">Please provide your profile details to continue.</p>
+          </aside>
+          <div className="auth-card auth0-card">
+            {auth0ProfilePrefill?.email ? <p className="small">Email: {auth0ProfilePrefill.email}</p> : null}
+            <div style={{ display: "grid", gap: 8 }}>
+              <input type="text" placeholder="First name" value={auth0FirstName} onChange={(e) => setAuth0FirstName(e.target.value)} />
+              <input type="text" placeholder="Last name" value={auth0LastName} onChange={(e) => setAuth0LastName(e.target.value)} />
+              <input type="text" placeholder="Company" value={auth0Company} onChange={(e) => setAuth0Company(e.target.value)} />
+              <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={submitAuth0Profile} disabled={auth0ProfileSaving}>
+                {auth0ProfileSaving ? "Saving..." : "Complete Registration"}
+              </button>
+            </div>
+            {auth0ProfileError ? <p className="auth-error auth0-error">{auth0ProfileError}</p> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (auth0Only && auth0PendingApprovalEmail) {
     return (
