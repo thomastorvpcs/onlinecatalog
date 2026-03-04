@@ -288,6 +288,9 @@ const AI_COPILOT_DEBUG_ERRORS = String(process.env.AI_COPILOT_DEBUG_ERRORS || "f
 const AUTH0_DOMAIN = String(process.env.AUTH0_DOMAIN || process.env.VITE_AUTH0_DOMAIN || "").trim();
 const AUTH0_AUDIENCE = String(process.env.AUTH0_AUDIENCE || process.env.VITE_AUTH0_AUDIENCE || "").trim();
 const AUTH0_ISSUER = String(process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : "")).trim();
+const AUTH0_MGMT_CLIENT_ID = String(process.env.AUTH0_MGMT_CLIENT_ID || "").trim();
+const AUTH0_MGMT_CLIENT_SECRET = String(process.env.AUTH0_MGMT_CLIENT_SECRET || "").trim();
+const AUTH0_MGMT_AUDIENCE = String(process.env.AUTH0_MGMT_AUDIENCE || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/api/v2/` : "")).trim();
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -1468,6 +1471,47 @@ function getAuth0Jwks() {
     auth0Jwks = createRemoteJWKSet(new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`));
   }
   return auth0Jwks;
+}
+
+function isAuth0ManagementConfigured() {
+  return Boolean(AUTH0_DOMAIN && AUTH0_MGMT_CLIENT_ID && AUTH0_MGMT_CLIENT_SECRET && AUTH0_MGMT_AUDIENCE);
+}
+
+async function getAuth0ManagementToken() {
+  if (!isAuth0ManagementConfigured()) {
+    throw new Error("Auth0 Management API is not configured (AUTH0_MGMT_CLIENT_ID/AUTH0_MGMT_CLIENT_SECRET/AUTH0_MGMT_AUDIENCE).");
+  }
+  const payload = await requestJsonStrict(`https://${AUTH0_DOMAIN}/oauth/token`, {
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({
+      client_id: AUTH0_MGMT_CLIENT_ID,
+      client_secret: AUTH0_MGMT_CLIENT_SECRET,
+      audience: AUTH0_MGMT_AUDIENCE,
+      grant_type: "client_credentials"
+    }),
+    errorPrefix: "Auth0 management token request"
+  });
+  const accessToken = String(payload?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error("Auth0 management token response did not include access_token.");
+  }
+  return accessToken;
+}
+
+async function deleteAuth0UserBySub(auth0Sub) {
+  const sub = String(auth0Sub || "").trim();
+  if (!sub) return { deleted: false, reason: "no_auth0_sub" };
+  const mgmtToken = await getAuth0ManagementToken();
+  await requestJsonStrict(`https://${AUTH0_DOMAIN}/api/v2/users/${encodeURIComponent(sub)}`, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${mgmtToken}`
+    },
+    errorPrefix: "Auth0 user delete request"
+  });
+  return { deleted: true };
 }
 
 async function verifyAuth0AccessToken(accessToken) {
@@ -4668,8 +4712,55 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "You cannot delete your own admin user." });
         return;
       }
-      db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-      json(req, res, 200, { ok: true });
+      const target = db.prepare(`
+        SELECT id, email, auth0_sub, role
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `).get(userId);
+      if (!target?.id) {
+        json(req, res, 404, { error: "User not found." });
+        return;
+      }
+
+      const auth0Sub = String(target.auth0_sub || "").trim();
+      let auth0Deleted = false;
+      if (auth0Sub) {
+        try {
+          const result = await deleteAuth0UserBySub(auth0Sub);
+          auth0Deleted = Boolean(result?.deleted);
+        } catch (error) {
+          const message = String(error?.message || "Failed to delete user in Auth0.");
+          json(req, res, 502, {
+            error: `Local delete canceled because Auth0 delete failed: ${message}`
+          });
+          return;
+        }
+      }
+
+      db.exec("BEGIN TRANSACTION");
+      try {
+        db.prepare("UPDATE quote_requests SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(userId);
+        db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(userId);
+        db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+
+      for (const [token, session] of sessions.entries()) {
+        if (Number(session?.user?.id || 0) === userId) {
+          sessions.delete(token);
+        }
+      }
+
+      json(req, res, 200, {
+        ok: true,
+        deletedUserId: userId,
+        deletedEmail: target.email,
+        auth0Deleted
+      });
       return;
     }
 
