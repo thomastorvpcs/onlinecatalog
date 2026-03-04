@@ -2272,6 +2272,18 @@ async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
   db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?").run(passwordHash, id);
 }
 
+async function listUsersForAdminRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(
+      "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
+    );
+    return (result.rows || []).map(makePublicUser);
+  }
+  return db.prepare(
+    "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
+  ).all().map(makePublicUser);
+}
+
 async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
   if (!(effectiveDbEngine === "postgres" && pgClient)) {
     return upsertUserFromAuth0Claims(claims, fallbackEmail);
@@ -5838,9 +5850,7 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         console.warn(`[auth0-sync] Admin users sync failed: ${error?.message || error}`);
       }
-      const users = db.prepare(
-        "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
-      ).all().map(makePublicUser);
+      const users = await listUsersForAdminRuntime();
       json(req, res, 200, users);
       return;
     }
