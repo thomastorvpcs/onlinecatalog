@@ -294,6 +294,48 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-top: 4px;
 }
 
+.auth-approval-card {
+  border: 1px solid #cde6d7;
+  background: #f3fbf6;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: left;
+}
+
+.auth-approval-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: #14532d;
+  color: #fff;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.auth-approval-title {
+  margin: 0 0 8px;
+  font-size: 1.35rem;
+  color: #0f172a;
+}
+
+.auth-approval-text {
+  margin: 0 0 6px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.auth-approval-subtext {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.auth-approval-btn {
+  margin-top: 12px;
+}
+
 @media (max-width: 900px) {
   .auth-shell {
     padding: 12px;

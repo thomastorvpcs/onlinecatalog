@@ -1529,6 +1529,7 @@ export default function App() {
   const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem("pcs.refreshToken") || "");
   const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState(() => localStorage.getItem("pcs.accessTokenExpiresAt") || "");
   const [authBootstrapError, setAuthBootstrapError] = useState("");
+  const [authPendingApprovalEmail, setAuthPendingApprovalEmail] = useState("");
   const [sessionTimeLeftMs, setSessionTimeLeftMs] = useState(null);
   const [refreshingSession, setRefreshingSession] = useState(false);
   const [user, setUser] = useState(null);
@@ -1732,6 +1733,7 @@ export default function App() {
     setRefreshToken("");
     setAccessTokenExpiresAt("");
     setAuthBootstrapError("");
+    setAuthPendingApprovalEmail("");
     setSessionTimeLeftMs(null);
     setUser(null);
     setCart([]);
@@ -1813,11 +1815,13 @@ export default function App() {
         });
         if (ignore) return;
         if (issued?.pendingApproval) {
-          setAuthBootstrapError(`Account pending approval for ${issued.email || "this user"}.`);
+          setAuthPendingApprovalEmail(String(issued.email || ""));
+          setAuthBootstrapError("");
           setAuthLoading(false);
           return;
         }
         applyAuthTokens(issued);
+        setAuthPendingApprovalEmail("");
         clearAuth0InteractiveLoginPending();
         setAiCopilotOpen(false);
         setAiCopilotGreetingTyping(false);
@@ -1826,6 +1830,7 @@ export default function App() {
       } catch (error) {
         clearAuth0InteractiveLoginPending();
         if (!ignore) {
+          setAuthPendingApprovalEmail("");
           setAuthBootstrapError(error.message || "Auth0 sign-in exchange failed.");
           setAuthLoading(false);
           setUser(null);
@@ -3206,6 +3211,7 @@ export default function App() {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
     markAuth0InteractiveLoginPending();
+    setAuthPendingApprovalEmail("");
     await loginWithRedirect({
       authorizationParams: {
         prompt: "login"
@@ -3217,6 +3223,7 @@ export default function App() {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
     markAuth0InteractiveLoginPending();
+    setAuthPendingApprovalEmail("");
     await loginWithRedirect({
       authorizationParams: {
         prompt: "login",
@@ -3349,6 +3356,7 @@ export default function App() {
         onAuth0Signup={handleAuth0Signup}
         auth0Loading={auth0SdkLoading}
         auth0ErrorText={authBootstrapError || auth0SdkError?.message || ""}
+        auth0PendingApprovalEmail={authPendingApprovalEmail}
         auth0Only={true}
       />
     );
@@ -4737,6 +4745,7 @@ function Login({
   onAuth0Signup,
   auth0Loading,
   auth0ErrorText,
+  auth0PendingApprovalEmail = "",
   auth0Only = false
 }) {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
@@ -4753,6 +4762,51 @@ function Login({
   const [notice, setNotice] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
+  const activePendingEmail = pendingEmail || auth0PendingApprovalEmail;
+
+  const pendingApprovalView = (
+    <div className="auth-approval-card" role="status" aria-live="polite">
+      <div className="auth-approval-icon" aria-hidden="true">✓</div>
+      <h2 className="auth-approval-title">Account Created</h2>
+      <p className="auth-approval-text">
+        {activePendingEmail || "This account"} is waiting for admin approval.
+      </p>
+      <p className="auth-approval-subtext">
+        You will be able to sign in as soon as an admin activates your account.
+      </p>
+      <button
+        type="button"
+        className="ghost-btn auth-approval-btn"
+        onClick={() => {
+          setMode("login");
+          setError("");
+          setNotice("");
+          setPendingEmail("");
+        }}
+      >
+        Back to sign in
+      </button>
+    </div>
+  );
+
+  if (auth0Only && auth0PendingApprovalEmail) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-layout">
+          <aside className="auth-hero">
+            <div className="auth-hero-logo-wrap">
+              <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
+            </div>
+            <h2 className="auth-hero-title">PCS Online Catalog</h2>
+            <p className="auth-hero-text">Your account request was received successfully.</p>
+          </aside>
+          <div className="auth-card auth0-card">
+            {pendingApprovalView}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (auth0Only) {
     return (
@@ -4843,15 +4897,7 @@ function Login({
         <div className="auth-card">
         <h1 className="auth-title">{mode === "register" ? "Create Account" : mode === "reset-confirm" ? "Reset Password" : mode === "reset-request" ? "Forgot Password" : "Login"}</h1>
         {mode === "approval" ? (
-          <>
-            <h3 style={{ marginBottom: 6 }}>Waiting for approval</h3>
-            <p className="small" style={{ marginTop: 0 }}>
-              {pendingEmail || "This account"} has been created and is waiting for admin approval.
-            </p>
-            <button type="button" onClick={() => { setMode("login"); setError(""); setNotice(""); }} style={{ marginTop: 8 }}>
-              Back to sign in
-            </button>
-          </>
+          pendingApprovalView
         ) : (
           <>
         {error ? <p className="auth-error">{error}</p> : null}
