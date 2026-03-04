@@ -165,6 +165,8 @@ const DEMO_WEEKLY_BANNER_KEY = "pcs.demo.weeklySpecialBanner";
 const DEMO_WEEKLY_FLAGS_KEY = "pcs.demo.weeklySpecialFlags";
 const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
+const AUTH0_LOGOUT_MARKER_KEY = "pcs.auth0.logoutRequestedAt";
+const AUTH0_LOGOUT_MARKER_TTL_MS = 2 * 60 * 1000;
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1462,6 +1464,28 @@ export default function App() {
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
 
+  const markAuth0LogoutRequested = () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(AUTH0_LOGOUT_MARKER_KEY, String(Date.now()));
+  };
+
+  const clearAuth0LogoutRequested = () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(AUTH0_LOGOUT_MARKER_KEY);
+  };
+
+  const hasRecentAuth0LogoutRequest = () => {
+    if (typeof window === "undefined") return false;
+    const raw = sessionStorage.getItem(AUTH0_LOGOUT_MARKER_KEY);
+    const ts = Number(raw);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    if ((Date.now() - ts) > AUTH0_LOGOUT_MARKER_TTL_MS) {
+      sessionStorage.removeItem(AUTH0_LOGOUT_MARKER_KEY);
+      return false;
+    }
+    return true;
+  };
+
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
   const aiCopilotStateKey = user
@@ -1569,6 +1593,7 @@ export default function App() {
   useEffect(() => {
     if (!auth0IsAuthenticated) {
       auth0LogoutInProgressRef.current = false;
+      clearAuth0LogoutRequested();
     }
   }, [auth0IsAuthenticated]);
 
@@ -1578,6 +1603,7 @@ export default function App() {
       if (!auth0IsAuthenticated) return;
       if (authToken || refreshToken || user) return;
       if (auth0LogoutInProgressRef.current) return;
+      if (hasRecentAuth0LogoutRequest()) return;
       if (auth0ExchangeInFlightRef.current) return;
       try {
         auth0ExchangeInFlightRef.current = true;
@@ -1622,6 +1648,11 @@ export default function App() {
       if (!authToken && !refreshToken) {
         if (auth0IsAuthenticated) {
           if (auth0LogoutInProgressRef.current) {
+            setAuthLoading(false);
+            setUser(null);
+            return;
+          }
+          if (hasRecentAuth0LogoutRequest()) {
             setAuthLoading(false);
             setUser(null);
             return;
@@ -2952,10 +2983,13 @@ export default function App() {
 
   const handleAuth0Login = async () => {
     auth0LogoutInProgressRef.current = false;
+    clearAuth0LogoutRequested();
     await loginWithRedirect();
   };
 
   const handleAuth0Signup = async () => {
+    auth0LogoutInProgressRef.current = false;
+    clearAuth0LogoutRequested();
     await loginWithRedirect({
       authorizationParams: {
         screen_hint: "signup"
@@ -2977,6 +3011,7 @@ export default function App() {
 
   const logout = () => {
     auth0LogoutInProgressRef.current = true;
+    markAuth0LogoutRequested();
     apiRequest("/api/auth/logout", {
       method: "POST",
       token: authToken,
@@ -2985,13 +3020,11 @@ export default function App() {
     }).catch(() => {});
     clearAuthState();
     resetViewStateToHome();
-    if (auth0IsAuthenticated) {
-      auth0Logout({
-        logoutParams: {
-          returnTo: window.location.origin
-        }
-      });
-    }
+    auth0Logout({
+      logoutParams: {
+        returnTo: window.location.origin
+      }
+    }).catch(() => {});
   };
 
   const createUserAsAdmin = async (e) => {
