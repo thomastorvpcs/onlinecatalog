@@ -792,10 +792,23 @@ async function ensurePostgresRuntimeSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("user_saved_filters")} (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      view_key TEXT NOT NULL DEFAULT 'category',
+      name TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON ${postgresTableRef("quote_request_lines")} (request_id)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON ${postgresTableRef("quote_request_events")} (request_id)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_user_saved_filters_user ON ${postgresTableRef("user_saved_filters")} (user_id)`);
+  await pgClient.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_saved_filters_unique_name ON ${postgresTableRef("user_saved_filters")} (user_id, view_key, name)`);
 }
 
 async function backfillPostgresTableFromSqliteIfEmpty(tableName) {
@@ -863,6 +876,7 @@ async function initializePostgresRuntime() {
   await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
+  await backfillPostgresTableFromSqliteIfEmpty("user_saved_filters");
   await ensurePostgresSerialSequence("quote_request_lines", "id");
   await ensurePostgresSerialSequence("quote_request_events", "id");
   await ensurePostgresSerialSequence("refresh_tokens", "id");
