@@ -4831,7 +4831,7 @@ function Login({
     if (!auth0ProfileRequired) return;
     setAuth0FirstName(String(auth0ProfilePrefill?.firstName || ""));
     setAuth0LastName(String(auth0ProfilePrefill?.lastName || ""));
-    setAuth0Company(String(auth0ProfilePrefill?.company || ""));
+    setAuth0Company("");
     setAuth0ProfileError("");
   }, [auth0ProfileRequired, auth0ProfilePrefill]);
 
