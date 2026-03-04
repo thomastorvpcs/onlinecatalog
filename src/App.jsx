@@ -168,6 +168,7 @@ const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
 const AUTH0_LOGOUT_MARKER_KEY = "pcs.auth0.logoutRequestedAt";
 const AUTH0_LOGOUT_MARKER_TTL_MS = 2 * 60 * 1000;
 const AUTH0_INTERACTIVE_LOGIN_KEY = "pcs.auth0.interactiveLoginPending";
+const AUTH0_INTERACTIVE_LOGIN_TTL_MS = 10 * 60 * 1000;
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1660,7 +1661,7 @@ export default function App() {
 
   const markAuth0InteractiveLoginPending = () => {
     if (typeof window === "undefined") return;
-    sessionStorage.setItem(AUTH0_INTERACTIVE_LOGIN_KEY, "1");
+    sessionStorage.setItem(AUTH0_INTERACTIVE_LOGIN_KEY, String(Date.now()));
   };
 
   const clearAuth0InteractiveLoginPending = () => {
@@ -1670,7 +1671,14 @@ export default function App() {
 
   const hasAuth0InteractiveLoginPending = () => {
     if (typeof window === "undefined") return false;
-    return sessionStorage.getItem(AUTH0_INTERACTIVE_LOGIN_KEY) === "1";
+    const raw = sessionStorage.getItem(AUTH0_INTERACTIVE_LOGIN_KEY);
+    const ts = Number(raw);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    if ((Date.now() - ts) > AUTH0_INTERACTIVE_LOGIN_TTL_MS) {
+      sessionStorage.removeItem(AUTH0_INTERACTIVE_LOGIN_KEY);
+      return false;
+    }
+    return true;
   };
 
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
@@ -1781,7 +1789,6 @@ export default function App() {
     if (!auth0IsAuthenticated) {
       auth0LogoutInProgressRef.current = false;
       clearAuth0LogoutRequested();
-      clearAuth0InteractiveLoginPending();
     }
   }, [auth0IsAuthenticated]);
 
