@@ -272,7 +272,75 @@
 <h3>Frontend MIME/module errors</h3>
 <p>Ensure app is run with Vite (<code>npm run dev</code>) or built/previewed correctly; avoid static serving raw JSX entrypoints.</p>
 
-<h2>12. Reference Files (GitHub)</h2>
+<h2>12. Recent Feature Updates (March 2026)</h2>
+<h3>12.1 Authentication and Session Behavior</h3>
+<ul>
+  <li>Auth0 login/signup via Universal Login is integrated in the frontend.</li>
+  <li>Backend token-exchange endpoint validates Auth0 access token and issues local app session/refresh tokens.</li>
+  <li>Logout now clears local credentials and calls Auth0 logout redirect for tenant session termination.</li>
+  <li>Interactive-login marker prevents silent re-authentication on refresh after logout.</li>
+  <li>Auth0 callback edge case fixed to avoid successful Auth0 login redirecting back to app login page.</li>
+</ul>
+
+<h3>12.2 AI Copilot Runtime and Deterministic Intents</h3>
+<ul>
+  <li>OpenAI model wiring supports configurable endpoint/model and structured response planning.</li>
+  <li>Deterministic handlers were expanded for:
+    <ul>
+      <li>weekly specials/promotions</li>
+      <li>add-from-history intents</li>
+      <li>order-detail and order-price questions</li>
+      <li>grade-definition Q&amp;A</li>
+    </ul>
+  </li>
+  <li>No-match filter guidance is returned before applying zero-result suggestions.</li>
+  <li>Device-add actions support multi-match disambiguation and request-line payload generation.</li>
+</ul>
+
+<h3>12.3 Chatbot and Frontend Interaction Layer</h3>
+<ul>
+  <li>Floating chatbot includes:
+    <ul>
+      <li>message timestamps</li>
+      <li>typing indicator + delay</li>
+      <li>welcome message behavior on login/session</li>
+      <li>minimize icon and default-minimized startup</li>
+      <li>top-edge panel resize (mouse/touch)</li>
+    </ul>
+  </li>
+  <li>Chat state persistence is user-scoped (user ID + normalized email key).</li>
+  <li>Admin UI includes selected-user chat history reset action.</li>
+</ul>
+
+<h3>12.4 Product/Request Modal and Grade System</h3>
+<ul>
+  <li>Request detail rows expand inline and support clickable product names to open product detail modal.</li>
+  <li>Availability rendering excludes zero-quantity locations in product details.</li>
+  <li>Grade definitions modal added with clickable grade entry points from product cards/details/request views.</li>
+  <li>Grade modal supports selected-grade highlighting, automatic scroll-to-selection, top-most overlay stacking, and persistent top-right close button visibility during scroll.</li>
+</ul>
+
+<h3>12.5 Location and Inventory Semantics</h3>
+<ul>
+  <li>Location display names are now mapped from location <code>external_id</code> (Internal ID) to PCS Physical Location via <code>backend/db/Locations936.csv</code>.</li>
+  <li>Device location quantities are aggregated by mapped display location where multiple internal IDs map to one PCS physical location.</li>
+  <li>Region filters and inventory checks resolve both stored and mapped location names for compatibility.</li>
+</ul>
+
+<h3>12.6 Persistence and Startup Guards</h3>
+<ul>
+  <li>Render default DB path uses persistent disk (<code>/var/data/catalog.sqlite</code>).</li>
+  <li>Catalog reseed is blocked when device data already exists, preventing deploy-time resets of devices/images.</li>
+  <li>Historical completed-estimate seeding is preserved for analytics and copilot context.</li>
+</ul>
+
+<h3>12.7 Boomi Sync Hardening</h3>
+<ul>
+  <li>Boomi parser accepts nested payload structures and empty payloads safely.</li>
+  <li>Auth compatibility improved for OAuth token + subscription key variants and legacy basic auth fallback.</li>
+</ul>
+
+<h2>13. Reference Files (GitHub)</h2>
 <ul>
   <li>Backend server: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
   <li>Frontend app: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>

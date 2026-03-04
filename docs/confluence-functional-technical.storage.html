@@ -310,7 +310,69 @@
 <h3>Frontend MIME/module errors</h3>
 <p>Ensure app is run with Vite (<code>npm run dev</code>) or built/previewed correctly; avoid static serving raw JSX entrypoints.</p>
 
-<h2>12. Reference Files (GitHub)</h2>
+<h2>12. Recent Feature Updates (March 2026)</h2>
+<h3>12.1 Authentication and Session Control</h3>
+<ul>
+  <li>Auth0 React SDK integration is active for login/signup via Universal Login.</li>
+  <li>Backend exchanges verified Auth0 access tokens for local app sessions and role-linked users.</li>
+  <li>Logout flow now revokes local session + refresh token and initiates Auth0 logout redirect.</li>
+  <li>Interactive-login guard prevents silent refresh-based auto-login after logout; users must click login/signup explicitly.</li>
+  <li>Auth0 callback exchange handling was stabilized to prevent redirect loops back to login without error logs.</li>
+</ul>
+
+<h3>12.2 AI Copilot and Chat UX</h3>
+<ul>
+  <li>Chatbot UI moved to a global floating assistant with left/right speech bubbles and bot avatar.</li>
+  <li>Message timestamps are rendered per chat entry.</li>
+  <li>Typing indicator and intentional response delay were added for more natural assistant behavior.</li>
+  <li>A warm welcome message is shown on login/session start, and chat starts minimized by default.</li>
+  <li>Chat panel is resizable from the top edge, with improved mouse/touch drag handling and updated default height.</li>
+  <li>Chat history is scoped per user identity; admin can clear chat history for a selected user.</li>
+</ul>
+
+<h3>12.3 AI Copilot Functional Intelligence</h3>
+<ul>
+  <li>OpenAI-backed copilot enabled (with configurable model/base URL), with deterministic fallbacks for selected intents.</li>
+  <li>No-match handling improved: assistant warns before applying filters that return zero devices and gives correction suggestions.</li>
+  <li>Cross-category intent support improved so copilot is not smartphone-locked by default context.</li>
+  <li>Weekly specials are available as first-class copilot context and can be promoted or added to requested items.</li>
+  <li>Copilot can add devices directly to requested items, including disambiguation when multiple matches exist.</li>
+  <li>Copilot can answer prior-order questions (including pricing/averages) and provide full order detail summaries.</li>
+  <li>Copilot can add items from historical orders while skipping unavailable devices and reporting omissions.</li>
+</ul>
+
+<h3>12.4 Product, Request, and Modal UX</h3>
+<ul>
+  <li>Request list details now expand inline under each row instead of opening in a separate section.</li>
+  <li>Product names in expanded request lines are clickable and open product detail modal.</li>
+  <li>Availability in device detail modal hides zero-stock locations and shows explicit no-stock message when applicable.</li>
+  <li>Location display now maps internal location IDs to PCS Physical Location labels using <code>Locations936.csv</code> mapping by Internal ID.</li>
+</ul>
+
+<h3>12.5 Grade Definitions and Education Layer</h3>
+<ul>
+  <li>Added device grade definitions modal containing C2, C4, C5, C6, COB, CPO, CRC, CRD, CRX, D2, D3, D4, MD A, MD B, TBG, TBG FIN, and TBG2.</li>
+  <li>Grades are clickable from product cards, product detail specs, requested-items modal, and request detail lines.</li>
+  <li>Selected grade is emphasized, auto-scrolled into view, and shown as current context on modal open.</li>
+  <li>Grade modal now layers above other open modals and keeps the close (<code>X</code>) control visible while content scrolls.</li>
+  <li>Copilot can answer grade-definition questions directly using the same shared grade definition set.</li>
+</ul>
+
+<h3>12.6 Data Persistence and Startup Safety</h3>
+<ul>
+  <li>Render runtime defaults SQLite to persistent disk path (<code>/var/data/catalog.sqlite</code>).</li>
+  <li>Startup hard-guard skips reseeding when devices already exist, preserving inventory/images between deploys.</li>
+  <li>Historical completed estimates can be seeded and retained for analytics/copilot context.</li>
+</ul>
+
+<h3>12.7 Admin and Operations Utilities</h3>
+<ul>
+  <li>Admin can seed completed estimate history for selected users.</li>
+  <li>Admin can clear selected user AI chat history.</li>
+  <li>Boomi sync compatibility expanded for multiple payload shapes and OAuth/subscription auth header variations.</li>
+</ul>
+
+<h2>13. Reference Files (GitHub)</h2>
 <ul>
   <li>Backend server: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/backend/server.mjs">backend/server.mjs</a></li>
   <li>Frontend app: <a href="https://github.com/thomastorvpcs/onlinecatalog/blob/main/src/App.jsx">src/App.jsx</a></li>
