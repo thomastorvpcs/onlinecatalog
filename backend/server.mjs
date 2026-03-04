@@ -726,6 +726,34 @@ async function ensurePostgresRuntimeSchema() {
   if (!pgClient) return;
   await pgClient.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(PG_SCHEMA)}`);
   await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("users")} (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      company TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'buyer')),
+      password_hash TEXT NOT NULL,
+      is_active BIGINT NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS reset_code TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS reset_code_expires_at TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS auth0_sub TEXT`);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("refresh_tokens")} (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      replaced_by_hash TEXT
+    )
+  `);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON ${postgresTableRef("refresh_tokens")} (user_id)`);
+  await pgClient.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth0_sub ON ${postgresTableRef("users")} (auth0_sub)`);
+  await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("quote_requests")} (
       id TEXT PRIMARY KEY,
       request_number TEXT NOT NULL UNIQUE,
@@ -830,6 +858,8 @@ async function initializePostgresRuntime() {
   });
   await pgClient.connect();
   await ensurePostgresRuntimeSchema();
+  await backfillPostgresTableFromSqliteIfEmpty("users");
+  await backfillPostgresTableFromSqliteIfEmpty("refresh_tokens");
   await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
@@ -1735,6 +1765,18 @@ function issueRefreshToken(userId) {
   return refreshToken;
 }
 
+async function issueRefreshTokenPostgres(userId) {
+  if (!pgClient) return issueRefreshToken(userId);
+  const refreshToken = randomBytes(48).toString("hex");
+  const tokenHash = hashRefreshToken(refreshToken);
+  const expiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+  await pgClient.query(`
+    INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+    VALUES ($1, $2, $3)
+  `, [userId, tokenHash, expiresAt]);
+  return refreshToken;
+}
+
 function revokeRefreshToken(refreshToken, replacedByToken) {
   const tokenHash = hashRefreshToken(refreshToken);
   const replacedByHash = replacedByToken ? hashRefreshToken(replacedByToken) : null;
@@ -1746,6 +1788,23 @@ function revokeRefreshToken(refreshToken, replacedByToken) {
     WHERE token_hash = ?
       AND revoked_at IS NULL
   `).run(replacedByHash, tokenHash);
+}
+
+async function revokeRefreshTokenPostgres(refreshToken, replacedByToken) {
+  if (!pgClient) {
+    revokeRefreshToken(refreshToken, replacedByToken);
+    return;
+  }
+  const tokenHash = hashRefreshToken(refreshToken);
+  const replacedByHash = replacedByToken ? hashRefreshToken(replacedByToken) : null;
+  await pgClient.query(`
+    UPDATE refresh_tokens
+    SET revoked_at = CURRENT_TIMESTAMP,
+        replaced_by_hash = COALESCE($1, replaced_by_hash),
+        last_used_at = CURRENT_TIMESTAMP
+    WHERE token_hash = $2
+      AND revoked_at IS NULL
+  `, [replacedByHash, tokenHash]);
 }
 
 function rotateRefreshToken(refreshToken) {
@@ -1785,6 +1844,70 @@ function rotateRefreshToken(refreshToken) {
     throw error;
   }
   return { userId: row.user_id, refreshToken: newRefreshToken };
+}
+
+async function rotateRefreshTokenPostgres(refreshToken) {
+  if (!pgClient) return rotateRefreshToken(refreshToken);
+  const tokenHash = hashRefreshToken(refreshToken);
+  const rowRes = await pgClient.query(`
+    SELECT id, user_id, expires_at, revoked_at
+    FROM refresh_tokens
+    WHERE token_hash = $1
+    LIMIT 1
+  `, [tokenHash]);
+  const row = rowRes.rows?.[0];
+  if (!row?.id) return null;
+  if (row.revoked_at) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await pgClient.query("UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = $1", [row.id]);
+    return null;
+  }
+
+  const newRefreshToken = randomBytes(48).toString("hex");
+  const newRefreshHash = hashRefreshToken(newRefreshToken);
+  const newExpiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+
+  await pgClient.query("BEGIN");
+  try {
+    await pgClient.query(`
+      UPDATE refresh_tokens
+      SET revoked_at = CURRENT_TIMESTAMP,
+          replaced_by_hash = $1,
+          last_used_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+    `, [newRefreshHash, row.id]);
+    await pgClient.query(`
+      INSERT INTO refresh_tokens (user_id, token_hash, expires_at, last_used_at)
+      VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+    `, [row.user_id, newRefreshHash, newExpiresAt]);
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+  return { userId: Number(row.user_id), refreshToken: newRefreshToken };
+}
+
+async function issueRefreshTokenRuntime(userId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return issueRefreshTokenPostgres(userId);
+  }
+  return issueRefreshToken(userId);
+}
+
+async function revokeRefreshTokenRuntime(refreshToken, replacedByToken) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    await revokeRefreshTokenPostgres(refreshToken, replacedByToken);
+    return;
+  }
+  revokeRefreshToken(refreshToken, replacedByToken);
+}
+
+async function rotateRefreshTokenRuntime(refreshToken) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return rotateRefreshTokenPostgres(refreshToken);
+  }
+  return rotateRefreshToken(refreshToken);
 }
 
 function getAuthToken(req) {
@@ -1939,6 +2062,131 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
     WHERE email = ?
     LIMIT 1
   `).get(email);
+}
+
+async function getUserByEmailRuntime(email, includePassword = false) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const fields = includePassword
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE email = $1 LIMIT 1`, [normalized]);
+    return result.rows?.[0] || null;
+  }
+  return db.prepare(
+    includePassword
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE email = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE email = ? LIMIT 1"
+  ).get(normalized);
+}
+
+async function getUserByIdRuntime(userId, includePassword = false) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const fields = includePassword
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE id = $1 LIMIT 1`, [id]);
+    return result.rows?.[0] || null;
+  }
+  return db.prepare(
+    includePassword
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE id = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE id = ? LIMIT 1"
+  ).get(id);
+}
+
+async function createUserRuntime({ email, company, role = "buyer", passwordHash, isActive = false, auth0Sub = null }) {
+  const normalizedEmail = normalizeEmail(email);
+  const safeCompany = String(company || "").trim();
+  const safeRole = String(role || "").trim() === "admin" ? "admin" : "buyer";
+  if (!normalizedEmail || !safeCompany || !passwordHash) throw new Error("Invalid user payload.");
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(`
+      INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, email, company, role, is_active, created_at, auth0_sub
+    `, [normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null]);
+    return result.rows?.[0] || null;
+  }
+  db.prepare(`
+    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null);
+  return getUserByEmailRuntime(normalizedEmail, false);
+}
+
+async function setUserResetCodeRuntime(userId, resetCode, expiresAt) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    await pgClient.query("UPDATE users SET reset_code = $1, reset_code_expires_at = $2 WHERE id = $3", [resetCode, expiresAt, id]);
+    return;
+  }
+  db.prepare("UPDATE users SET reset_code = ?, reset_code_expires_at = ? WHERE id = ?").run(resetCode, expiresAt, id);
+}
+
+async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    await pgClient.query("UPDATE users SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL WHERE id = $2", [passwordHash, id]);
+    return;
+  }
+  db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?").run(passwordHash, id);
+}
+
+async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return upsertUserFromAuth0Claims(claims, fallbackEmail);
+  }
+  const auth0Sub = String(claims?.sub || "").trim();
+  const email = normalizeEmail(claims?.email || fallbackEmail || "");
+  if (!auth0Sub) throw new Error("Auth0 token missing subject (sub).");
+  if (!email) throw new Error("Auth0 token missing email claim.");
+
+  let result = await pgClient.query(`
+    SELECT id, email, company, role, is_active, created_at, auth0_sub
+    FROM users
+    WHERE auth0_sub = $1
+    LIMIT 1
+  `, [auth0Sub]);
+  let user = result.rows?.[0] || null;
+  if (!user) {
+    result = await pgClient.query(`
+      SELECT id, email, company, role, is_active, created_at, auth0_sub
+      FROM users
+      WHERE email = $1
+      LIMIT 1
+    `, [email]);
+    user = result.rows?.[0] || null;
+  }
+  if (user?.id) {
+    if (!String(user.auth0_sub || "").trim()) {
+      await pgClient.query("UPDATE users SET auth0_sub = $1 WHERE id = $2", [auth0Sub, user.id]);
+    }
+    const finalRes = await pgClient.query(`
+      SELECT id, email, company, role, is_active, created_at
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+    `, [user.id]);
+    return finalRes.rows?.[0] || null;
+  }
+
+  const company = inferCompanyFromEmail(email);
+  const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
+  const created = await createUserRuntime({
+    email,
+    company,
+    role: "buyer",
+    passwordHash: randomPasswordHash,
+    isActive: false,
+    auth0Sub
+  });
+  return created;
 }
 
 function getAuthUser(req) {
@@ -5283,15 +5531,14 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+      const existing = await getUserByEmailRuntime(email, false);
       if (existing?.id) {
         json(req, res, 409, { error: "User already exists." });
         return;
       }
 
       const passwordHash = hashPassword(password);
-      db.prepare("INSERT INTO users (email, company, role, password_hash, is_active) VALUES (?, ?, 'buyer', ?, 0)")
-        .run(email, company, passwordHash);
+      await createUserRuntime({ email, company, role: "buyer", passwordHash, isActive: false });
       json(req, res, 201, { ok: true });
       return;
     }
@@ -5300,9 +5547,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const email = normalizeEmail(body.email);
       const password = String(body.password || "");
-      const row = db.prepare(
-        "SELECT id, email, company, role, password_hash, is_active, created_at FROM users WHERE email = ?"
-      ).get(email);
+      const row = await getUserByEmailRuntime(email, true);
 
       if (!row || !verifyPassword(password, row.password_hash)) {
         json(req, res, 401, { error: "Invalid email or password." });
@@ -5314,7 +5559,7 @@ const server = createServer(async (req, res) => {
       }
 
       const issued = createSession(row);
-      const refreshToken = issueRefreshToken(row.id);
+      const refreshToken = await issueRefreshTokenRuntime(row.id);
       json(req, res, 200, { token: issued.token, refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
       return;
     }
@@ -5325,7 +5570,7 @@ const server = createServer(async (req, res) => {
       try {
         const claims = await verifyAuth0AccessToken(accessToken);
         const userInfo = await fetchAuth0UserInfo(accessToken);
-        const row = upsertUserFromAuth0Claims(claims, String(userInfo?.email || ""));
+        const row = await upsertUserFromAuth0ClaimsRuntime(claims, String(userInfo?.email || ""));
         if (!row?.id) {
           json(req, res, 401, { error: "Unauthorized." });
           return;
@@ -5335,7 +5580,7 @@ const server = createServer(async (req, res) => {
           return;
         }
         const issued = createSession(row);
-        const refreshToken = issueRefreshToken(row.id);
+        const refreshToken = await issueRefreshTokenRuntime(row.id);
         json(req, res, 200, {
           token: issued.token,
           refreshToken,
@@ -5356,15 +5601,13 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const rotated = rotateRefreshToken(refreshToken);
+      const rotated = await rotateRefreshTokenRuntime(refreshToken);
       if (!rotated?.userId) {
         json(req, res, 401, { error: "Invalid or expired refresh token." });
         return;
       }
 
-      const row = db.prepare(
-        "SELECT id, email, company, role, is_active, created_at FROM users WHERE id = ?"
-      ).get(rotated.userId);
+      const row = await getUserByIdRuntime(rotated.userId, false);
       if (!row?.id || Number(row.is_active) !== 1) {
         json(req, res, 401, { error: "User is not active." });
         return;
@@ -5383,7 +5626,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const refreshToken = String(body.refreshToken || "").trim();
       if (refreshToken) {
-        revokeRefreshToken(refreshToken);
+        await revokeRefreshTokenRuntime(refreshToken);
       }
       json(req, res, 200, { ok: true });
       return;
@@ -5396,11 +5639,10 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "Email is required." });
         return;
       }
-      const row = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+      const row = await getUserByEmailRuntime(email, false);
       if (row?.id) {
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-        db.prepare("UPDATE users SET reset_code = ?, reset_code_expires_at = ? WHERE id = ?")
-          .run(DEMO_RESET_CODE, expiresAt, row.id);
+        await setUserResetCodeRuntime(row.id, DEMO_RESET_CODE, expiresAt);
       }
       json(req, res, 200, {
         ok: true,
@@ -5428,9 +5670,7 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const row = db.prepare(
-        "SELECT id, reset_code, reset_code_expires_at FROM users WHERE email = ?"
-      ).get(email);
+      const row = await getUserByEmailRuntime(email, false);
       if (!row?.id || !row.reset_code || row.reset_code !== code) {
         json(req, res, 400, { error: "Invalid verification code." });
         return;
@@ -5441,8 +5681,7 @@ const server = createServer(async (req, res) => {
       }
 
       const passwordHash = hashPassword(newPassword);
-      db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?")
-        .run(passwordHash, row.id);
+      await updateUserPasswordAndClearResetRuntime(row.id, passwordHash);
       json(req, res, 200, { ok: true });
       return;
     }
