@@ -1536,10 +1536,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   position: relative;
   width: min(860px, 94vw);
   max-height: 92vh;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 12px;
   border: 2px solid #0f4fbf;
   box-shadow: 0 28px 72px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
 }
 
 .grade-guide-overlay {
@@ -1557,6 +1559,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-top: 12px;
   display: grid;
   gap: 8px;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 4px;
 }
 
 .grade-guide-item {
