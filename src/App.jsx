@@ -4479,6 +4479,7 @@ export default function App() {
       {gradeGuideOpen ? (
         <div className="app-overlay grade-guide-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setGradeGuideOpen(false); }}>
           <article className="modal grade-guide-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <button className="close-btn grade-guide-close-btn" onClick={() => setGradeGuideOpen(false)} aria-label="Close grade definitions">X</button>
             <div className="modal-head">
               <div>
                 <h3 style={{ margin: 0, fontSize: "1.5rem" }}>Grade Definitions</h3>
@@ -4491,7 +4492,6 @@ export default function App() {
                   </p>
                 ) : null}
               </div>
-              <button className="close-btn" onClick={() => setGradeGuideOpen(false)}>X</button>
             </div>
             <div className="grade-guide-list">
               {GRADE_DEFINITIONS.map((grade) => (
