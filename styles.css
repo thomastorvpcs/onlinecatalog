@@ -1411,6 +1411,24 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-top: 1px;
 }
 
+.grade-link-btn {
+  width: auto;
+  min-width: 0;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #0f4fbf;
+  font-size: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.grade-link-btn-inline {
+  line-height: 1.1;
+}
+
 .avail { font-size: 0.92rem; margin-top: 2px; }
 .avail.ok { color: var(--green); }
 .avail.bad { color: var(--red); }
@@ -1512,6 +1530,38 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 12px;
   box-shadow: 0 28px 72px rgba(15, 23, 42, 0.28);
   animation: dialog-pop-in 190ms ease-out;
+}
+
+.grade-guide-modal {
+  width: min(860px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+  border-radius: 12px;
+  box-shadow: 0 28px 72px rgba(15, 23, 42, 0.28);
+}
+
+.grade-guide-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.grade-guide-item {
+  border: 1px solid #d8e2f0;
+  background: #f8fbff;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.grade-guide-item.selected {
+  border-color: #256fd6;
+  box-shadow: 0 0 0 1px rgba(37, 111, 214, 0.2) inset;
+}
+
+.grade-guide-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .modal {

@@ -174,6 +174,171 @@ const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
 const DEMO_SAVED_FILTERS_PREFIX = "pcs.demo.savedFilters.";
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
+const GRADE_DEFINITIONS = [
+  {
+    code: "C2",
+    title: "Cosmetic Category C2",
+    summary: "Heavy cosmetic wear and/or visible damage, typically including deep scratches and chips.",
+    details: "Based on common secondary-market interpretations of REC/CTIA cosmetic mappings. Confirm acceptance thresholds with your internal QA SOP.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)"
+  },
+  {
+    code: "C4",
+    title: "Cosmetic Category C4",
+    summary: "Fair condition with significant cosmetic wear, but generally not severe structural breakage.",
+    details: "Commonly treated as lower resale cosmetic quality. Exact defect limits vary by trading partner.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)"
+  },
+  {
+    code: "C5",
+    title: "Cosmetic Category C5",
+    summary: "Good/used condition with visible but moderate wear and tear.",
+    details: "Often accepted for value-tier resale where cosmetic perfection is not required.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)"
+  },
+  {
+    code: "C6",
+    title: "Cosmetic Category C6",
+    summary: "Very good to like-new cosmetic appearance with light wear.",
+    details: "Frequently mapped near top cosmetic classes in secondary markets, depending on strictness.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)"
+  },
+  {
+    code: "COB",
+    title: "COB",
+    summary: "Placeholder: likely an Open Box-related commercial code.",
+    details: "Confirm internal meaning (for example: Customer Open Box vs Certified Open Box) before operational use.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CPO",
+    title: "Certified Pre-Owned",
+    summary: "Used device restored/tested to a high standard, typically close to like-new and warranty-backed by seller program.",
+    details: "CPO meaning depends on seller program rules (testing, cosmetic threshold, battery threshold, accessories, warranty).",
+    source: "Common industry usage (CPO programs)"
+  },
+  {
+    code: "CRC",
+    title: "CRC",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CRD",
+    title: "CRD",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CRX",
+    title: "CRX",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D2",
+    title: "D2",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D3",
+    title: "D3",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D4",
+    title: "D4",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "MD A",
+    title: "MD A",
+    summary: "Placeholder: likely an internal/partner Master Dealer condition code.",
+    details: "No universal public definition found. Confirm internally before exposing in contracts.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "MD B",
+    title: "MD B",
+    summary: "Placeholder: likely an internal/partner Master Dealer condition code.",
+    details: "No universal public definition found. Confirm internally before exposing in contracts.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG",
+    title: "TBG",
+    summary: "Placeholder: likely To Be Graded.",
+    details: "Often used operationally before a final cosmetic/functional grade is assigned. Confirm your internal workflow definition.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG FIN",
+    title: "TBG FIN",
+    summary: "Placeholder code.",
+    details: "Likely a finalized step in a TBG flow. Confirm exact process meaning internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG2",
+    title: "TBG2",
+    summary: "Placeholder code.",
+    details: "Likely a second stage in a To Be Graded workflow. Confirm exact process meaning internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  }
+];
+const GRADE_DEFINITION_BY_CODE = new Map(GRADE_DEFINITIONS.map((item) => [item.code.toUpperCase(), item]));
+
+function normalizeGradeCode(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function isGradeDefinitionQuestion(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  if (!text) return false;
+  if (/(grade|grading|condition|cpo|open box|c2|c4|c5|c6|cob|crc|crd|crx|d2|d3|d4|md a|md b|tbg|tbg fin|tbg2)/.test(text)) return true;
+  return false;
+}
+
+function buildGradeDefinitionReply(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  const matches = GRADE_DEFINITIONS.filter((item) => {
+    const code = item.code.toLowerCase();
+    const codeSpaced = code.replace(/\s+/g, "[\\s-]*");
+    const re = new RegExp(`(^|[^a-z0-9])${codeSpaced}([^a-z0-9]|$)`, "i");
+    return re.test(text);
+  });
+  if (matches.length === 1) {
+    const grade = matches[0];
+    const placeholderSuffix = grade.placeholder ? " This is currently a placeholder and should be replaced with your internal SOP definition." : "";
+    return `${grade.code}: ${grade.summary} ${grade.details}${placeholderSuffix}`;
+  }
+  if (matches.length > 1) {
+    const preview = matches.slice(0, 5).map((item) => `${item.code}: ${item.summary}`).join(" | ");
+    return `Here are the grade details I found: ${preview}${matches.length > 5 ? " | and more." : "."} You can also click any grade in the UI to open the full grade guide modal.`;
+  }
+  return "I can explain your grading codes (C2, C4, C5, C6, COB, CPO, CRC, CRD, CRX, D2, D3, D4, MD A, MD B, TBG, TBG FIN, TBG2). Click any grade in the UI for the full guide.";
+}
 
 function passwordMeetsPolicy(password) {
   return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
@@ -795,6 +960,9 @@ async function demoApiRequest(path, options = {}) {
     const all = productsSeed.map((p) => normalizeDevice(p));
     const msgText = String(body.message || "").trim();
     const lowered = msgText.toLowerCase();
+    if (isGradeDefinitionQuestion(msgText)) {
+      return { reply: buildGradeDefinitionReply(msgText), action: null };
+    }
     const addFromHistoryIntent = /(add|include|reorder|repeat|same as|use)/.test(lowered)
       && /(last order|previous order|historic|history|past order|before|req-\d{4}-\d{4}|est-\d{4}-\d{4})/.test(lowered);
     if (addFromHistoryIntent) {
@@ -1391,6 +1559,8 @@ export default function App() {
   const [requestSearch, setRequestSearch] = useState("");
   const [activeRequestId, setActiveRequestId] = useState(null);
   const [activeProduct, setActiveProduct] = useState(null);
+  const [gradeGuideOpen, setGradeGuideOpen] = useState(false);
+  const [gradeGuideSelectedCode, setGradeGuideSelectedCode] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
   const [selectedRequestLocation, setSelectedRequestLocation] = useState("");
   const [allowPartialRequestLocation, setAllowPartialRequestLocation] = useState(false);
@@ -2873,6 +3043,12 @@ export default function App() {
     setCategoryPage(1);
   };
 
+  const openGradeGuide = (code) => {
+    const normalized = normalizeGradeCode(code);
+    setGradeGuideSelectedCode(normalized);
+    setGradeGuideOpen(true);
+  };
+
   const submitRequest = async () => {
     if (!cart.length || !user) return;
     if (!selectedRequestLocation) {
@@ -3577,7 +3753,7 @@ export default function App() {
                   </div>
                   <div className="products-grid home-products-grid">
                     {weeklySpecialDevices.slice(0, 8).map((p) => (
-                      <ProductCard key={`weekly-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />
+                      <ProductCard key={`weekly-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} onOpenGrade={openGradeGuide} />
                     ))}
                   </div>
                 </section>
@@ -3588,7 +3764,7 @@ export default function App() {
                   {productsLoading ? (
                     <div className="products-grid home-products-grid">{Array.from({ length: 8 }).map((_, idx) => <ProductCardSkeleton key={`${cat}-card-sk-${idx}`} />)}</div>
                   ) : (
-                    <div className="products-grid home-products-grid">{products.filter((p) => p.category === cat).slice(0, 8).map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                    <div className="products-grid home-products-grid">{products.filter((p) => p.category === cat).slice(0, 8).map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} onOpenGrade={openGradeGuide} />)}</div>
                   )}
                 </section>
               ))}
@@ -3736,7 +3912,7 @@ export default function App() {
                     <div className="products-grid">{Array.from({ length: 8 }).map((_, idx) => <ProductCardSkeleton key={`page-card-sk-${idx}`} />)}</div>
                   ) : (
                     <>
-                      <div className="products-grid">{categoryDevices.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />)}</div>
+                      <div className="products-grid">{categoryDevices.map((p) => <ProductCard key={p.id} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} onOpenGrade={openGradeGuide} />)}</div>
                       {totalCategoryPages > 1 ? (
                         <div className="pagination-bar">
                           <button className="ghost-btn pagination-btn" disabled={safeCategoryPage <= 1} onClick={() => setCategoryPage((p) => Math.max(1, p - 1))}>Prev</button>
@@ -3813,7 +3989,7 @@ export default function App() {
                   {weeklyFilteredDevices.length ? (
                     <div className="products-grid">
                       {weeklyFilteredDevices.map((p) => (
-                        <ProductCard key={`weekly-page-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} />
+                        <ProductCard key={`weekly-page-${p.id}`} p={p} image={imageFor(p)} onOpen={setActiveProduct} onAdd={addToCart} onOpenGrade={openGradeGuide} />
                       ))}
                     </div>
                   ) : (
@@ -3894,7 +4070,16 @@ export default function App() {
                                             {l.model}
                                           </button>
                                         </td>
-                                        <td>{l.grade}</td>
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="grade-link-btn grade-link-btn-inline"
+                                            onClick={() => openGradeGuide(l.grade)}
+                                            title={`Open ${l.grade} definition`}
+                                          >
+                                            {l.grade}
+                                          </button>
+                                        </td>
                                         <td>{l.quantity}</td>
                                         <td>{formatUsd(l.offerPrice)}</td>
                                         <td>{formatUsd(Number(l.quantity || 0) * Number(l.offerPrice || 0))}</td>
@@ -4278,6 +4463,41 @@ export default function App() {
         </div>
       ) : null}
 
+      {gradeGuideOpen ? (
+        <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setGradeGuideOpen(false); }}>
+          <article className="modal grade-guide-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h3 style={{ margin: 0, fontSize: "1.5rem" }}>Grade Definitions</h3>
+                <p className="small" style={{ margin: "4px 0 0" }}>
+                  Industry-based references are included where available. Placeholder entries should be replaced with your internal SOP definitions.
+                </p>
+              </div>
+              <button className="close-btn" onClick={() => setGradeGuideOpen(false)}>X</button>
+            </div>
+            <div className="grade-guide-list">
+              {GRADE_DEFINITIONS.map((grade) => (
+                <section
+                  key={`grade-def-${grade.code}`}
+                  className={`grade-guide-item ${normalizeGradeCode(gradeGuideSelectedCode) === normalizeGradeCode(grade.code) ? "selected" : ""}`}
+                >
+                  <div className="grade-guide-head">
+                    <strong>{grade.code}</strong>
+                    <span className="small">{grade.title}</span>
+                  </div>
+                  <p style={{ margin: "6px 0 4px" }}>{grade.summary}</p>
+                  <p className="small" style={{ margin: "0 0 6px" }}>{grade.details}</p>
+                  <p className="small" style={{ margin: 0 }}>
+                    Source: {grade.source}
+                    {grade.placeholder ? " | Placeholder" : ""}
+                  </p>
+                </section>
+              ))}
+            </div>
+          </article>
+        </div>
+      ) : null}
+
       {activeProduct && (
         <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveProduct(null); }}>
           <article className="modal product-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -4304,7 +4524,7 @@ export default function App() {
                   <h4 style={{ marginTop: 0 }}>Device Specifications</h4>
                   <div className="spec-grid">
                     <div className="spec-item"><div className="spec-key">Device Class</div><div className="spec-val">{activeProduct.category}</div></div>
-                    <div className="spec-item"><div className="spec-key">Grade</div><div className="spec-val">{activeProduct.grade}</div></div>
+                    <div className="spec-item"><div className="spec-key">Grade</div><div className="spec-val"><button type="button" className="grade-link-btn grade-link-btn-inline" onClick={() => openGradeGuide(activeProduct.grade)} title={`Open ${activeProduct.grade} definition`}>{activeProduct.grade}</button></div></div>
                     <div className="spec-item"><div className="spec-key">Manufacturer</div><div className="spec-val">{activeProduct.manufacturer}</div></div>
                     <div className="spec-item"><div className="spec-key">Model</div><div className="spec-val">{activeProduct.modelFamily}</div></div>
                     <div className="spec-item"><div className="spec-key">Storage</div><div className="spec-val">{activeProduct.storage}</div></div>
@@ -4352,7 +4572,7 @@ export default function App() {
                             </div>
                           ) : null}
                         </td>
-                        <td className="cart-col-grade">{r.grade}</td>
+                        <td className="cart-col-grade"><button type="button" className="grade-link-btn grade-link-btn-inline" onClick={() => openGradeGuide(r.grade)} title={`Open ${r.grade} definition`}>{r.grade}</button></td>
                         <td className="cart-col-offer"><input className="cart-input" type="number" min="0" step="0.01" value={r.offerPrice} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, offerPrice: e.target.value === "" ? "" : Number(e.target.value) } : i))} /></td>
                         <td className="cart-col-qty"><input className="cart-input" type="number" min="1" max="9999" value={r.quantity} onChange={(e) => updateCart(cart.map((i) => i.id === r.id ? { ...i, quantity: e.target.value === "" ? "" : e.target.value } : i))} onBlur={(e) => updateCart(cart.map((i) => { if (i.id !== r.id) return i; const normalized = Math.max(1, Math.min(9999, Math.floor(Number(e.target.value || i.quantity || 1)))); return { ...i, quantity: normalized }; }))} /></td>
                         <td className="cart-col-total">{formatUsd(lineTotal)}</td>
@@ -4754,7 +4974,7 @@ function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) 
   );
 }
 
-function ProductCard({ p, image, onOpen, onAdd }) {
+function ProductCard({ p, image, onOpen, onAdd, onOpenGrade }) {
   const unavailable = p.available < 1;
   const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
   const availableDisplay = p.availableDisplay || String(p.available || 0);
@@ -4764,7 +4984,17 @@ function ProductCard({ p, image, onOpen, onAdd }) {
       <div className="brand product-brand">{p.manufacturer}</div>
       <div className="name product-name" onClick={() => onOpen(p)}>{p.model}</div>
       <div className="price">${cardPrice}</div>
-      <div className="product-meta">Device Grade {p.grade}</div>
+      <div className="product-meta">
+        Device Grade{" "}
+        <button
+          type="button"
+          className="grade-link-btn"
+          onClick={() => onOpenGrade?.(p.grade)}
+          title={`Open ${p.grade} definition`}
+        >
+          {p.grade}
+        </button>
+      </div>
       <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${availableDisplay} items available`}</div>
       <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, 1, "")}>Add to request</button>
     </article>

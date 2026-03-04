@@ -304,6 +304,145 @@ let auth0Jwks = null;
 const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
 const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
 const LOCATION_MAPPING_CSV_PATH = String(process.env.LOCATION_MAPPING_CSV_PATH || join(dbDir, "Locations936.csv")).trim();
+const GRADE_DEFINITIONS = [
+  {
+    code: "C2",
+    title: "Cosmetic Category C2",
+    summary: "Heavy cosmetic wear and/or visible damage, typically including deep scratches and chips.",
+    details: "Based on common secondary-market interpretations of REC/CTIA cosmetic mappings. Confirm acceptance thresholds with internal QA SOP.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)",
+    placeholder: false
+  },
+  {
+    code: "C4",
+    title: "Cosmetic Category C4",
+    summary: "Fair condition with significant cosmetic wear, but generally not severe structural breakage.",
+    details: "Often treated as lower resale cosmetic quality. Exact defect limits vary by trading partner.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)",
+    placeholder: false
+  },
+  {
+    code: "C5",
+    title: "Cosmetic Category C5",
+    summary: "Good/used condition with visible but moderate wear and tear.",
+    details: "Common for value-tier resale where cosmetic perfection is not required.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)",
+    placeholder: false
+  },
+  {
+    code: "C6",
+    title: "Cosmetic Category C6",
+    summary: "Very good to like-new cosmetic appearance with light wear.",
+    details: "Frequently mapped near top cosmetic classes in secondary markets, depending on strictness.",
+    source: "CTIA Wireless Device Grading Scales v5.0 (REC mapping context)",
+    placeholder: false
+  },
+  {
+    code: "COB",
+    title: "COB",
+    summary: "Placeholder: likely an Open Box-related commercial code.",
+    details: "Confirm internal meaning (for example: Customer Open Box vs Certified Open Box) before operational use.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CPO",
+    title: "Certified Pre-Owned",
+    summary: "Used device restored/tested to a high standard, typically close to like-new and warranty-backed by seller program.",
+    details: "CPO meaning depends on seller program rules (testing, cosmetic threshold, battery threshold, accessories, warranty).",
+    source: "Common industry usage (CPO programs)",
+    placeholder: false
+  },
+  {
+    code: "CRC",
+    title: "CRC",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CRD",
+    title: "CRD",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "CRX",
+    title: "CRX",
+    summary: "Placeholder grade code.",
+    details: "No reliable public standard matched this acronym in handset grading. Define internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D2",
+    title: "D2",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D3",
+    title: "D3",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "D4",
+    title: "D4",
+    summary: "Placeholder: likely a deeper damage/defect tier code.",
+    details: "Potentially tied to a partner-specific damage matrix. Confirm exact pass/fail requirements internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "MD A",
+    title: "MD A",
+    summary: "Placeholder: likely an internal/partner Master Dealer condition code.",
+    details: "No universal public definition found. Confirm internally before exposing in contracts.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "MD B",
+    title: "MD B",
+    summary: "Placeholder: likely an internal/partner Master Dealer condition code.",
+    details: "No universal public definition found. Confirm internally before exposing in contracts.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG",
+    title: "TBG",
+    summary: "Placeholder: likely To Be Graded.",
+    details: "Often used operationally before a final cosmetic/functional grade is assigned. Confirm internal workflow definition.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG FIN",
+    title: "TBG FIN",
+    summary: "Placeholder code.",
+    details: "Likely a finalized step in a TBG flow. Confirm exact process meaning internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  },
+  {
+    code: "TBG2",
+    title: "TBG2",
+    summary: "Placeholder code.",
+    details: "Likely a second stage in a To Be Graded workflow. Confirm exact process meaning internally.",
+    source: "Placeholder - internal definition required",
+    placeholder: true
+  }
+];
+const GRADE_DEFINITION_BY_CODE = new Map(GRADE_DEFINITIONS.map((item) => [String(item.code || "").toUpperCase(), item]));
 
 function parseCsvLine(line) {
   const values = [];
@@ -1986,6 +2125,9 @@ function runAiCopilotHeuristic(user, body) {
   if (!message) {
     return { reply: "Please enter a message.", action: null };
   }
+  if (isGradeDefinitionQuestion(message)) {
+    return { reply: buildGradeDefinitionReply(message), action: null };
+  }
   const lowered = message.toLowerCase();
   const parsed = parseAiFilters(message, selectedCategory);
   const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
@@ -2054,11 +2196,15 @@ function runAiCopilotHeuristic(user, body) {
 }
 
 function buildCopilotCatalogContext() {
+  const dbGrades = db.prepare("SELECT DISTINCT grade AS name FROM devices WHERE is_active = 1 ORDER BY grade").all()
+    .map((r) => String(r.name || "").trim())
+    .filter(Boolean);
+  const allGrades = [...new Set([...dbGrades, ...GRADE_DEFINITIONS.map((item) => item.code)])].sort((a, b) => a.localeCompare(b));
   return {
     categories: db.prepare("SELECT DISTINCT name FROM categories ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean),
     manufacturers: db.prepare("SELECT DISTINCT name FROM manufacturers ORDER BY name").all().map((r) => String(r.name || "").trim()).filter(Boolean),
     modelFamilies: db.prepare("SELECT DISTINCT model_family AS name FROM devices WHERE is_active = 1 ORDER BY model_family").all().map((r) => String(r.name || "").trim()).filter(Boolean),
-    grades: ["A", "B", "C", "CPO"],
+    grades: allGrades,
     storages: db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => String(r.name || "").trim()).filter(Boolean),
     regions: getDisplayRegions()
   };
@@ -2116,6 +2262,36 @@ function formatUsdValue(value) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric)) return "$0.00";
   return `$${numeric.toFixed(2)}`;
+}
+
+function normalizeGradeCode(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function isGradeDefinitionQuestion(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  if (!text) return false;
+  return /(grade|grading|condition|cpo|open box|c2|c4|c5|c6|cob|crc|crd|crx|d2|d3|d4|md a|md b|tbg|tbg fin|tbg2)/.test(text);
+}
+
+function buildGradeDefinitionReply(messageRaw) {
+  const text = String(messageRaw || "").toLowerCase();
+  const matches = GRADE_DEFINITIONS.filter((item) => {
+    const code = String(item.code || "").toLowerCase();
+    const codeSpaced = code.replace(/\s+/g, "[\\s-]*");
+    const re = new RegExp(`(^|[^a-z0-9])${codeSpaced}([^a-z0-9]|$)`, "i");
+    return re.test(text);
+  });
+  if (matches.length === 1) {
+    const grade = matches[0];
+    const placeholderSuffix = grade.placeholder ? " This is currently a placeholder and should be replaced with your internal SOP definition." : "";
+    return `${grade.code}: ${grade.summary} ${grade.details}${placeholderSuffix}`;
+  }
+  if (matches.length > 1) {
+    const preview = matches.slice(0, 5).map((item) => `${item.code}: ${item.summary}`).join(" | ");
+    return `Here are the grade details I found: ${preview}${matches.length > 5 ? " | and more." : "."} You can also click any grade in the UI to open the full grade guide modal.`;
+  }
+  return "I can explain your grading codes (C2, C4, C5, C6, COB, CPO, CRC, CRD, CRX, D2, D3, D4, MD A, MD B, TBG, TBG FIN, TBG2). Click any grade in the UI for the full guide.";
 }
 
 function buildOrderHistoryFiltersFromMessage(message, selectedCategory) {
@@ -2763,6 +2939,7 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Allowed manufacturers: " + catalog.manufacturers.join(", "),
     "Allowed model families: " + catalog.modelFamilies.slice(0, 120).join(", "),
     "Allowed grades: " + catalog.grades.join(", "),
+    "Grade definitions context: " + JSON.stringify(GRADE_DEFINITIONS),
     "Allowed regions: " + catalog.regions.join(", "),
     "Allowed storages: " + catalog.storages.join(", "),
     "Historical completed-sales context (for trend/suggestion questions): " + JSON.stringify(history),
@@ -2829,6 +3006,9 @@ async function runAiCopilot(user, body) {
   const selectedCategory = resolveCopilotSelectedCategoryContext(message, body?.selectedCategory);
   if (!message) {
     return { reply: "Please enter a message.", action: null };
+  }
+  if (isGradeDefinitionQuestion(message)) {
+    return { reply: buildGradeDefinitionReply(message), action: null };
   }
   if (!AI_COPILOT_REAL_MODEL_ENABLED || !OPENAI_API_KEY) {
     return {
