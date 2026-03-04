@@ -2284,6 +2284,97 @@ async function listUsersForAdminRuntime() {
   ).all().map(makePublicUser);
 }
 
+async function getUserForAdminByIdRuntime(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(
+      "SELECT id, email, auth0_sub, role, is_active, company, created_at FROM users WHERE id = $1 LIMIT 1",
+      [id]
+    );
+    return result.rows?.[0] || null;
+  }
+  return db.prepare(
+    "SELECT id, email, auth0_sub, role, is_active, company, created_at FROM users WHERE id = ? LIMIT 1"
+  ).get(id);
+}
+
+async function updateUserAdminFieldsRuntime(userId, updates) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) throw new Error("User not found.");
+  const setParts = [];
+  const params = [];
+  if (typeof updates?.isActive === "boolean") {
+    setParts.push("is_active = ?");
+    params.push(updates.isActive ? 1 : 0);
+  }
+  if (typeof updates?.isAdmin === "boolean") {
+    setParts.push("role = ?");
+    params.push(updates.isAdmin ? "admin" : "buyer");
+  }
+  if (!setParts.length) throw new Error("No valid fields to update.");
+
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const pgSet = [];
+    const pgParams = [];
+    if (typeof updates?.isActive === "boolean") {
+      pgSet.push(`is_active = $${pgParams.length + 1}`);
+      pgParams.push(updates.isActive ? 1 : 0);
+    }
+    if (typeof updates?.isAdmin === "boolean") {
+      pgSet.push(`role = $${pgParams.length + 1}`);
+      pgParams.push(updates.isAdmin ? "admin" : "buyer");
+    }
+    pgParams.push(id);
+    const result = await pgClient.query(
+      `UPDATE users SET ${pgSet.join(", ")} WHERE id = $${pgParams.length}`,
+      pgParams
+    );
+    if (Number(result.rowCount || 0) < 1) throw new Error("User not found.");
+    return;
+  }
+
+  params.push(id);
+  const result = db.prepare(`UPDATE users SET ${setParts.join(", ")} WHERE id = ?`).run(...params);
+  if (Number(result?.changes || 0) < 1) throw new Error("User not found.");
+}
+
+async function deleteUserRuntime(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) throw new Error("User not found.");
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    await pgClient.query("BEGIN");
+    try {
+      await pgClient.query("UPDATE quote_requests SET created_by_user_id = NULL WHERE created_by_user_id = $1", [id]);
+      await pgClient.query("DELETE FROM refresh_tokens WHERE user_id = $1", [id]);
+      const deleted = await pgClient.query("DELETE FROM users WHERE id = $1", [id]);
+      if (Number(deleted.rowCount || 0) < 1) {
+        await pgClient.query("ROLLBACK");
+        throw new Error("User not found.");
+      }
+      await pgClient.query("COMMIT");
+    } catch (error) {
+      try { await pgClient.query("ROLLBACK"); } catch {}
+      throw error;
+    }
+    return;
+  }
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.prepare("UPDATE quote_requests SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(id);
+    db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
+    const result = db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    if (Number(result?.changes || 0) < 1) {
+      db.exec("ROLLBACK");
+      throw new Error("User not found.");
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+}
+
 async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
   if (!(effectiveDbEngine === "postgres" && pgClient)) {
     return upsertUserFromAuth0Claims(claims, fallbackEmail);
@@ -5873,7 +5964,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
         return;
       }
-      const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+      const existing = await getUserByEmailRuntime(email, false);
       if (existing?.id) {
         json(req, res, 409, { error: "User already exists." });
         return;
@@ -5881,8 +5972,7 @@ const server = createServer(async (req, res) => {
 
       const role = isAdmin ? "admin" : "buyer";
       const hash = hashPassword(password);
-      db.prepare("INSERT INTO users (email, company, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?)")
-        .run(email, company, role, hash, isActive ? 1 : 0);
+      await createUserRuntime({ email, company, role, passwordHash: hash, isActive });
       json(req, res, 201, { ok: true });
       return;
     }
@@ -5893,24 +5983,14 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const userId = Number(userPatchMatch[1]);
       const body = await parseBody(req);
-      const updates = [];
-      const params = [];
-
-      if (typeof body.isActive === "boolean") {
-        updates.push("is_active = ?");
-        params.push(body.isActive ? 1 : 0);
+      try {
+        await updateUserAdminFieldsRuntime(userId, { isActive: body.isActive, isAdmin: body.isAdmin });
+        json(req, res, 200, { ok: true });
+      } catch (error) {
+        const message = String(error?.message || "Failed to update user.");
+        const status = message === "No valid fields to update." ? 400 : (message === "User not found." ? 404 : 500);
+        json(req, res, status, { error: message });
       }
-      if (typeof body.isAdmin === "boolean") {
-        updates.push("role = ?");
-        params.push(body.isAdmin ? "admin" : "buyer");
-      }
-      if (!updates.length) {
-        json(req, res, 400, { error: "No valid fields to update." });
-        return;
-      }
-      params.push(userId);
-      db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...params);
-      json(req, res, 200, { ok: true });
       return;
     }
 
@@ -5923,12 +6003,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "You cannot delete your own admin user." });
         return;
       }
-      const target = db.prepare(`
-        SELECT id, email, auth0_sub, role
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+      const target = await getUserForAdminByIdRuntime(userId);
       if (!target?.id) {
         json(req, res, 404, { error: "User not found." });
         return;
@@ -5949,15 +6024,13 @@ const server = createServer(async (req, res) => {
         }
       }
 
-      db.exec("BEGIN TRANSACTION");
       try {
-        db.prepare("UPDATE quote_requests SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(userId);
-        db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(userId);
-        db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-        db.exec("COMMIT");
+        await deleteUserRuntime(userId);
       } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
+        const message = String(error?.message || "Failed to delete user.");
+        const status = message === "User not found." ? 404 : 500;
+        json(req, res, status, { error: message });
+        return;
       }
 
       for (const [token, session] of sessions.entries()) {
