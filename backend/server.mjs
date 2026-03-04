@@ -296,6 +296,9 @@ const AUTH0_ISSUER = String(process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https:/
 const AUTH0_MGMT_CLIENT_ID = String(process.env.AUTH0_MGMT_CLIENT_ID || "").trim();
 const AUTH0_MGMT_CLIENT_SECRET = String(process.env.AUTH0_MGMT_CLIENT_SECRET || "").trim();
 const AUTH0_MGMT_AUDIENCE = String(process.env.AUTH0_MGMT_AUDIENCE || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/api/v2/` : "")).trim();
+const AUTH0_AUTO_SYNC_USERS = String(process.env.AUTH0_AUTO_SYNC_USERS || "true").toLowerCase() === "true";
+const AUTH0_SYNC_PAGE_SIZE = Math.max(1, Math.min(100, Number(process.env.AUTH0_SYNC_PAGE_SIZE || 50)));
+const AUTH0_SYNC_THROTTLE_MS = Math.max(10_000, Number(process.env.AUTH0_SYNC_THROTTLE_MS || 120_000));
 const ACCESS_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.ACCESS_TOKEN_TTL_MINUTES || 30));
 const REFRESH_TOKEN_TTL_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14));
 const CORS_ALLOWED_ORIGINS = (() => {
@@ -308,6 +311,11 @@ const CORS_ALLOWED_ORIGINS = (() => {
   return origins;
 })();
 const sessions = new Map();
+const auth0UserSyncState = {
+  running: false,
+  lastRunAt: 0,
+  lastResult: null
+};
 let auth0Jwks = null;
 const REQUEST_STATUS_VALUES = new Set(["New", "Received", "Estimate Created", "Completed"]);
 const HISTORICAL_ESTIMATE_SEED_KEY = "historical_completed_estimates_seed_v1";
@@ -1982,6 +1990,90 @@ async function deleteAuth0UserBySub(auth0Sub) {
   return { deleted: true };
 }
 
+async function fetchAuth0UsersPage(mgmtToken, pageNumber = 0) {
+  const page = Math.max(0, Number(pageNumber || 0));
+  const query = new URLSearchParams({
+    per_page: String(AUTH0_SYNC_PAGE_SIZE),
+    page: String(page),
+    include_totals: "false",
+    fields: "user_id,email",
+    include_fields: "true"
+  });
+  const payload = await requestJsonStrict(`https://${AUTH0_DOMAIN}/api/v2/users?${query.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${mgmtToken}`
+    },
+    errorPrefix: "Auth0 users list request"
+  });
+  return Array.isArray(payload) ? payload : [];
+}
+
+async function syncAuth0UsersToLocalDb(options = {}) {
+  const force = options.force === true;
+  const reason = String(options.reason || "manual");
+  if (!AUTH0_AUTO_SYNC_USERS && !force) return { skipped: true, reason: "disabled" };
+  if (!isAuth0ManagementConfigured()) return { skipped: true, reason: "management_not_configured" };
+  if (!force && auth0UserSyncState.lastRunAt > 0 && (Date.now() - auth0UserSyncState.lastRunAt) < AUTH0_SYNC_THROTTLE_MS) {
+    return auth0UserSyncState.lastResult || { skipped: true, reason: "throttled" };
+  }
+  if (auth0UserSyncState.running) {
+    return auth0UserSyncState.lastResult || { skipped: true, reason: "already_running" };
+  }
+
+  auth0UserSyncState.running = true;
+  try {
+    const mgmtToken = await getAuth0ManagementToken();
+    let page = 0;
+    let totalFetched = 0;
+    let created = 0;
+    let linked = 0;
+    while (true) {
+      const rows = await fetchAuth0UsersPage(mgmtToken, page);
+      if (!rows.length) break;
+      totalFetched += rows.length;
+      for (const row of rows) {
+        const auth0Sub = String(row?.user_id || "").trim();
+        const email = normalizeEmail(row?.email || "");
+        if (!auth0Sub || !email) continue;
+
+        const existingBySub = await getUserByAuth0SubRuntime(auth0Sub, false);
+        if (existingBySub?.id) continue;
+
+        const existingByEmail = await getUserByEmailRuntime(email, false);
+        if (existingByEmail?.id) {
+          if (!String(existingByEmail.auth0_sub || "").trim()) {
+            await setUserAuth0SubRuntime(existingByEmail.id, auth0Sub);
+            linked += 1;
+          }
+          continue;
+        }
+
+        const company = inferCompanyFromEmail(email);
+        const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
+        await createUserRuntime({
+          email,
+          company,
+          role: "buyer",
+          passwordHash: randomPasswordHash,
+          isActive: false,
+          auth0Sub
+        });
+        created += 1;
+      }
+      if (rows.length < AUTH0_SYNC_PAGE_SIZE) break;
+      page += 1;
+    }
+    const result = { ok: true, reason, totalFetched, created, linked, completedAt: new Date().toISOString() };
+    auth0UserSyncState.lastRunAt = Date.now();
+    auth0UserSyncState.lastResult = result;
+    return result;
+  } finally {
+    auth0UserSyncState.running = false;
+  }
+}
+
 async function verifyAuth0AccessToken(accessToken) {
   const token = String(accessToken || "").trim();
   if (!token) {
@@ -2112,6 +2204,23 @@ async function getUserByIdRuntime(userId, includePassword = false) {
   ).get(id);
 }
 
+async function getUserByAuth0SubRuntime(auth0Sub, includePassword = false) {
+  const sub = String(auth0Sub || "").trim();
+  if (!sub) return null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const fields = includePassword
+      ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at"
+      : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at";
+    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE auth0_sub = $1 LIMIT 1`, [sub]);
+    return result.rows?.[0] || null;
+  }
+  return db.prepare(
+    includePassword
+      ? "SELECT id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE auth0_sub = ? LIMIT 1"
+      : "SELECT id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at FROM users WHERE auth0_sub = ? LIMIT 1"
+  ).get(sub);
+}
+
 async function createUserRuntime({ email, company, role = "buyer", passwordHash, isActive = false, auth0Sub = null }) {
   const normalizedEmail = normalizeEmail(email);
   const safeCompany = String(company || "").trim();
@@ -2140,6 +2249,17 @@ async function setUserResetCodeRuntime(userId, resetCode, expiresAt) {
     return;
   }
   db.prepare("UPDATE users SET reset_code = ?, reset_code_expires_at = ? WHERE id = ?").run(resetCode, expiresAt, id);
+}
+
+async function setUserAuth0SubRuntime(userId, auth0Sub) {
+  const id = Number(userId);
+  const sub = String(auth0Sub || "").trim();
+  if (!Number.isInteger(id) || id < 1 || !sub) return;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    await pgClient.query("UPDATE users SET auth0_sub = $1 WHERE id = $2", [sub, id]);
+    return;
+  }
+  db.prepare("UPDATE users SET auth0_sub = ? WHERE id = ?").run(sub, id);
 }
 
 async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
@@ -5713,6 +5833,11 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/users") {
       const user = requireAdmin(req, res);
       if (!user) return;
+      try {
+        await syncAuth0UsersToLocalDb({ reason: "admin_users_list" });
+      } catch (error) {
+        console.warn(`[auth0-sync] Admin users sync failed: ${error?.message || error}`);
+      }
       const users = db.prepare(
         "SELECT id, email, company, role, is_active, created_at FROM users ORDER BY created_at DESC"
       ).all().map(makePublicUser);
@@ -6408,6 +6533,18 @@ const server = createServer(async (req, res) => {
 async function startServer() {
   if (effectiveDbEngine === "postgres") {
     await initializePostgresRuntime();
+  }
+  if (AUTH0_AUTO_SYNC_USERS) {
+    try {
+      const syncResult = await syncAuth0UsersToLocalDb({ force: true, reason: "startup" });
+      if (syncResult?.ok) {
+        console.log(`[startup] Auth0 user sync completed: fetched=${syncResult.totalFetched} created=${syncResult.created} linked=${syncResult.linked}`);
+      } else if (syncResult?.skipped) {
+        console.log(`[startup] Auth0 user sync skipped: ${syncResult.reason}`);
+      }
+    } catch (error) {
+      console.warn(`[startup] Auth0 user sync failed: ${error?.message || error}`);
+    }
   }
   server.listen(port, () => {
     console.log(`API running on http://127.0.0.1:${port}`);
