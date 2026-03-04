@@ -169,7 +169,6 @@ const AUTH0_LOGOUT_MARKER_KEY = "pcs.auth0.logoutRequestedAt";
 const AUTH0_LOGOUT_MARKER_TTL_MS = 2 * 60 * 1000;
 const AUTH0_INTERACTIVE_LOGIN_KEY = "pcs.auth0.interactiveLoginPending";
 const AUTH0_INTERACTIVE_LOGIN_TTL_MS = 10 * 60 * 1000;
-const AUTH0_SIGNUP_COMPANY_KEY = "pcs.auth0.pendingSignupCompany";
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1685,27 +1684,6 @@ export default function App() {
     return true;
   };
 
-  const setPendingAuth0SignupCompany = (companyName) => {
-    try {
-      const company = String(companyName || "").trim();
-      if (!company) {
-        sessionStorage.removeItem(AUTH0_SIGNUP_COMPANY_KEY);
-        return;
-      }
-      sessionStorage.setItem(AUTH0_SIGNUP_COMPANY_KEY, company);
-    } catch {}
-  };
-
-  const consumePendingAuth0SignupCompany = () => {
-    try {
-      const company = String(sessionStorage.getItem(AUTH0_SIGNUP_COMPANY_KEY) || "").trim();
-      sessionStorage.removeItem(AUTH0_SIGNUP_COMPANY_KEY);
-      return company;
-    } catch {
-      return "";
-    }
-  };
-
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
   const aiCopilotStateKey = user
@@ -1836,10 +1814,9 @@ export default function App() {
         setAuthLoading(true);
         setAuthBootstrapError("");
         const accessToken = await getAccessTokenSilently();
-        const pendingSignupCompany = consumePendingAuth0SignupCompany();
         const issued = await apiRequest("/api/auth/auth0-exchange", {
           method: "POST",
-          body: pendingSignupCompany ? { accessToken, company: pendingSignupCompany } : { accessToken },
+          body: { accessToken },
           skipRefresh: true
         });
         if (ignore) return;
@@ -3260,7 +3237,6 @@ export default function App() {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
     markAuth0InteractiveLoginPending();
-    setPendingAuth0SignupCompany("");
     setAuthPendingApprovalEmail("");
     setAuthProfileRequired(false);
     await loginWithRedirect({
@@ -3270,11 +3246,10 @@ export default function App() {
     });
   };
 
-  const handleAuth0Signup = async (companyName = "") => {
+  const handleAuth0Signup = async () => {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
     markAuth0InteractiveLoginPending();
-    setPendingAuth0SignupCompany(companyName);
     setAuthPendingApprovalEmail("");
     setAuthProfileRequired(false);
     await loginWithRedirect({
@@ -4845,25 +4820,12 @@ function Login({
   const [notice, setNotice] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
-  const [auth0SignupCompany, setAuth0SignupCompany] = useState("");
-  const [auth0SignupError, setAuth0SignupError] = useState("");
   const [auth0FirstName, setAuth0FirstName] = useState("");
   const [auth0LastName, setAuth0LastName] = useState("");
   const [auth0Company, setAuth0Company] = useState("");
   const [auth0ProfileError, setAuth0ProfileError] = useState("");
   const [auth0ProfileSaving, setAuth0ProfileSaving] = useState(false);
   const activePendingEmail = pendingEmail || auth0PendingApprovalEmail;
-
-  const triggerAuth0Signup = async () => {
-    if (typeof onAuth0Signup !== "function") return;
-    const companyName = String(auth0SignupCompany || "").trim();
-    if (!companyName) {
-      setAuth0SignupError("Company name is required to create an account.");
-      return;
-    }
-    setAuth0SignupError("");
-    await onAuth0Signup(companyName);
-  };
 
   useEffect(() => {
     if (!auth0ProfileRequired) return;
@@ -4992,21 +4954,10 @@ function Login({
               <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Sign in"}
               </button>
-              <input
-                type="text"
-                value={auth0SignupCompany}
-                onChange={(e) => {
-                  setAuth0SignupCompany(e.target.value);
-                  if (auth0SignupError) setAuth0SignupError("");
-                }}
-                placeholder="Company name"
-                aria-label="Company name"
-              />
-              <button type="button" className="ghost-btn auth0-secondary-btn" onClick={triggerAuth0Signup} disabled={Boolean(auth0Loading)}>
+              <button type="button" className="ghost-btn auth0-secondary-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Create account"}
               </button>
             </div>
-            {auth0SignupError ? <p className="auth-error auth0-error">{auth0SignupError}</p> : null}
             <p className="auth0-note">Secure sign-in by Auth0</p>
             {auth0ErrorText ? <p className="auth-error auth0-error">Auth0 error: {auth0ErrorText}</p> : null}
           </div>
@@ -5134,21 +5085,10 @@ function Login({
               <button type="button" className="ghost-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
               </button>
-              <input
-                type="text"
-                value={auth0SignupCompany}
-                onChange={(e) => {
-                  setAuth0SignupCompany(e.target.value);
-                  if (auth0SignupError) setAuth0SignupError("");
-                }}
-                placeholder="Company name"
-                aria-label="Company name"
-              />
-              <button type="button" className="ghost-btn" onClick={triggerAuth0Signup} disabled={Boolean(auth0Loading)}>
+              <button type="button" className="ghost-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
                 {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
               </button>
             </div>
-            {auth0SignupError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{auth0SignupError}</p> : null}
             {auth0ErrorText ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>Auth0 error: {auth0ErrorText}</p> : null}
           </div>
         ) : null}
