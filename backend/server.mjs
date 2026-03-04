@@ -1555,7 +1555,7 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
   const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
   db.prepare(`
     INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
-    VALUES (?, ?, 'buyer', ?, 1, ?)
+    VALUES (?, ?, 'buyer', ?, 0, ?)
   `).run(email, company, randomPasswordHash, auth0Sub);
 
   return db.prepare(`
