@@ -2027,6 +2027,213 @@ function getDevices(url) {
   };
 }
 
+async function getCategoriesPostgres() {
+  if (!pgClient) return [];
+  const result = await pgClient.query("SELECT name FROM categories ORDER BY id");
+  return result.rows.map((row) => row.name);
+}
+
+async function getDevicesPostgres(url) {
+  if (!pgClient) return getDevices(url);
+  const search = (url.searchParams.get("search") || "").trim();
+  const categories = splitCsv(url.searchParams.get("category"));
+  const manufacturers = splitCsv(url.searchParams.get("manufacturer"));
+  const modelFamilies = splitCsv(url.searchParams.get("modelFamily"));
+  const grades = splitCsv(url.searchParams.get("grade"));
+  const regions = splitCsv(url.searchParams.get("region"));
+  const storages = splitCsv(url.searchParams.get("storage"));
+  const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+  const pageSizeRaw = Number(url.searchParams.get("pageSize") || 0);
+  const pageSize = pageSizeRaw > 0 ? Math.min(200, pageSizeRaw) : 0;
+
+  const filters = ["d.is_active = 1"];
+  const params = [];
+  const pushParam = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (search) {
+    const likeValue = `%${search.toLowerCase()}%`;
+    const marker = pushParam(likeValue);
+    filters.push(`(LOWER(d.model_name) LIKE ${marker} OR LOWER(d.model_family) LIKE ${marker} OR LOWER(m.name) LIKE ${marker} OR LOWER(c.name) LIKE ${marker})`);
+  }
+
+  function addArrayFilter(column, values) {
+    if (!Array.isArray(values) || !values.length) return;
+    const marker = pushParam(values);
+    filters.push(`${column} = ANY(${marker}::text[])`);
+  }
+
+  addArrayFilter("c.name", categories);
+  addArrayFilter("m.name", manufacturers);
+  addArrayFilter("d.model_family", modelFamilies);
+  addArrayFilter("d.grade", grades);
+  addArrayFilter("d.storage_capacity", storages);
+
+  if (regions.length) {
+    const storedRegionNames = resolveStoredLocationNames(regions);
+    if (!storedRegionNames.length) {
+      filters.push("1 = 0");
+    } else {
+      const marker = pushParam(storedRegionNames);
+      filters.push(`
+        EXISTS (
+          SELECT 1
+          FROM device_inventory di_r
+          JOIN locations l_r ON l_r.id = di_r.location_id
+          WHERE di_r.device_id = d.id
+            AND di_r.quantity > 0
+            AND l_r.name = ANY(${marker}::text[])
+        )
+      `);
+    }
+  }
+
+  const whereSql = `WHERE ${filters.join(" AND ")}`;
+  const offset = (page - 1) * (pageSize || 1);
+
+  const countSql = `
+    SELECT COUNT(*)::bigint AS count
+    FROM (
+      SELECT d.id
+      FROM devices d
+      JOIN manufacturers m ON m.id = d.manufacturer_id
+      JOIN categories c ON c.id = d.category_id
+      LEFT JOIN locations dl ON dl.id = d.default_location_id
+      LEFT JOIN device_inventory di ON di.device_id = d.id
+      ${whereSql}
+      GROUP BY d.id
+    ) x
+  `;
+  const countRes = await pgClient.query(countSql, params);
+  const total = Number(countRes.rows?.[0]?.count || 0);
+
+  const baseSql = `
+    SELECT
+      d.id,
+      m.name AS manufacturer,
+      d.model_name AS model,
+      d.model_family AS "modelFamily",
+      c.name AS category,
+      d.grade,
+      dl.name AS region,
+      d.storage_capacity AS storage,
+      d.base_price AS price,
+      d.image_url AS image,
+      d.carrier AS carrier,
+      d.screen_size AS "screenSize",
+      d.modular AS modular,
+      d.color AS color,
+      d.kit_type AS "kitType",
+      d.product_notes AS "productNotes",
+      d.weekly_special AS "weeklySpecial",
+      COALESCE(SUM(di.quantity), 0) AS available
+    FROM devices d
+    JOIN manufacturers m ON m.id = d.manufacturer_id
+    JOIN categories c ON c.id = d.category_id
+    LEFT JOIN locations dl ON dl.id = d.default_location_id
+    LEFT JOIN device_inventory di ON di.device_id = d.id
+    ${whereSql}
+    GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes, d.weekly_special
+    ORDER BY c.id, m.name, d.model_name
+  `;
+
+  const queryParams = [...params];
+  let deviceSql = baseSql;
+  if (pageSize) {
+    const limitMarker = `$${queryParams.length + 1}`;
+    const offsetMarker = `$${queryParams.length + 2}`;
+    queryParams.push(pageSize, offset);
+    deviceSql = `${baseSql} LIMIT ${limitMarker} OFFSET ${offsetMarker}`;
+  }
+  const deviceRes = await pgClient.query(deviceSql, queryParams);
+  const devices = Array.isArray(deviceRes.rows) ? deviceRes.rows : [];
+  const deviceIds = devices.map((row) => row.id).filter(Boolean);
+
+  const allLocationsRes = await pgClient.query("SELECT id, name, external_id AS \"externalId\" FROM locations ORDER BY id");
+  const allLocations = Array.isArray(allLocationsRes.rows) ? allLocationsRes.rows : [];
+
+  const inventoryByDevice = new Map();
+  const imagesByDevice = new Map();
+  if (deviceIds.length) {
+    const invRes = await pgClient.query(
+      `SELECT device_id AS "deviceId", location_id AS "locationId", COALESCE(quantity, 0) AS quantity
+       FROM device_inventory
+       WHERE device_id = ANY($1::text[])`,
+      [deviceIds]
+    );
+    for (const row of invRes.rows || []) {
+      const key = `${row.deviceId}:${row.locationId}`;
+      inventoryByDevice.set(key, Number(row.quantity || 0));
+    }
+    const imgRes = await pgClient.query(
+      `SELECT device_id AS "deviceId", image_url AS "imageUrl"
+       FROM device_images
+       WHERE device_id = ANY($1::text[])
+       ORDER BY sort_order, id`,
+      [deviceIds]
+    );
+    for (const row of imgRes.rows || []) {
+      const key = String(row.deviceId || "");
+      const list = imagesByDevice.get(key) || [];
+      if (row.imageUrl) list.push(row.imageUrl);
+      imagesByDevice.set(key, list);
+    }
+  }
+
+  const items = devices.map((row) => {
+    const locations = {};
+    for (const loc of allLocations) {
+      const displayName = getDisplayLocationName(loc.name, loc.externalId);
+      if (!displayName) continue;
+      const key = `${row.id}:${loc.id}`;
+      locations[displayName] = Number(locations[displayName] || 0) + Number(inventoryByDevice.get(key) || 0);
+    }
+    const imageList = imagesByDevice.get(String(row.id || "")) || [];
+    const fallbackImage = row.image || undefined;
+    return {
+      id: row.id,
+      manufacturer: row.manufacturer,
+      model: row.model,
+      modelFamily: row.modelFamily,
+      category: row.category,
+      grade: row.grade,
+      region: row.region,
+      storage: row.storage,
+      price: Number(row.price || 0),
+      image: imageList[0] || fallbackImage,
+      images: imageList.length ? imageList : (fallbackImage ? [fallbackImage] : []),
+      carrier: row.carrier || "Unlocked",
+      screenSize: row.screenSize || "N/A",
+      modular: row.modular || "No",
+      color: row.color || "N/A",
+      kitType: row.kitType || "Full Kit",
+      productNotes: row.productNotes || "",
+      weeklySpecial: Number(row.weeklySpecial || 0) === 1,
+      available: Number(row.available || 0),
+      locations
+    };
+  });
+
+  if (!pageSize) return items;
+  return { items, total, page, pageSize };
+}
+
+async function getCategoriesRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return getCategoriesPostgres();
+  }
+  return getCategories();
+}
+
+async function getDevicesRuntime(url) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return getDevicesPostgres(url);
+  }
+  return getDevices(url);
+}
+
 function getCategories() {
   return db.prepare("SELECT name FROM categories ORDER BY id").all().map((row) => row.name);
 }
@@ -5009,7 +5216,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(req, res, 200, getCategories());
+      json(req, res, 200, await getCategoriesRuntime());
       return;
     }
 
@@ -5019,7 +5226,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(req, res, 200, getDevices(url));
+      json(req, res, 200, await getDevicesRuntime(url));
       return;
     }
 
