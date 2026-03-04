@@ -3354,6 +3354,10 @@ export default function App() {
       <Login
         onAuth0Login={handleAuth0Login}
         onAuth0Signup={handleAuth0Signup}
+        onClearPendingApproval={() => {
+          setAuthPendingApprovalEmail("");
+          setAuthBootstrapError("");
+        }}
         auth0Loading={auth0SdkLoading}
         auth0ErrorText={authBootstrapError || auth0SdkError?.message || ""}
         auth0PendingApprovalEmail={authPendingApprovalEmail}
@@ -4743,6 +4747,7 @@ function Login({
   onResetPassword,
   onAuth0Login,
   onAuth0Signup,
+  onClearPendingApproval,
   auth0Loading,
   auth0ErrorText,
   auth0PendingApprovalEmail = "",
@@ -4782,6 +4787,9 @@ function Login({
           setError("");
           setNotice("");
           setPendingEmail("");
+          if (typeof onClearPendingApproval === "function") {
+            onClearPendingApproval();
+          }
         }}
       >
         Back to sign in
