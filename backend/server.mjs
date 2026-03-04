@@ -46,6 +46,8 @@ loadLocalEnv(projectRoot);
 const dbDir = join(__dirname, "db");
 const defaultDbPath = IS_RENDER_RUNTIME ? "/var/data/catalog.sqlite" : join(dbDir, "catalog.sqlite");
 const dbPath = String(process.env.DB_PATH || "").trim() || defaultDbPath;
+const DB_ENGINE = String(process.env.DB_ENGINE || "sqlite").trim().toLowerCase();
+const POSTGRES_RUNTIME_EXPERIMENTAL = String(process.env.POSTGRES_RUNTIME_EXPERIMENTAL || "false").toLowerCase() === "true";
 const schemaPath = join(dbDir, "schema.sql");
 const seedPath = join(dbDir, "seed.sql");
 const distDir = join(projectRoot, "dist");
@@ -512,12 +514,20 @@ function getDisplayLocationName(storedName, externalId) {
   return mapped || String(storedName || "").trim();
 }
 
+if (DB_ENGINE === "postgres" && !POSTGRES_RUNTIME_EXPERIMENTAL) {
+  console.warn("[startup] DB_ENGINE=postgres requested, but Postgres runtime is not enabled yet. Falling back to SQLite. Set POSTGRES_RUNTIME_EXPERIMENTAL=true only after migration verification.");
+}
+const effectiveDbEngine = (DB_ENGINE === "postgres" && POSTGRES_RUNTIME_EXPERIMENTAL) ? "postgres" : "sqlite";
+if (effectiveDbEngine === "postgres") {
+  throw new Error("Postgres runtime engine is not implemented yet in this build. Keep DB_ENGINE=sqlite and use migration scripts for staged cutover.");
+}
 const db = new DatabaseSync(dbPath);
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
   console.log(`[startup] Using SQLite DB path: ${dbPath}`);
 }
+console.log(`[startup] Database engine: ${effectiveDbEngine}`);
 
 function getStoredAndDisplayLocations() {
   const rows = db.prepare("SELECT name, external_id AS externalId FROM locations ORDER BY id").all();

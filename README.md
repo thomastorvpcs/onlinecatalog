@@ -157,6 +157,20 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
   - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `true`)
   - `DEPLOY_REAL_SEED_COUNT` (default `100`, max `1000`)
 
+## PostgreSQL 16 Staged Migration (Rollback-Safe)
+- Runtime remains SQLite by default (`DB_ENGINE=sqlite`).
+- Migration tooling:
+  - `npm run db:pg:migrate` (copies SQLite tables/data into Postgres)
+  - `npm run db:pg:verify` (row-count parity check)
+- Required env vars for migration scripts:
+  - `DATABASE_URL` (Render Postgres connection string)
+  - optional `SQLITE_DB_PATH` (default `backend/db/catalog.sqlite`)
+  - optional `PG_SCHEMA` (default `public`)
+- Runtime safety guard:
+  - If `DB_ENGINE=postgres` but `POSTGRES_RUNTIME_EXPERIMENTAL` is not `true`, server auto-falls back to SQLite and logs a warning.
+  - If both are set (`DB_ENGINE=postgres`, `POSTGRES_RUNTIME_EXPERIMENTAL=true`), server exits intentionally because full Postgres runtime query layer is not enabled in this step.
+- Full cutover/rollback checklist: `docs/postgres-migration-runbook.md`
+
 ## Auth0 (React SDK)
 - SDK installed: `@auth0/auth0-react`
 - Configure frontend env vars:

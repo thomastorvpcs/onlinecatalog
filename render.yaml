@@ -13,5 +13,9 @@ services:
     envVars:
       - key: DB_PATH
         value: /var/data/catalog.sqlite
+      - key: DB_ENGINE
+        value: sqlite
+      - key: POSTGRES_RUNTIME_EXPERIMENTAL
+        value: "false"
       - key: AUTO_SEED_REAL_ON_STARTUP
         value: "false"
