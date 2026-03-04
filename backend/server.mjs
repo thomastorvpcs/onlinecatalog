@@ -2222,14 +2222,22 @@ async function getDevicesPostgres(url) {
 
 async function getCategoriesRuntime() {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return getCategoriesPostgres();
+    try {
+      return await getCategoriesPostgres();
+    } catch (error) {
+      console.error(`[postgres-read] /api/categories fallback: ${error?.message || error}`);
+    }
   }
   return getCategories();
 }
 
 async function getDevicesRuntime(url) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return getDevicesPostgres(url);
+    try {
+      return await getDevicesPostgres(url);
+    } catch (error) {
+      console.error(`[postgres-read] /api/devices fallback: ${error?.message || error}`);
+    }
   }
   return getDevices(url);
 }
