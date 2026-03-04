@@ -3119,29 +3119,6 @@ export default function App() {
     try {
       setRequestSubmitLoading(true);
       setRequestsError("");
-      const netsuitePayloadValidation = await apiRequest("/api/ai/validate-netsuite-payload", {
-        method: "POST",
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState,
-        body: {
-          payload: {
-            requestId: "",
-            requestNumber: "",
-            company: user.company,
-            currencyCode: "USD",
-            lines
-          }
-        }
-      });
-      if (!netsuitePayloadValidation?.valid) {
-        const firstError = Array.isArray(netsuitePayloadValidation.errors) && netsuitePayloadValidation.errors.length
-          ? netsuitePayloadValidation.errors[0]
-          : "NetSuite payload validation failed.";
-        setRequestsError(firstError);
-        return;
-      }
       const created = await apiRequest("/api/requests", {
         method: "POST",
         token: authToken,
@@ -3150,14 +3127,41 @@ export default function App() {
         onAuthFail: clearAuthState,
         body: { lines, preferredLocation: selectedRequestLocation }
       });
-      await apiRequest("/api/integrations/netsuite/estimates/dummy", {
-        method: "POST",
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState,
-        body: { requestId: created.id }
-      });
+      try {
+        const netsuitePayloadValidation = await apiRequest("/api/ai/validate-netsuite-payload", {
+          method: "POST",
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState,
+          body: {
+            payload: {
+              requestId: created.id || "",
+              requestNumber: created.requestNumber || "",
+              company: user.company,
+              currencyCode: "USD",
+              lines
+            }
+          }
+        });
+        if (netsuitePayloadValidation?.valid) {
+          await apiRequest("/api/integrations/netsuite/estimates/dummy", {
+            method: "POST",
+            token: authToken,
+            refreshToken,
+            onAuthUpdate: applyAuthTokens,
+            onAuthFail: clearAuthState,
+            body: { requestId: created.id }
+          });
+        } else {
+          const firstError = Array.isArray(netsuitePayloadValidation?.errors) && netsuitePayloadValidation.errors.length
+            ? netsuitePayloadValidation.errors[0]
+            : "NetSuite payload validation failed.";
+          setRequestsError(`Request created, but estimate sync was skipped: ${firstError}`);
+        }
+      } catch (syncError) {
+        setRequestsError(`Request created, but estimate sync failed: ${syncError.message || "Unknown error"}`);
+      }
       await refreshRequests();
       updateCart([]);
       setCartOpen(false);
