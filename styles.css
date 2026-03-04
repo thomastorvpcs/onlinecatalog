@@ -1537,7 +1537,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   max-height: 92vh;
   overflow: auto;
   border-radius: 12px;
+  border: 2px solid #0f4fbf;
   box-shadow: 0 28px 72px rgba(15, 23, 42, 0.28);
+}
+
+.grade-guide-overlay {
+  z-index: 1600;
 }
 
 .grade-guide-list {

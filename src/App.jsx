@@ -4477,7 +4477,7 @@ export default function App() {
       ) : null}
 
       {gradeGuideOpen ? (
-        <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setGradeGuideOpen(false); }}>
+        <div className="app-overlay grade-guide-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setGradeGuideOpen(false); }}>
           <article className="modal grade-guide-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <div>
