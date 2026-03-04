@@ -167,6 +167,7 @@ const UI_VIEW_STATE_KEY = "pcs.ui.viewState";
 const AI_COPILOT_STATE_KEY_PREFIX = "pcs.aiCopilot.";
 const AUTH0_LOGOUT_MARKER_KEY = "pcs.auth0.logoutRequestedAt";
 const AUTH0_LOGOUT_MARKER_TTL_MS = 2 * 60 * 1000;
+const AUTH0_INTERACTIVE_LOGIN_KEY = "pcs.auth0.interactiveLoginPending";
 const AI_COPILOT_DEFAULT_PANEL_HEIGHT = 360;
 const DEFAULT_DEMO_BUYER_EMAIL = "ekrem.ersayin@pcsww.com";
 const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
@@ -1657,6 +1658,21 @@ export default function App() {
     return true;
   };
 
+  const markAuth0InteractiveLoginPending = () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(AUTH0_INTERACTIVE_LOGIN_KEY, "1");
+  };
+
+  const clearAuth0InteractiveLoginPending = () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(AUTH0_INTERACTIVE_LOGIN_KEY);
+  };
+
+  const hasAuth0InteractiveLoginPending = () => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem(AUTH0_INTERACTIVE_LOGIN_KEY) === "1";
+  };
+
   const cartKey = user ? `pcs.cart.${normalizeEmail(user.email)}` : "";
   const requestPrefsKey = user ? `pcs.requestPrefs.${normalizeEmail(user.email)}` : "";
   const aiCopilotStateKey = user
@@ -1765,6 +1781,7 @@ export default function App() {
     if (!auth0IsAuthenticated) {
       auth0LogoutInProgressRef.current = false;
       clearAuth0LogoutRequested();
+      clearAuth0InteractiveLoginPending();
     }
   }, [auth0IsAuthenticated]);
 
@@ -1775,6 +1792,7 @@ export default function App() {
       if (authToken || refreshToken || user) return;
       if (auth0LogoutInProgressRef.current) return;
       if (hasRecentAuth0LogoutRequest()) return;
+      if (!hasAuth0InteractiveLoginPending()) return;
       if (auth0ExchangeInFlightRef.current) return;
       try {
         auth0ExchangeInFlightRef.current = true;
@@ -1793,11 +1811,13 @@ export default function App() {
           return;
         }
         applyAuthTokens(issued);
+        clearAuth0InteractiveLoginPending();
         setAiCopilotOpen(false);
         setAiCopilotGreetingTyping(false);
         setAiCopilotWelcomePending(true);
         resetViewStateToHome();
       } catch (error) {
+        clearAuth0InteractiveLoginPending();
         if (!ignore) {
           setAuthBootstrapError(error.message || "Auth0 sign-in exchange failed.");
           setAuthLoading(false);
@@ -1824,6 +1844,11 @@ export default function App() {
             return;
           }
           if (hasRecentAuth0LogoutRequest()) {
+            setAuthLoading(false);
+            setUser(null);
+            return;
+          }
+          if (!hasAuth0InteractiveLoginPending()) {
             setAuthLoading(false);
             setUser(null);
             return;
@@ -3173,14 +3198,21 @@ export default function App() {
   const handleAuth0Login = async () => {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
-    await loginWithRedirect();
+    markAuth0InteractiveLoginPending();
+    await loginWithRedirect({
+      authorizationParams: {
+        prompt: "login"
+      }
+    });
   };
 
   const handleAuth0Signup = async () => {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
+    markAuth0InteractiveLoginPending();
     await loginWithRedirect({
       authorizationParams: {
+        prompt: "login",
         screen_hint: "signup"
       }
     });
@@ -3201,6 +3233,7 @@ export default function App() {
   const logout = () => {
     auth0LogoutInProgressRef.current = true;
     markAuth0LogoutRequested();
+    clearAuth0InteractiveLoginPending();
     apiRequest("/api/auth/logout", {
       method: "POST",
       token: authToken,
