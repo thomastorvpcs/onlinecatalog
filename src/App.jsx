@@ -4948,7 +4948,7 @@ function Login({
             <div className="auth0-meta-row">
               <div className="auth0-ai-pill" aria-label="AI powered">AI Powered</div>
             </div>
-            <h1 className="auth-title auth0-title">AI Catalog Copilot</h1>
+            <h1 className="auth-title auth0-title">PCS Online Catalog</h1>
             <p className="auth0-subtitle">Sign in to continue.</p>
             <div className="auth0-actions">
               <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
