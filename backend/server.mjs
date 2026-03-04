@@ -697,8 +697,8 @@ async function syncSqliteFromPostgres() {
         continue;
       }
 
-      sqliteDb.prepare(`DELETE FROM ${quoteIdent(tableName)}`).run();
       if (!rows.length) continue;
+      sqliteDb.prepare(`DELETE FROM ${quoteIdent(tableName)}`).run();
 
       const colNames = Object.keys(rows[0] || {});
       if (!colNames.length) continue;
@@ -722,6 +722,82 @@ async function syncSqliteFromPostgres() {
   }
 }
 
+async function ensurePostgresRuntimeSchema() {
+  if (!pgClient) return;
+  await pgClient.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(PG_SCHEMA)}`);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("quote_requests")} (
+      id TEXT PRIMARY KEY,
+      request_number TEXT NOT NULL UNIQUE,
+      company TEXT NOT NULL,
+      created_by_user_id BIGINT REFERENCES ${postgresTableRef("users")}(id),
+      created_by_email TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'New',
+      total_amount DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+      currency_code TEXT NOT NULL DEFAULT 'USD',
+      netsuite_estimate_id TEXT,
+      netsuite_estimate_number TEXT,
+      netsuite_status TEXT,
+      netsuite_last_sync_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("quote_request_lines")} (
+      id BIGSERIAL PRIMARY KEY,
+      request_id TEXT NOT NULL REFERENCES ${postgresTableRef("quote_requests")}(id) ON DELETE CASCADE,
+      device_id TEXT,
+      model TEXT NOT NULL,
+      grade TEXT NOT NULL,
+      quantity BIGINT NOT NULL CHECK (quantity >= 1),
+      offer_price DOUBLE PRECISION NOT NULL CHECK (offer_price >= 0),
+      note TEXT
+    )
+  `);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("quote_request_events")} (
+      id BIGSERIAL PRIMARY KEY,
+      request_id TEXT NOT NULL REFERENCES ${postgresTableRef("quote_requests")}(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON ${postgresTableRef("quote_request_lines")} (request_id)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON ${postgresTableRef("quote_request_events")} (request_id)`);
+}
+
+async function backfillPostgresTableFromSqliteIfEmpty(tableName) {
+  if (!pgClient) return;
+  const sqliteCount = Number(sqliteDb.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdent(tableName)}`).get().count || 0);
+  if (sqliteCount <= 0) return;
+  const pgCount = await getPostgresTableCount(tableName);
+  if (pgCount > 0) return;
+
+  const rows = sqliteDb.prepare(`SELECT * FROM ${quoteIdent(tableName)}`).all();
+  if (!rows.length) return;
+  const colNames = Object.keys(rows[0] || {});
+  if (!colNames.length) return;
+  const colList = colNames.map((name) => quoteIdent(name)).join(", ");
+  const marks = colNames.map((_, idx) => `$${idx + 1}`).join(", ");
+  const sql = `INSERT INTO ${postgresTableRef(tableName)} (${colList}) VALUES (${marks})`;
+  await pgClient.query("BEGIN");
+  try {
+    for (const row of rows) {
+      const values = colNames.map((name) => normalizeBindValue(row[name]));
+      await pgClient.query(sql, values);
+    }
+    await pgClient.query("COMMIT");
+    console.log(`[startup] Backfilled ${rows.length} row(s) to Postgres table ${tableName}.`);
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+}
+
 async function initializePostgresRuntime() {
   if (effectiveDbEngine !== "postgres") return;
   pgClient = new Client({
@@ -729,6 +805,10 @@ async function initializePostgresRuntime() {
     ssl: { rejectUnauthorized: false }
   });
   await pgClient.connect();
+  await ensurePostgresRuntimeSchema();
+  await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
+  await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
+  await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
   await syncSqliteFromPostgres();
   db = createMirroredDbAdapter(sqliteDb);
   postgresMirrorEnabled = true;
