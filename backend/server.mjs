@@ -2117,7 +2117,11 @@ function inferCompanyFromEmail(email) {
   return root.slice(0, 60).toUpperCase() || "Unknown";
 }
 
-function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
+function normalizeCompanyName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
+}
+
+function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany = "") {
   const auth0Sub = String(claims?.sub || "").trim();
   const email = normalizeEmail(claims?.email || fallbackEmail || "");
   if (!auth0Sub) {
@@ -2144,8 +2148,12 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
   }
 
   if (user?.id) {
+    const normalizedPreferredCompany = normalizeCompanyName(preferredCompany);
     if (!String(user.auth0_sub || "").trim()) {
       db.prepare("UPDATE users SET auth0_sub = ? WHERE id = ?").run(auth0Sub, user.id);
+    }
+    if (normalizedPreferredCompany && normalizedPreferredCompany !== String(user.company || "").trim()) {
+      db.prepare("UPDATE users SET company = ? WHERE id = ?").run(normalizedPreferredCompany, user.id);
     }
     return db.prepare(`
       SELECT id, email, company, role, is_active, created_at
@@ -2155,7 +2163,7 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "") {
     `).get(user.id);
   }
 
-  const company = inferCompanyFromEmail(email);
+  const company = normalizeCompanyName(preferredCompany) || inferCompanyFromEmail(email);
   const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
   db.prepare(`
     INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub)
@@ -2375,9 +2383,9 @@ async function deleteUserRuntime(userId) {
   }
 }
 
-async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
+async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", preferredCompany = "") {
   if (!(effectiveDbEngine === "postgres" && pgClient)) {
-    return upsertUserFromAuth0Claims(claims, fallbackEmail);
+    return upsertUserFromAuth0Claims(claims, fallbackEmail, preferredCompany);
   }
   const auth0Sub = String(claims?.sub || "").trim();
   const email = normalizeEmail(claims?.email || fallbackEmail || "");
@@ -2401,8 +2409,12 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
     user = result.rows?.[0] || null;
   }
   if (user?.id) {
+    const normalizedPreferredCompany = normalizeCompanyName(preferredCompany);
     if (!String(user.auth0_sub || "").trim()) {
       await pgClient.query("UPDATE users SET auth0_sub = $1 WHERE id = $2", [auth0Sub, user.id]);
+    }
+    if (normalizedPreferredCompany && normalizedPreferredCompany !== String(user.company || "").trim()) {
+      await pgClient.query("UPDATE users SET company = $1 WHERE id = $2", [normalizedPreferredCompany, user.id]);
     }
     const finalRes = await pgClient.query(`
       SELECT id, email, company, role, is_active, created_at
@@ -2413,7 +2425,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "") {
     return finalRes.rows?.[0] || null;
   }
 
-  const company = inferCompanyFromEmail(email);
+  const company = normalizeCompanyName(preferredCompany) || inferCompanyFromEmail(email);
   const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
   const created = await createUserRuntime({
     email,
@@ -5804,10 +5816,11 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/auth/auth0-exchange") {
       const body = await parseBody(req);
       const accessToken = String(body.accessToken || getAuthToken(req) || "").trim();
+      const companyFromSignup = normalizeCompanyName(body.company || "");
       try {
         const claims = await verifyAuth0AccessToken(accessToken);
         const userInfo = await fetchAuth0UserInfo(accessToken);
-        const row = await upsertUserFromAuth0ClaimsRuntime(claims, String(userInfo?.email || ""));
+        const row = await upsertUserFromAuth0ClaimsRuntime(claims, String(userInfo?.email || ""), companyFromSignup);
         if (!row?.id) {
           json(req, res, 401, { error: "Unauthorized." });
           return;
