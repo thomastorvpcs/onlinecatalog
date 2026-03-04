@@ -4929,35 +4929,55 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
 
 async function getRequestsForUserRuntime(user) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return getRequestsForUserPostgres(user);
+    try {
+      return await getRequestsForUserPostgres(user);
+    } catch (error) {
+      console.error(`[postgres-read] /api/requests fallback: ${error?.message || error}`);
+    }
   }
   return getRequestsForUser(user);
 }
 
 async function getRequestByIdForUserRuntime(user, requestId) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return getRequestByIdForUserPostgres(user, requestId);
+    try {
+      return await getRequestByIdForUserPostgres(user, requestId);
+    } catch (error) {
+      console.error(`[postgres-read] /api/requests/:id fallback: ${error?.message || error}`);
+    }
   }
   return getRequestByIdForUser(user, requestId);
 }
 
 async function createRequestForUserRuntime(user, body) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return createRequestForUserPostgres(user, body);
+    try {
+      return await createRequestForUserPostgres(user, body);
+    } catch (error) {
+      console.error(`[postgres-write] /api/requests fallback: ${error?.message || error}`);
+    }
   }
   return createRequestForUser(user, body);
 }
 
 async function createDummyEstimateForRequestRuntime(user, requestId) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return createDummyEstimateForRequestPostgres(user, requestId);
+    try {
+      return await createDummyEstimateForRequestPostgres(user, requestId);
+    } catch (error) {
+      console.error(`[postgres-write] /api/integrations/netsuite/estimates/dummy fallback: ${error?.message || error}`);
+    }
   }
   return createDummyEstimateForRequest(user, requestId);
 }
 
 async function updateDummyEstimateStatusRuntime(user, requestId, status) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return updateDummyEstimateStatusPostgres(user, requestId, status);
+    try {
+      return await updateDummyEstimateStatusPostgres(user, requestId, status);
+    } catch (error) {
+      console.error(`[postgres-write] /api/integrations/netsuite/estimates/dummy/status fallback: ${error?.message || error}`);
+    }
   }
   return updateDummyEstimateStatus(user, requestId, status);
 }
