@@ -4816,8 +4816,13 @@ async function getNextRequestNumberPostgres() {
   if (!pgClient) return getNextRequestNumber();
   const year = new Date().getFullYear();
   const prefix = `REQ-${year}-`;
-  const result = await pgClient.query("SELECT COUNT(*)::bigint AS count FROM quote_requests WHERE request_number LIKE $1", [`${prefix}%`]);
-  const next = Number(result.rows?.[0]?.count || 0) + 1;
+  const result = await pgClient.query(
+    "SELECT request_number FROM quote_requests WHERE request_number LIKE $1 ORDER BY request_number DESC LIMIT 1",
+    [`${prefix}%`]
+  );
+  const latest = String(result.rows?.[0]?.request_number || "");
+  const latestMatch = latest.match(/(\d+)$/);
+  const next = (latestMatch ? Number(latestMatch[1]) : 0) + 1;
   return `${prefix}${String(next).padStart(4, "0")}`;
 }
 
@@ -4825,45 +4830,98 @@ async function getNextDummyEstimateNumberPostgres() {
   if (!pgClient) return getNextDummyEstimateNumber();
   const year = new Date().getFullYear();
   const prefix = `EST-${year}-`;
-  const result = await pgClient.query("SELECT COUNT(*)::bigint AS count FROM quote_requests WHERE netsuite_estimate_number LIKE $1", [`${prefix}%`]);
-  const next = Number(result.rows?.[0]?.count || 0) + 1;
+  const result = await pgClient.query(
+    "SELECT netsuite_estimate_number FROM quote_requests WHERE netsuite_estimate_number LIKE $1 ORDER BY netsuite_estimate_number DESC LIMIT 1",
+    [`${prefix}%`]
+  );
+  const latest = String(result.rows?.[0]?.netsuite_estimate_number || "");
+  const latestMatch = latest.match(/(\d+)$/);
+  const next = (latestMatch ? Number(latestMatch[1]) : 0) + 1;
   return `${prefix}${String(next).padStart(4, "0")}`;
+}
+
+async function ensurePostgresUserForRuntime(user) {
+  if (!pgClient || !user) return null;
+  const email = normalizeEmail(user.email);
+  if (!email) return null;
+  const numericId = Number(user.id);
+  const requestedId = Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+
+  if (requestedId !== null) {
+    const byId = await pgClient.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [requestedId]);
+    if (byId.rows?.[0]?.id) return Number(byId.rows[0].id);
+  }
+  const byEmail = await pgClient.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [email]);
+  if (byEmail.rows?.[0]?.id) return Number(byEmail.rows[0].id);
+
+  const company = String(user.company || "Unknown").trim() || "Unknown";
+  const role = String(user.role || "buyer").trim() === "admin" ? "admin" : "buyer";
+  const placeholderPasswordHash = hashPassword(randomBytes(24).toString("hex"));
+  if (requestedId !== null) {
+    try {
+      const inserted = await pgClient.query(`
+        INSERT INTO users (id, email, company, role, password_hash, is_active, created_at)
+        VALUES ($1, $2, $3, $4, $5, 1, CURRENT_TIMESTAMP)
+        RETURNING id
+      `, [requestedId, email, company, role, placeholderPasswordHash]);
+      if (inserted.rows?.[0]?.id) return Number(inserted.rows[0].id);
+    } catch {
+      const retryById = await pgClient.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [requestedId]);
+      if (retryById.rows?.[0]?.id) return Number(retryById.rows[0].id);
+      const retryByEmail = await pgClient.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [email]);
+      if (retryByEmail.rows?.[0]?.id) return Number(retryByEmail.rows[0].id);
+    }
+  }
+  const inserted = await pgClient.query(`
+    INSERT INTO users (email, company, role, password_hash, is_active, created_at)
+    VALUES ($1, $2, $3, $4, 1, CURRENT_TIMESTAMP)
+    RETURNING id
+  `, [email, company, role, placeholderPasswordHash]);
+  return Number(inserted.rows?.[0]?.id || 0) || null;
 }
 
 async function createRequestForUserPostgres(user, body) {
   if (!pgClient) return createRequestForUser(user, body);
   const lines = validateRequestLines(body.lines);
   const requestId = randomBytes(16).toString("hex");
-  const requestNumber = await getNextRequestNumberPostgres();
+  const createdByUserId = await ensurePostgresUserForRuntime(user);
+  let requestNumber = await getNextRequestNumberPostgres();
   const total = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
 
-  await pgClient.query("BEGIN");
-  try {
-    await pgClient.query(`
-      INSERT INTO quote_requests (
-        id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, 'New', $6, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `, [requestId, requestNumber, user.company, user.id, user.email, total]);
-
-    for (const line of lines) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await pgClient.query("BEGIN");
+    try {
       await pgClient.query(`
-        INSERT INTO quote_request_lines (
-          request_id, device_id, model, grade, quantity, offer_price, note
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null]);
+        INSERT INTO quote_requests (
+          id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, 'New', $6, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [requestId, requestNumber, user.company, createdByUserId, user.email, total]);
+
+      for (const line of lines) {
+        await pgClient.query(`
+          INSERT INTO quote_request_lines (
+            request_id, device_id, model, grade, quantity, offer_price, note
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null]);
+      }
+
+      await pgClient.query(`
+        INSERT INTO quote_request_events (request_id, event_type, payload_json)
+        VALUES ($1, 'request_created', $2)
+      `, [requestId, JSON.stringify({ lineCount: lines.length, total })]);
+      await pgClient.query("COMMIT");
+      return getRequestByIdForUserPostgres(user, requestId);
+    } catch (error) {
+      await pgClient.query("ROLLBACK");
+      const message = String(error?.message || "");
+      if (message.toLowerCase().includes("request_number") && message.toLowerCase().includes("unique")) {
+        requestNumber = await getNextRequestNumberPostgres();
+        continue;
+      }
+      throw error;
     }
-
-    await pgClient.query(`
-      INSERT INTO quote_request_events (request_id, event_type, payload_json)
-      VALUES ($1, 'request_created', $2)
-    `, [requestId, JSON.stringify({ lineCount: lines.length, total })]);
-    await pgClient.query("COMMIT");
-  } catch (error) {
-    await pgClient.query("ROLLBACK");
-    throw error;
   }
-
-  return getRequestByIdForUserPostgres(user, requestId);
+  throw new Error("Failed to allocate unique request number.");
 }
 
 async function createDummyEstimateForRequestPostgres(user, requestId) {
@@ -4929,55 +4987,35 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
 
 async function getRequestsForUserRuntime(user) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await getRequestsForUserPostgres(user);
-    } catch (error) {
-      console.error(`[postgres-read] /api/requests fallback: ${error?.message || error}`);
-    }
+    return getRequestsForUserPostgres(user);
   }
   return getRequestsForUser(user);
 }
 
 async function getRequestByIdForUserRuntime(user, requestId) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await getRequestByIdForUserPostgres(user, requestId);
-    } catch (error) {
-      console.error(`[postgres-read] /api/requests/:id fallback: ${error?.message || error}`);
-    }
+    return getRequestByIdForUserPostgres(user, requestId);
   }
   return getRequestByIdForUser(user, requestId);
 }
 
 async function createRequestForUserRuntime(user, body) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await createRequestForUserPostgres(user, body);
-    } catch (error) {
-      console.error(`[postgres-write] /api/requests fallback: ${error?.message || error}`);
-    }
+    return createRequestForUserPostgres(user, body);
   }
   return createRequestForUser(user, body);
 }
 
 async function createDummyEstimateForRequestRuntime(user, requestId) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await createDummyEstimateForRequestPostgres(user, requestId);
-    } catch (error) {
-      console.error(`[postgres-write] /api/integrations/netsuite/estimates/dummy fallback: ${error?.message || error}`);
-    }
+    return createDummyEstimateForRequestPostgres(user, requestId);
   }
   return createDummyEstimateForRequest(user, requestId);
 }
 
 async function updateDummyEstimateStatusRuntime(user, requestId, status) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await updateDummyEstimateStatusPostgres(user, requestId, status);
-    } catch (error) {
-      console.error(`[postgres-write] /api/integrations/netsuite/estimates/dummy/status fallback: ${error?.message || error}`);
-    }
+    return updateDummyEstimateStatusPostgres(user, requestId, status);
   }
   return updateDummyEstimateStatus(user, requestId, status);
 }
@@ -5698,7 +5736,13 @@ const server = createServer(async (req, res) => {
         const request = await createRequestForUserRuntime(user, body);
         json(req, res, 201, request);
       } catch (error) {
-        json(req, res, 400, { error: error.message || "Failed to create request." });
+        const message = String(error?.message || "Failed to create request.");
+        const isValidation = message.includes("At least one request line is required.")
+          || message.includes("model is required.")
+          || message.includes("grade is required.")
+          || message.includes("quantity must be an integer >= 1.")
+          || message.includes("offerPrice must be a number >= 0.");
+        json(req, res, isValidation ? 400 : 500, { error: message });
       }
       return;
     }
@@ -5736,8 +5780,8 @@ const server = createServer(async (req, res) => {
         const request = await createDummyEstimateForRequestRuntime(user, requestId);
         json(req, res, 200, { ok: true, request });
       } catch (error) {
-        const message = error.message || "Failed to create dummy estimate.";
-        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 400);
+        const message = String(error?.message || "Failed to create dummy estimate.");
+        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 500);
         json(req, res, statusCode, { error: message });
       }
       return;
@@ -5764,8 +5808,8 @@ const server = createServer(async (req, res) => {
         const request = await updateDummyEstimateStatusRuntime(user, requestId, status);
         json(req, res, 200, { ok: true, request });
       } catch (error) {
-        const message = error.message || "Failed to update dummy estimate status.";
-        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 400);
+        const message = String(error?.message || "Failed to update dummy estimate status.");
+        const statusCode = message === "Request not found." ? 404 : (message === "Forbidden" ? 403 : 500);
         json(req, res, statusCode, { error: message });
       }
       return;
