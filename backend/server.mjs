@@ -4314,6 +4314,69 @@ function getAiAdminAnomalies() {
   return anomalies.slice(0, 20);
 }
 
+async function getAiAdminAnomaliesPostgres() {
+  if (!pgClient) return getAiAdminAnomalies();
+  const anomalies = [];
+  const largeAdjustmentsResult = await pgClient.query(`
+    SELECT ie.created_at AS "createdAt", ie.device_id AS "deviceId", ie.delta, ie.change_type AS "changeType",
+           d.model_name AS model, l.name AS location
+    FROM ${postgresTableRef("inventory_events")} ie
+    JOIN ${postgresTableRef("devices")} d ON d.id = ie.device_id
+    JOIN ${postgresTableRef("locations")} l ON l.id = ie.location_id
+    WHERE ABS(ie.delta) >= 50
+    ORDER BY ie.created_at DESC
+    LIMIT 12
+  `);
+  for (const row of (largeAdjustmentsResult.rows || [])) {
+    anomalies.push({
+      type: "inventory_spike",
+      severity: "high",
+      message: `${row.model} at ${row.location} changed by ${Number(row.delta)} (${row.changeType})`,
+      timestamp: row.createdAt
+    });
+  }
+
+  const lowStockResult = await pgClient.query(`
+    SELECT d.model_name AS model, COALESCE(SUM(di.quantity), 0) AS total
+    FROM ${postgresTableRef("devices")} d
+    LEFT JOIN ${postgresTableRef("device_inventory")} di ON di.device_id = d.id
+    WHERE d.is_active = 1
+    GROUP BY d.id, d.model_name
+    HAVING COALESCE(SUM(di.quantity), 0) BETWEEN 1 AND 5
+    ORDER BY total ASC, d.model_name ASC
+    LIMIT 12
+  `);
+  for (const row of (lowStockResult.rows || [])) {
+    anomalies.push({
+      type: "low_stock",
+      severity: "medium",
+      message: `${row.model} is low stock (${Number(row.total)} units total).`,
+      timestamp: null
+    });
+  }
+
+  if (!anomalies.length) {
+    anomalies.push({
+      type: "none",
+      severity: "info",
+      message: "No significant anomalies detected in current snapshot.",
+      timestamp: null
+    });
+  }
+  return anomalies.slice(0, 20);
+}
+
+async function getAiAdminAnomaliesRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await getAiAdminAnomaliesPostgres();
+    } catch (error) {
+      console.error(`[postgres-read] /api/ai/admin/anomalies fallback: ${error?.message || error}`);
+    }
+  }
+  return getAiAdminAnomalies();
+}
+
 function getAiSalesInsights(daysRaw) {
   const days = Math.max(1, Math.min(365, Number(daysRaw || 30)));
   const fromIso = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
@@ -4346,6 +4409,52 @@ function getAiSalesInsights(daysRaw) {
     byStatus,
     topModels
   };
+}
+
+async function getAiSalesInsightsPostgres(daysRaw) {
+  if (!pgClient) return getAiSalesInsights(daysRaw);
+  const days = Math.max(1, Math.min(365, Number(daysRaw || 30)));
+  const fromIso = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
+  const totalsResult = await pgClient.query(`
+    SELECT COUNT(*) AS "requestCount", COALESCE(SUM(total_amount), 0) AS "totalRevenue"
+    FROM ${postgresTableRef("quote_requests")}
+    WHERE created_at >= $1
+  `, [fromIso]);
+  const byStatusResult = await pgClient.query(`
+    SELECT status, COUNT(*) AS count
+    FROM ${postgresTableRef("quote_requests")}
+    WHERE created_at >= $1
+    GROUP BY status
+    ORDER BY count DESC, status ASC
+  `, [fromIso]);
+  const topModelsResult = await pgClient.query(`
+    SELECT qrl.model AS model, COALESCE(SUM(qrl.quantity), 0) AS qty
+    FROM ${postgresTableRef("quote_request_lines")} qrl
+    JOIN ${postgresTableRef("quote_requests")} qr ON qr.id = qrl.request_id
+    WHERE qr.created_at >= $1
+    GROUP BY qrl.model
+    ORDER BY qty DESC, qrl.model ASC
+    LIMIT 8
+  `, [fromIso]);
+  const totals = totalsResult.rows?.[0] || {};
+  return {
+    rangeDays: days,
+    requestCount: Number(totals?.requestCount || 0),
+    totalRevenue: Number(totals?.totalRevenue || 0),
+    byStatus: (byStatusResult.rows || []).map((r) => ({ status: r.status, count: Number(r.count || 0) })),
+    topModels: (topModelsResult.rows || []).map((r) => ({ model: r.model, quantity: Number(r.qty || 0) }))
+  };
+}
+
+async function getAiSalesInsightsRuntime(daysRaw) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await getAiSalesInsightsPostgres(daysRaw);
+    } catch (error) {
+      console.error(`[postgres-read] /api/ai/admin/sales-insights fallback: ${error?.message || error}`);
+    }
+  }
+  return getAiSalesInsights(daysRaw);
 }
 
 function clearCatalogData() {
@@ -6393,14 +6502,14 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/ai/admin/anomalies") {
       const user = requireAdmin(req, res);
       if (!user) return;
-      json(req, res, 200, { anomalies: getAiAdminAnomalies() });
+      json(req, res, 200, { anomalies: await getAiAdminAnomaliesRuntime() });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/ai/admin/sales-insights") {
       const user = requireAdmin(req, res);
       if (!user) return;
-      json(req, res, 200, getAiSalesInsights(url.searchParams.get("days")));
+      json(req, res, 200, await getAiSalesInsightsRuntime(url.searchParams.get("days")));
       return;
     }
 
