@@ -5667,18 +5667,32 @@ function mapSavedFilterRow(row) {
   };
 }
 
-function getSavedFiltersForUser(userId, viewKeyRaw) {
+async function getSavedFiltersForUser(userId, viewKeyRaw) {
   const viewKey = normalizeSavedFilterViewKey(viewKeyRaw);
-  const rows = db.prepare(`
-    SELECT id, view_key, name, payload_json, created_at, updated_at
-    FROM user_saved_filters
-    WHERE user_id = ? AND view_key = ?
-    ORDER BY updated_at DESC, name COLLATE NOCASE ASC
-  `).all(userId, viewKey);
+  let rows = [];
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(
+      `
+        SELECT id, view_key, name, payload_json, created_at, updated_at
+        FROM ${postgresTableRef("user_saved_filters")}
+        WHERE user_id = $1 AND view_key = $2
+        ORDER BY updated_at DESC, name ASC
+      `,
+      [userId, viewKey]
+    );
+    rows = Array.isArray(result.rows) ? result.rows : [];
+  } else {
+    rows = db.prepare(`
+      SELECT id, view_key, name, payload_json, created_at, updated_at
+      FROM user_saved_filters
+      WHERE user_id = ? AND view_key = ?
+      ORDER BY updated_at DESC, name COLLATE NOCASE ASC
+    `).all(userId, viewKey);
+  }
   return rows.map(mapSavedFilterRow);
 }
 
-function upsertSavedFilterForUser(userId, body) {
+async function upsertSavedFilterForUser(userId, body) {
   const name = String(body.name || "").trim();
   if (!name) {
     throw new Error("name is required.");
@@ -5689,34 +5703,65 @@ function upsertSavedFilterForUser(userId, body) {
   const viewKey = normalizeSavedFilterViewKey(body.viewKey);
   const payload = sanitizeSavedFilterPayload(body.payload);
   const payloadJson = JSON.stringify(payload);
-  db.prepare(`
-    INSERT INTO user_saved_filters (user_id, view_key, name, payload_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_id, view_key, name)
-    DO UPDATE SET
-      payload_json = excluded.payload_json,
-      updated_at = CURRENT_TIMESTAMP
-  `).run(userId, viewKey, name, payloadJson);
-  const row = db.prepare(`
-    SELECT id, view_key, name, payload_json, created_at, updated_at
-    FROM user_saved_filters
-    WHERE user_id = ? AND view_key = ? AND name = ?
-    LIMIT 1
-  `).get(userId, viewKey, name);
+  let row = null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(
+      `
+        INSERT INTO ${postgresTableRef("user_saved_filters")} (user_id, view_key, name, payload_json, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, view_key, name)
+        DO UPDATE SET
+          payload_json = excluded.payload_json,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING id, view_key, name, payload_json, created_at, updated_at
+      `,
+      [userId, viewKey, name, payloadJson]
+    );
+    row = result.rows?.[0] || null;
+  } else {
+    db.prepare(`
+      INSERT INTO user_saved_filters (user_id, view_key, name, payload_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, view_key, name)
+      DO UPDATE SET
+        payload_json = excluded.payload_json,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(userId, viewKey, name, payloadJson);
+    row = db.prepare(`
+      SELECT id, view_key, name, payload_json, created_at, updated_at
+      FROM user_saved_filters
+      WHERE user_id = ? AND view_key = ? AND name = ?
+      LIMIT 1
+    `).get(userId, viewKey, name);
+  }
   return mapSavedFilterRow(row);
 }
 
-function updateSavedFilterForUser(userId, filterIdRaw, body) {
+async function updateSavedFilterForUser(userId, filterIdRaw, body) {
   const filterId = Number(filterIdRaw);
   if (!Number.isInteger(filterId) || filterId < 1) {
     throw new Error("Saved filter not found.");
   }
-  const existing = db.prepare(`
-    SELECT id, view_key, name
-    FROM user_saved_filters
-    WHERE id = ? AND user_id = ?
-    LIMIT 1
-  `).get(filterId, userId);
+  let existing = null;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const existingResult = await pgClient.query(
+      `
+        SELECT id, view_key, name
+        FROM ${postgresTableRef("user_saved_filters")}
+        WHERE id = $1 AND user_id = $2
+        LIMIT 1
+      `,
+      [filterId, userId]
+    );
+    existing = existingResult.rows?.[0] || null;
+  } else {
+    existing = db.prepare(`
+      SELECT id, view_key, name
+      FROM user_saved_filters
+      WHERE id = ? AND user_id = ?
+      LIMIT 1
+    `).get(filterId, userId);
+  }
   if (!existing?.id) {
     throw new Error("Saved filter not found.");
   }
@@ -5733,38 +5778,69 @@ function updateSavedFilterForUser(userId, filterIdRaw, body) {
   }
   const payload = sanitizeSavedFilterPayload(body.payload);
   const payloadJson = JSON.stringify(payload);
+  let row = null;
   try {
-    db.prepare(`
-      UPDATE user_saved_filters
-      SET name = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `).run(name, payloadJson, filterId, userId);
+    if (effectiveDbEngine === "postgres" && pgClient) {
+      const result = await pgClient.query(
+        `
+          UPDATE ${postgresTableRef("user_saved_filters")}
+          SET name = $1, payload_json = $2, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $3 AND user_id = $4
+          RETURNING id, view_key, name, payload_json, created_at, updated_at
+        `,
+        [name, payloadJson, filterId, userId]
+      );
+      row = result.rows?.[0] || null;
+    } else {
+      db.prepare(`
+        UPDATE user_saved_filters
+        SET name = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).run(name, payloadJson, filterId, userId);
+      row = db.prepare(`
+        SELECT id, view_key, name, payload_json, created_at, updated_at
+        FROM user_saved_filters
+        WHERE id = ? AND user_id = ?
+        LIMIT 1
+      `).get(filterId, userId);
+    }
   } catch (error) {
     const message = String(error?.message || "");
-    if (message.includes("UNIQUE constraint failed")) {
+    if (message.includes("UNIQUE constraint failed") || String(error?.code || "") === "23505") {
       throw new Error("Saved filter name already exists.");
     }
     throw error;
   }
-  const row = db.prepare(`
-    SELECT id, view_key, name, payload_json, created_at, updated_at
-    FROM user_saved_filters
-    WHERE id = ? AND user_id = ?
-    LIMIT 1
-  `).get(filterId, userId);
+  if (!row?.id) {
+    throw new Error("Saved filter not found.");
+  }
   return mapSavedFilterRow(row);
 }
 
-function deleteSavedFilterForUser(userId, filterIdRaw) {
+async function deleteSavedFilterForUser(userId, filterIdRaw) {
   const filterId = Number(filterIdRaw);
   if (!Number.isInteger(filterId) || filterId < 1) {
     throw new Error("Saved filter not found.");
   }
-  const row = db.prepare("SELECT id FROM user_saved_filters WHERE id = ? AND user_id = ?").get(filterId, userId);
-  if (!row?.id) {
-    throw new Error("Saved filter not found.");
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const result = await pgClient.query(
+      `
+        DELETE FROM ${postgresTableRef("user_saved_filters")}
+        WHERE id = $1 AND user_id = $2
+        RETURNING id
+      `,
+      [filterId, userId]
+    );
+    if (!result.rows?.[0]?.id) {
+      throw new Error("Saved filter not found.");
+    }
+  } else {
+    const row = db.prepare("SELECT id FROM user_saved_filters WHERE id = ? AND user_id = ?").get(filterId, userId);
+    if (!row?.id) {
+      throw new Error("Saved filter not found.");
+    }
+    db.prepare("DELETE FROM user_saved_filters WHERE id = ? AND user_id = ?").run(filterId, userId);
   }
-  db.prepare("DELETE FROM user_saved_filters WHERE id = ? AND user_id = ?").run(filterId, userId);
 }
 
 initDb();
@@ -6335,7 +6411,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const viewKey = url.searchParams.get("view") || "category";
-      json(req, res, 200, getSavedFiltersForUser(user.id, viewKey));
+      json(req, res, 200, await getSavedFiltersForUser(user.id, viewKey));
       return;
     }
 
@@ -6347,7 +6423,7 @@ const server = createServer(async (req, res) => {
       }
       const body = await parseBody(req);
       try {
-        const savedFilter = upsertSavedFilterForUser(user.id, body);
+        const savedFilter = await upsertSavedFilterForUser(user.id, body);
         json(req, res, 200, savedFilter);
       } catch (error) {
         json(req, res, 400, { error: error.message || "Failed to save filter." });
@@ -6365,7 +6441,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const filterId = decodeURIComponent(savedFilterByIdMatch[1]);
       try {
-        const savedFilter = updateSavedFilterForUser(user.id, filterId, body);
+        const savedFilter = await updateSavedFilterForUser(user.id, filterId, body);
         json(req, res, 200, savedFilter);
       } catch (error) {
         const message = error.message || "Failed to update saved filter.";
@@ -6385,7 +6461,7 @@ const server = createServer(async (req, res) => {
       }
       const filterId = decodeURIComponent(savedFilterByIdMatch[1]);
       try {
-        deleteSavedFilterForUser(user.id, filterId);
+        await deleteSavedFilterForUser(user.id, filterId);
         json(req, res, 200, { ok: true });
       } catch (error) {
         const message = error.message || "Failed to delete saved filter.";
