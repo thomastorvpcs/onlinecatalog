@@ -529,8 +529,7 @@ if (DB_ENGINE === "postgres" && !POSTGRES_RUNTIME_EXPERIMENTAL) {
   console.warn("[startup] DB_ENGINE=postgres requested, but Postgres runtime is not enabled yet. Falling back to SQLite. Set POSTGRES_RUNTIME_EXPERIMENTAL=true only after migration verification.");
 }
 const effectiveDbEngine = (DB_ENGINE === "postgres" && POSTGRES_RUNTIME_EXPERIMENTAL) ? "postgres" : "sqlite";
-const POSTGRES_STRICT_RUNTIME = (effectiveDbEngine === "postgres")
-  && String(process.env.POSTGRES_STRICT_RUNTIME || "true").toLowerCase() === "true";
+const POSTGRES_STRICT_RUNTIME = (effectiveDbEngine === "postgres");
 if (effectiveDbEngine === "postgres" && !POSTGRES_URL) {
   throw new Error("Postgres runtime requested but DATABASE_URL is missing.");
 }
@@ -954,15 +953,6 @@ async function initializePostgresRuntime() {
   });
   await pgClient.connect();
   await ensurePostgresRuntimeSchema();
-  if (!POSTGRES_STRICT_RUNTIME) {
-    await backfillPostgresTableFromSqliteIfEmpty("users");
-    await backfillPostgresTableFromSqliteIfEmpty("refresh_tokens");
-    await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
-    await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
-    await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
-    await backfillPostgresTableFromSqliteIfEmpty("user_saved_filters");
-    await backfillPostgresTableFromSqliteIfEmpty("app_settings");
-  }
   await ensurePostgresSerialSequence("quote_request_lines", "id");
   await ensurePostgresSerialSequence("quote_request_events", "id");
   await ensurePostgresSerialSequence("refresh_tokens", "id");
@@ -974,15 +964,8 @@ async function initializePostgresRuntime() {
   await ensurePostgresSerialSequence("user_saved_filters", "id");
   await ensurePostgresSerialSequence("inventory_events", "id");
   await ensurePostgresSerialSequence("boomi_inventory_raw", "id");
-  if (POSTGRES_STRICT_RUNTIME) {
-    db = createNoSqliteFallbackAdapter();
-    postgresMirrorEnabled = false;
-  } else {
-    await syncSqliteFromPostgres();
-    db = createMirroredDbAdapter(sqliteDb);
-    postgresMirrorEnabled = true;
-    console.log("[startup] Postgres runtime mirroring is active.");
-  }
+  db = createNoSqliteFallbackAdapter();
+  postgresMirrorEnabled = false;
 }
 
 function getStoredAndDisplayLocations() {
