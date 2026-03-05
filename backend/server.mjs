@@ -4534,38 +4534,50 @@ function clearCatalogData() {
 
 async function clearCatalogDataPostgres() {
   if (!pgClient) return clearCatalogData();
-  const readCount = async (sql, params = []) => {
-    try {
-      const res = await pgClient.query(sql, params);
-      return Number(res.rows?.[0]?.count || 0);
-    } catch {
-      return 0;
+  const targetTables = ["devices", "boomi_inventory_raw", "inventory_events", "device_inventory", "device_images"];
+  const tableRows = await pgClient.query(
+    `
+      SELECT n.nspname AS schema_name, c.relname AS table_name
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'r'
+        AND c.relname = ANY($1::text[])
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    `,
+    [targetTables]
+  );
+  const tableBySchema = new Map();
+  for (const row of (tableRows.rows || [])) {
+    const schemaName = String(row.schema_name || "").trim();
+    const tableName = String(row.table_name || "").trim();
+    if (!schemaName || !tableName) continue;
+    if (!tableBySchema.has(schemaName)) tableBySchema.set(schemaName, new Set());
+    tableBySchema.get(schemaName).add(tableName);
+  }
+
+  let beforeDevices = 0;
+  let beforeRaw = 0;
+  for (const [schemaName, tableSet] of tableBySchema.entries()) {
+    if (tableSet.has("devices")) {
+      const countRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${quoteIdent(schemaName)}.${quoteIdent("devices")}`);
+      beforeDevices += Number(countRes.rows?.[0]?.count || 0);
     }
-  };
-  const deleteRows = async (sql, params = []) => {
-    try {
-      const res = await pgClient.query(sql, params);
-      return Number(res.rowCount || 0);
-    } catch {
-      return 0;
+    if (tableSet.has("boomi_inventory_raw")) {
+      const countRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${quoteIdent(schemaName)}.${quoteIdent("boomi_inventory_raw")}`);
+      beforeRaw += Number(countRes.rows?.[0]?.count || 0);
     }
-  };
-  const qualifiedDevices = await readCount(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")}`);
-  const qualifiedRaw = await readCount(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("boomi_inventory_raw")}`);
-  const unqualifiedDevices = await readCount("SELECT COUNT(*)::bigint AS count FROM devices");
-  const unqualifiedRaw = await readCount("SELECT COUNT(*)::bigint AS count FROM boomi_inventory_raw");
-  const before = {
-    devices: Math.max(qualifiedDevices, unqualifiedDevices),
-    raw: Math.max(qualifiedRaw, unqualifiedRaw)
-  };
+  }
+  const before = { devices: beforeDevices, raw: beforeRaw };
+
   await pgClient.query("BEGIN");
   try {
-    await deleteRows(`DELETE FROM ${postgresTableRef("boomi_inventory_raw")}`);
-    await deleteRows(`DELETE FROM ${postgresTableRef("inventory_events")}`);
-    await deleteRows(`DELETE FROM ${postgresTableRef("devices")}`);
-    await deleteRows("DELETE FROM boomi_inventory_raw");
-    await deleteRows("DELETE FROM inventory_events");
-    await deleteRows("DELETE FROM devices");
+    for (const [schemaName, tableSet] of tableBySchema.entries()) {
+      const orderedDeletes = ["boomi_inventory_raw", "inventory_events", "device_images", "device_inventory", "devices"];
+      for (const tableName of orderedDeletes) {
+        if (!tableSet.has(tableName)) continue;
+        await pgClient.query(`DELETE FROM ${quoteIdent(schemaName)}.${quoteIdent(tableName)}`);
+      }
+    }
     await pgClient.query("COMMIT");
   } catch (error) {
     await pgClient.query("ROLLBACK");
