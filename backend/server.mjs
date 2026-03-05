@@ -4532,6 +4532,19 @@ function clearCatalogData() {
   return before;
 }
 
+function clearCatalogDataSqliteCache() {
+  sqliteDb.exec("BEGIN TRANSACTION");
+  try {
+    sqliteDb.exec("DELETE FROM boomi_inventory_raw");
+    sqliteDb.exec("DELETE FROM inventory_events");
+    sqliteDb.exec("DELETE FROM devices");
+    sqliteDb.exec("COMMIT");
+  } catch (error) {
+    sqliteDb.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 async function clearCatalogDataPostgres() {
   if (!pgClient) return clearCatalogData();
   const targetTables = ["devices", "boomi_inventory_raw", "inventory_events", "device_inventory", "device_images"];
@@ -4589,7 +4602,13 @@ async function clearCatalogDataPostgres() {
 async function clearCatalogDataRuntime() {
   if (effectiveDbEngine === "postgres" && pgClient) {
     try {
-      return await clearCatalogDataPostgres();
+      const before = await clearCatalogDataPostgres();
+      try {
+        clearCatalogDataSqliteCache();
+      } catch (cacheError) {
+        console.error(`[sqlite-cache] clear fallback cache failed: ${cacheError?.message || cacheError}`);
+      }
+      return before;
     } catch (error) {
       console.error(`[postgres-write] /api/admin/catalog/clear fallback: ${error?.message || error}`);
     }
