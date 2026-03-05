@@ -4534,17 +4534,38 @@ function clearCatalogData() {
 
 async function clearCatalogDataPostgres() {
   if (!pgClient) return clearCatalogData();
-  const beforeDevicesRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")}`);
-  const beforeRawRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("boomi_inventory_raw")}`);
+  const readCount = async (sql, params = []) => {
+    try {
+      const res = await pgClient.query(sql, params);
+      return Number(res.rows?.[0]?.count || 0);
+    } catch {
+      return 0;
+    }
+  };
+  const deleteRows = async (sql, params = []) => {
+    try {
+      const res = await pgClient.query(sql, params);
+      return Number(res.rowCount || 0);
+    } catch {
+      return 0;
+    }
+  };
+  const qualifiedDevices = await readCount(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")}`);
+  const qualifiedRaw = await readCount(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("boomi_inventory_raw")}`);
+  const unqualifiedDevices = await readCount("SELECT COUNT(*)::bigint AS count FROM devices");
+  const unqualifiedRaw = await readCount("SELECT COUNT(*)::bigint AS count FROM boomi_inventory_raw");
   const before = {
-    devices: Number(beforeDevicesRes.rows?.[0]?.count || 0),
-    raw: Number(beforeRawRes.rows?.[0]?.count || 0)
+    devices: Math.max(qualifiedDevices, unqualifiedDevices),
+    raw: Math.max(qualifiedRaw, unqualifiedRaw)
   };
   await pgClient.query("BEGIN");
   try {
-    await pgClient.query(`DELETE FROM ${postgresTableRef("boomi_inventory_raw")}`);
-    await pgClient.query(`DELETE FROM ${postgresTableRef("inventory_events")}`);
-    await pgClient.query(`DELETE FROM ${postgresTableRef("devices")}`);
+    await deleteRows(`DELETE FROM ${postgresTableRef("boomi_inventory_raw")}`);
+    await deleteRows(`DELETE FROM ${postgresTableRef("inventory_events")}`);
+    await deleteRows(`DELETE FROM ${postgresTableRef("devices")}`);
+    await deleteRows("DELETE FROM boomi_inventory_raw");
+    await deleteRows("DELETE FROM inventory_events");
+    await deleteRows("DELETE FROM devices");
     await pgClient.query("COMMIT");
   } catch (error) {
     await pgClient.query("ROLLBACK");
