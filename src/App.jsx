@@ -1979,6 +1979,7 @@ export default function App() {
         }
       } catch (error) {
         if (!ignore) {
+          setProducts([]);
           const message = String(error?.message || "").trim();
           setProductsError(message ? `Failed to load devices: ${message}` : "Failed to load devices from backend API.");
         }
