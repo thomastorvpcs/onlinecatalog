@@ -4673,11 +4673,21 @@ async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
   const nextValue = weeklySpecial ? 1 : 0;
   if (effectiveDbEngine === "postgres" && pgClient) {
     try {
-      const result = await pgClient.query(
+      const qualifiedResult = await pgClient.query(
         `UPDATE ${postgresTableRef("devices")} SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
         [nextValue, deviceId]
       );
-      return Number(result.rowCount || 0);
+      if (Number(qualifiedResult.rowCount || 0) > 0) {
+        return Number(qualifiedResult.rowCount || 0);
+      }
+      // Compatibility fallback: some older runtime paths read unqualified table names.
+      const unqualifiedResult = await pgClient.query(
+        "UPDATE devices SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        [nextValue, deviceId]
+      );
+      if (Number(unqualifiedResult.rowCount || 0) > 0) {
+        return Number(unqualifiedResult.rowCount || 0);
+      }
     } catch (error) {
       console.error(`[postgres-write] /api/admin/devices/:id/weekly-special fallback: ${error?.message || error}`);
     }
