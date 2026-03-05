@@ -1773,10 +1773,7 @@ async function getBooleanAppSettingRuntime(key, defaultValue = false) {
     try {
       return await getBooleanAppSettingPostgres(key, defaultValue);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres app setting read failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] app_settings fallback: ${error?.message || error}`);
+      throw new Error(`Postgres app setting read failed: ${error?.message || error}`);
     }
   }
   return getBooleanAppSetting(key, defaultValue);
@@ -1791,10 +1788,7 @@ async function setBooleanAppSettingRuntime(key, value) {
       await setBooleanAppSettingPostgres(key, value);
       return;
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres app setting write failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] app_settings fallback: ${error?.message || error}`);
+      throw new Error(`Postgres app setting write failed: ${error?.message || error}`);
     }
   }
   setBooleanAppSetting(key, value);
@@ -3246,10 +3240,7 @@ async function getCategoriesRuntime() {
     try {
       return await getCategoriesPostgres();
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres categories query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] /api/categories fallback: ${error?.message || error}`);
+      throw new Error(`Postgres categories query failed: ${error?.message || error}`);
     }
   }
   return getCategories();
@@ -3263,10 +3254,7 @@ async function getDevicesRuntime(url) {
     try {
       return await getDevicesPostgres(url);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres devices query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] /api/devices fallback: ${error?.message || error}`);
+      throw new Error(`Postgres devices query failed: ${error?.message || error}`);
     }
   }
   return getDevices(url);
@@ -5293,10 +5281,7 @@ async function getAiAdminAnomaliesRuntime() {
     try {
       return await getAiAdminAnomaliesPostgres();
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres anomalies query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] /api/ai/admin/anomalies fallback: ${error?.message || error}`);
+      throw new Error(`Postgres anomalies query failed: ${error?.message || error}`);
     }
   }
   return getAiAdminAnomalies();
@@ -5379,10 +5364,7 @@ async function getAiSalesInsightsRuntime(daysRaw) {
     try {
       return await getAiSalesInsightsPostgres(daysRaw);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres sales insights query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] /api/ai/admin/sales-insights fallback: ${error?.message || error}`);
+      throw new Error(`Postgres sales insights query failed: ${error?.message || error}`);
     }
   }
   return getAiSalesInsights(daysRaw);
@@ -5404,19 +5386,6 @@ function clearCatalogData() {
     throw error;
   }
   return before;
-}
-
-function clearCatalogDataSqliteCache() {
-  sqliteDb.exec("BEGIN TRANSACTION");
-  try {
-    sqliteDb.exec("DELETE FROM boomi_inventory_raw");
-    sqliteDb.exec("DELETE FROM inventory_events");
-    sqliteDb.exec("DELETE FROM devices");
-    sqliteDb.exec("COMMIT");
-  } catch (error) {
-    sqliteDb.exec("ROLLBACK");
-    throw error;
-  }
 }
 
 async function clearCatalogDataPostgres() {
@@ -5479,20 +5448,9 @@ async function clearCatalogDataRuntime() {
       throw new Error("Postgres runtime is not initialized.");
     }
     try {
-      const before = await clearCatalogDataPostgres();
-      if (!POSTGRES_STRICT_RUNTIME) {
-        try {
-          clearCatalogDataSqliteCache();
-        } catch (cacheError) {
-          console.error(`[sqlite-cache] clear fallback cache failed: ${cacheError?.message || cacheError}`);
-        }
-      }
-      return before;
+      return await clearCatalogDataPostgres();
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres catalog clear failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] /api/admin/catalog/clear fallback: ${error?.message || error}`);
+      throw new Error(`Postgres catalog clear failed: ${error?.message || error}`);
     }
   }
   return clearCatalogData();
@@ -5569,10 +5527,7 @@ async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
       );
       return Number(qualifiedResult.rowCount || 0);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres weekly special update failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] /api/admin/devices/:id/weekly-special fallback: ${error?.message || error}`);
+      throw new Error(`Postgres weekly special update failed: ${error?.message || error}`);
     }
   }
   const result = db.prepare("UPDATE devices SET weekly_special = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -6923,10 +6878,7 @@ async function syncBoomiInventoryRowsRuntime(rows, progressCallback = null) {
     try {
       return await syncBoomiInventoryRowsPostgres(rows, progressCallback);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres boomi sync failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] boomi sync fallback: ${error?.message || error}`);
+      throw new Error(`Postgres boomi sync failed: ${error?.message || error}`);
     }
   }
   return syncBoomiInventoryRows(rows, progressCallback);
@@ -7019,10 +6971,7 @@ async function getInventoryByDeviceIdRuntime(deviceId) {
     try {
       return await getInventoryByDeviceIdPostgres(deviceId);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres inventory-by-device query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] inventory-by-device fallback: ${error?.message || error}`);
+      throw new Error(`Postgres inventory-by-device query failed: ${error?.message || error}`);
     }
   }
   return getInventoryByDeviceId(deviceId);
@@ -7059,10 +7008,7 @@ async function upsertInventoryQuantityRuntime(deviceId, locationId, quantity) {
       await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
       return;
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres inventory upsert failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] upsert-inventory fallback: ${error?.message || error}`);
+      throw new Error(`Postgres inventory upsert failed: ${error?.message || error}`);
     }
   }
   upsertInventoryQuantity(deviceId, locationId, quantity);
@@ -7099,10 +7045,7 @@ async function getInventoryQuantityRuntime(deviceId, locationId) {
     try {
       return await getInventoryQuantityPostgres(deviceId, locationId);
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres inventory quantity query failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] inventory-quantity fallback: ${error?.message || error}`);
+      throw new Error(`Postgres inventory quantity query failed: ${error?.message || error}`);
     }
   }
   return getInventoryQuantity(deviceId, locationId);
@@ -7137,10 +7080,7 @@ async function addInventoryEventRuntime(payload) {
       await addInventoryEventPostgres(payload);
       return;
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres inventory event write failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-write] inventory-event fallback: ${error?.message || error}`);
+      throw new Error(`Postgres inventory event write failed: ${error?.message || error}`);
     }
   }
   addInventoryEvent(payload);
@@ -7158,10 +7098,7 @@ async function getDeviceExistsRuntime(deviceId) {
       );
       return result.rows?.[0] || null;
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres device lookup failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] device-exists fallback: ${error?.message || error}`);
+      throw new Error(`Postgres device lookup failed: ${error?.message || error}`);
     }
   }
   return getDeviceExists(deviceId);
@@ -7179,10 +7116,7 @@ async function getLocationExistsRuntime(locationId) {
       );
       return result.rows?.[0] || null;
     } catch (error) {
-      if (POSTGRES_STRICT_RUNTIME) {
-        throw new Error(`Postgres location lookup failed: ${error?.message || error}`);
-      }
-      console.error(`[postgres-read] location-exists fallback: ${error?.message || error}`);
+      throw new Error(`Postgres location lookup failed: ${error?.message || error}`);
     }
   }
   return getLocationExists(locationId);
