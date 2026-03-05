@@ -4929,6 +4929,61 @@ async function clearCatalogDataRuntime() {
   return clearCatalogData();
 }
 
+async function getCatalogDebugCountsRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const [
+      devicesRes,
+      activeRes,
+      joinableRes,
+      invRes,
+      rawRes,
+      manuRes,
+      catRes
+    ] = await Promise.all([
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")}`),
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")} WHERE is_active = 1`),
+      pgClient.query(`
+        SELECT COUNT(*)::bigint AS count
+        FROM ${postgresTableRef("devices")} d
+        JOIN ${postgresTableRef("manufacturers")} m ON m.id = d.manufacturer_id
+        JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+      `),
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("device_inventory")}`),
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("boomi_inventory_raw")}`),
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("manufacturers")}`),
+      pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("categories")}`)
+    ]);
+    return {
+      engine: "postgres",
+      devices: Number(devicesRes.rows?.[0]?.count || 0),
+      activeDevices: Number(activeRes.rows?.[0]?.count || 0),
+      joinableDevices: Number(joinableRes.rows?.[0]?.count || 0),
+      inventoryRows: Number(invRes.rows?.[0]?.count || 0),
+      boomiRawRows: Number(rawRes.rows?.[0]?.count || 0),
+      manufacturers: Number(manuRes.rows?.[0]?.count || 0),
+      categories: Number(catRes.rows?.[0]?.count || 0)
+    };
+  }
+
+  return {
+    engine: "sqlite",
+    devices: Number(db.prepare("SELECT COUNT(*) AS count FROM devices").get().count || 0),
+    activeDevices: Number(db.prepare("SELECT COUNT(*) AS count FROM devices WHERE is_active = 1").get().count || 0),
+    joinableDevices: Number(
+      db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM devices d
+        JOIN manufacturers m ON m.id = d.manufacturer_id
+        JOIN categories c ON c.id = d.category_id
+      `).get().count || 0
+    ),
+    inventoryRows: Number(db.prepare("SELECT COUNT(*) AS count FROM device_inventory").get().count || 0),
+    boomiRawRows: Number(db.prepare("SELECT COUNT(*) AS count FROM boomi_inventory_raw").get().count || 0),
+    manufacturers: Number(db.prepare("SELECT COUNT(*) AS count FROM manufacturers").get().count || 0),
+    categories: Number(db.prepare("SELECT COUNT(*) AS count FROM categories").get().count || 0)
+  };
+}
+
 async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
   const nextValue = weeklySpecial ? 1 : 0;
   if (effectiveDbEngine === "postgres" && pgClient) {
@@ -7998,6 +8053,13 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const before = await clearCatalogDataRuntime();
       json(req, res, 200, { ok: true, removedDevices: before.devices, removedRawRows: before.raw });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/catalog/debug-counts") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      json(req, res, 200, { ok: true, ...(await getCatalogDebugCountsRuntime()) });
       return;
     }
 
