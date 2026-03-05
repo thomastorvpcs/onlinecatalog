@@ -5995,9 +5995,9 @@ async function upsertDeviceInventoryPostgres(rows) {
     const deleteMarks = [];
     for (const row of chunk) {
       values.push(row.deviceId, row.locationId, row.quantity);
-      marks.push(`($${values.length - 2}, $${values.length - 1}, $${values.length})`);
+      marks.push(`($${values.length - 2}::text, $${values.length - 1}::bigint, $${values.length}::bigint)`);
       deleteValues.push(row.deviceId, row.locationId);
-      deleteMarks.push(`($${deleteValues.length - 1}, $${deleteValues.length})`);
+      deleteMarks.push(`($${deleteValues.length - 1}::text, $${deleteValues.length}::bigint)`);
     }
     await pgClient.query(
       `
