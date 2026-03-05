@@ -1024,6 +1024,29 @@ function resolveStoredLocationNames(regionFilters) {
   return [...resolved];
 }
 
+async function resolveStoredLocationNamesPostgres(regionFilters) {
+  const targets = new Set((Array.isArray(regionFilters) ? regionFilters : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean));
+  if (!targets.size) return [];
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return resolveStoredLocationNames(regionFilters);
+  }
+  const rowsRes = await pgClient.query(
+    `SELECT name, external_id AS "externalId" FROM ${postgresTableRef("locations")} ORDER BY id`
+  );
+  const rows = Array.isArray(rowsRes.rows) ? rowsRes.rows : [];
+  const resolved = new Set();
+  for (const row of rows) {
+    const storedName = String(row.name || "").trim();
+    const displayName = getDisplayLocationName(storedName, row.externalId);
+    if (targets.has(storedName) || targets.has(displayName)) {
+      resolved.add(storedName);
+    }
+  }
+  return [...resolved];
+}
+
 function initDb() {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(schemaPath, "utf8"));
@@ -3028,7 +3051,7 @@ async function getDevicesPostgres(url) {
   addArrayFilter("d.storage_capacity", storages);
 
   if (regions.length) {
-    const storedRegionNames = resolveStoredLocationNames(regions);
+    const storedRegionNames = await resolveStoredLocationNamesPostgres(regions);
     if (!storedRegionNames.length) {
       filters.push("1 = 0");
     } else {
