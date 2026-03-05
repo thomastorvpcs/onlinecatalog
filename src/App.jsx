@@ -3776,6 +3776,7 @@ export default function App() {
           return { value, isEnabled, isSelected };
         })
         .sort((a, b) => {
+          if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
           if (a.isEnabled !== b.isEnabled) return a.isEnabled ? -1 : 1;
           return String(a.value).localeCompare(String(b.value));
         });
