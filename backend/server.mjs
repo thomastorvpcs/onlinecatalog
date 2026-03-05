@@ -1443,6 +1443,142 @@ function seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw = 20)
   };
 }
 
+async function seedHistoricalCompletedEstimatesForUserRuntime(targetUserIdRaw, countRaw = 20) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw);
+  }
+  const targetUserId = Number(targetUserIdRaw);
+  if (!Number.isInteger(targetUserId) || targetUserId < 1) {
+    throw new Error("Valid targetUserId is required.");
+  }
+  const count = Math.max(1, Math.min(100, Math.floor(Number(countRaw || 20))));
+  const userRes = await pgClient.query(
+    `SELECT id, email, company FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`,
+    [targetUserId]
+  );
+  const targetUser = userRes.rows?.[0];
+  if (!targetUser?.id) {
+    throw new Error("User not found.");
+  }
+  const devicesRes = await pgClient.query(`
+    SELECT
+      d.id,
+      d.model_name AS model,
+      d.grade,
+      d.base_price AS price,
+      c.name AS category
+    FROM ${postgresTableRef("devices")} d
+    JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+    WHERE d.is_active = 1
+    ORDER BY c.name ASC, d.model_name ASC
+  `);
+  const deviceRows = devicesRes.rows || [];
+  if (!deviceRows.length) {
+    throw new Error("No active devices available for seeding.");
+  }
+  const byCategory = new Map();
+  for (const row of deviceRows) {
+    const key = String(row.category || "Other");
+    const list = byCategory.get(key) || [];
+    list.push(row);
+    byCategory.set(key, list);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) => a.localeCompare(b));
+  if (!categories.length) {
+    throw new Error("No categories available for seeding.");
+  }
+
+  let created = 0;
+  await pgClient.query("BEGIN");
+  try {
+    for (let i = 0; i < count; i += 1) {
+      const requestId = `usrhist-${targetUser.id}-${randomBytes(8).toString("hex")}`;
+      const requestNumber = await getNextRequestNumberPostgres();
+      const estimateId = `usrhist-est-${randomBytes(8).toString("hex")}`;
+      const estimateNumber = await getNextDummyEstimateNumberPostgres();
+      const createdAt = new Date(Date.now() - ((count - i + 3) * 24 * 60 * 60 * 1000)).toISOString();
+      const lineCount = 3 + ((i + Number(targetUser.id)) % 3);
+      const lines = [];
+      let total = 0;
+
+      for (let j = 0; j < lineCount; j += 1) {
+        const categoryName = categories[(i + j) % categories.length];
+        const list = byCategory.get(categoryName) || deviceRows;
+        const device = list[(i * 7 + j * 11 + Number(targetUser.id)) % list.length];
+        const quantity = 50 + ((i * 13 + j * 19 + Number(targetUser.id)) % 120);
+        const multiplier = 0.64 + (((i + j + Number(targetUser.id)) % 8) * 0.05);
+        const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+        total += quantity * offerPrice;
+        lines.push({
+          deviceId: device.id,
+          model: device.model,
+          grade: device.grade || "A",
+          quantity,
+          offerPrice,
+          note: `Admin seeded history (${categoryName}).`
+        });
+      }
+      total = Number(total.toFixed(2));
+
+      await pgClient.query(
+        `
+          INSERT INTO ${postgresTableRef("quote_requests")} (
+            id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code,
+            netsuite_estimate_id, netsuite_estimate_number, netsuite_status, netsuite_last_sync_at, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, 'Completed', $6, 'USD', $7, $8, 'Completed', $9, $10, $11)
+        `,
+        [
+          requestId,
+          requestNumber,
+          targetUser.company || "PCSWW",
+          targetUser.id,
+          targetUser.email,
+          total,
+          estimateId,
+          estimateNumber,
+          createdAt,
+          createdAt,
+          createdAt
+        ]
+      );
+
+      for (const line of lines) {
+        await pgClient.query(
+          `
+            INSERT INTO ${postgresTableRef("quote_request_lines")} (
+              request_id, device_id, model, grade, quantity, offer_price, note
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `,
+          [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note]
+        );
+      }
+      await pgClient.query(
+        `
+          INSERT INTO ${postgresTableRef("quote_request_events")} (request_id, event_type, payload_json, created_at)
+          VALUES ($1, 'admin_seeded_history', $2, $3)
+        `,
+        [requestId, JSON.stringify({ seededByAdmin: true, lineCount: lines.length, total, targetUserId: targetUser.id }), createdAt]
+      );
+      created += 1;
+    }
+
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    ok: true,
+    created,
+    targetUser: {
+      id: Number(targetUser.id),
+      email: targetUser.email,
+      company: targetUser.company
+    }
+  };
+}
+
 function splitCsv(value) {
   if (!value) return [];
   return value
@@ -3160,6 +3296,97 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
   };
 }
 
+async function parseAiFiltersRuntime(promptRaw, selectedCategoryRaw = "") {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return parseAiFilters(promptRaw, selectedCategoryRaw);
+  }
+  const prompt = String(promptRaw || "").trim();
+  if (!prompt) {
+    return {
+      selectedCategory: selectedCategoryRaw || "__ALL__",
+      search: "",
+      filters: {},
+      warnings: ["Enter a prompt to parse filters."]
+    };
+  }
+  const text = prompt.toLowerCase();
+  const categoriesRes = await pgClient.query(`SELECT name FROM ${postgresTableRef("categories")} ORDER BY id`);
+  const manufacturersRes = await pgClient.query(`SELECT name FROM ${postgresTableRef("manufacturers")} ORDER BY name`);
+  const modelFamiliesRes = await pgClient.query(`SELECT DISTINCT model_family AS name FROM ${postgresTableRef("devices")} WHERE is_active = 1 ORDER BY model_family`);
+  const modelFamilyCategoryRes = await pgClient.query(`
+    SELECT DISTINCT d.model_family AS family, c.name AS category
+    FROM ${postgresTableRef("devices")} d
+    JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+    WHERE d.is_active = 1
+  `);
+  const storagesRes = await pgClient.query(`SELECT DISTINCT storage_capacity AS name FROM ${postgresTableRef("devices")} WHERE is_active = 1 ORDER BY storage_capacity`);
+  const regionsRes = await pgClient.query(`SELECT DISTINCT name, external_id AS "externalId" FROM ${postgresTableRef("locations")} ORDER BY name`);
+
+  const categories = (categoriesRes.rows || []).map((r) => r.name);
+  const manufacturers = (manufacturersRes.rows || []).map((r) => r.name);
+  const modelFamilies = (modelFamiliesRes.rows || []).map((r) => r.name);
+  const modelFamilyToCategory = new Map(
+    (modelFamilyCategoryRes.rows || [])
+      .map((row) => [String(row.family || "").toLowerCase(), String(row.category || "").trim()])
+      .filter(([family, category]) => family && category)
+  );
+  const storages = (storagesRes.rows || []).map((r) => r.name);
+  const regions = [...new Set(
+    (regionsRes.rows || [])
+      .map((row) => getDisplayLocationName(row.name, row.externalId))
+      .filter(Boolean)
+  )].sort((a, b) => String(a).localeCompare(String(b)));
+  const filters = {};
+  const warnings = [];
+
+  const allCategoryRequested = /\b(all categories|across categories|across all categories|any category|all device categories|all devices)\b/i.test(prompt);
+  const categoryByMatch = categories.find((name) => text.includes(String(name).toLowerCase()))
+    || (/\bsmart\s?phones?\b|\bphones?\b/.test(text) ? "Smartphones" : "")
+    || (text.includes("tablet") ? "Tablets" : "")
+    || (/\blaptop\b|\bnotebook\b/.test(text) ? "Laptops" : "")
+    || (text.includes("wear") || text.includes("watch") ? "Wearables" : "")
+    || (text.includes("accessor") ? "Accessories" : "");
+  const categoryByModelFamily = [...modelFamilyToCategory.entries()].find(([family]) => family && text.includes(family))?.[1] || "";
+  const categoryByKeyword = (/\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b/.test(text) ? "Laptops" : "")
+    || (/\bipad\b|\bgalaxy tab\b/.test(text) ? "Tablets" : "")
+    || (/\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b/.test(text) ? "Wearables" : "")
+    || (/\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\baccessor(y|ies)\b/.test(text) ? "Accessories" : "")
+    || (/\biphone\b|\bgalaxy\b|\bpixel\b/.test(text) ? "Smartphones" : "");
+  const selectedCategory = allCategoryRequested
+    ? "__ALL__"
+    : (categoryByMatch || categoryByModelFamily || categoryByKeyword || selectedCategoryRaw || "__ALL__");
+
+  const matchedManufacturers = manufacturers.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedManufacturers.length) filters.manufacturer = matchedManufacturers;
+
+  const matchedModels = modelFamilies.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedModels.length) filters.modelFamily = matchedModels.slice(0, 8);
+
+  const gradeMatches = [];
+  if (/\bcpo\b/i.test(prompt)) gradeMatches.push("CPO");
+  if (/\bgrade\s*a\b/i.test(prompt)) gradeMatches.push("A");
+  if (/\bgrade\s*b\b/i.test(prompt)) gradeMatches.push("B");
+  if (/\bgrade\s*c\b/i.test(prompt)) gradeMatches.push("C");
+  if (gradeMatches.length) filters.grade = [...new Set(gradeMatches)];
+
+  const matchedRegions = regions.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedRegions.length) filters.region = matchedRegions;
+
+  const matchedStorages = storages.filter((name) => text.includes(String(name).toLowerCase()));
+  if (matchedStorages.length) filters.storage = matchedStorages;
+
+  const priceHintMatch = prompt.match(/\$?\s*(\d{2,6})(?:\s*usd|\s*dollars?)?/i);
+  if (priceHintMatch) warnings.push("Price constraints were detected but not auto-applied because price filter is not configured.");
+
+  const usedStructured = Object.keys(filters).length > 0;
+  return {
+    selectedCategory,
+    search: usedStructured ? "" : prompt,
+    filters,
+    warnings
+  };
+}
+
 function resolveCopilotSelectedCategoryContext(messageRaw, selectedCategoryRaw) {
   const selectedCategory = String(selectedCategoryRaw || "").trim() || "__ALL__";
   const message = String(messageRaw || "").trim();
@@ -4700,111 +4927,6 @@ async function clearCatalogDataRuntime() {
   return clearCatalogData();
 }
 
-function applyCatalogImageMappings() {
-  const familyRows = db.prepare("SELECT model_family, COUNT(*) AS count FROM devices GROUP BY model_family ORDER BY model_family").all();
-  const existingFamilies = new Set(familyRows.map((r) => r.model_family));
-  const mappedFamilies = Object.keys(MODEL_IMAGE_MAP).filter((family) => existingFamilies.has(family));
-  const unmatchedFamilies = [...existingFamilies].filter((family) => !MODEL_IMAGE_MAP[family]);
-
-  const updateDevice = db.prepare("UPDATE devices SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE model_family = ?");
-  const selectIds = db.prepare("SELECT id FROM devices WHERE model_family = ?");
-  const deleteImages = db.prepare("DELETE FROM device_images WHERE device_id = ?");
-  const insertImage = db.prepare("INSERT INTO device_images (device_id, image_url, sort_order) VALUES (?, ?, 0)");
-
-  let updatedFamilies = 0;
-  let updatedDeviceRows = 0;
-
-  db.exec("BEGIN TRANSACTION");
-  try {
-    for (const family of mappedFamilies) {
-      const imageUrl = MODEL_IMAGE_MAP[family];
-      const updateResult = updateDevice.run(imageUrl, family);
-      if (!updateResult.changes) continue;
-      updatedFamilies += 1;
-      const ids = selectIds.all(family);
-      for (const row of ids) {
-        deleteImages.run(row.id);
-        insertImage.run(row.id, imageUrl);
-        updatedDeviceRows += 1;
-      }
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  return {
-    mappedFamilies: mappedFamilies.length,
-    updatedFamilies,
-    updatedDeviceRows,
-    unmatchedFamilies
-  };
-}
-
-async function applyCatalogImageMappingsPostgres() {
-  if (!pgClient) return applyCatalogImageMappings();
-  const familyRowsResult = await pgClient.query(`
-    SELECT model_family, COUNT(*)::bigint AS count
-    FROM ${postgresTableRef("devices")}
-    GROUP BY model_family
-    ORDER BY model_family
-  `);
-  const existingFamilies = new Set((familyRowsResult.rows || []).map((r) => r.model_family));
-  const mappedFamilies = Object.keys(MODEL_IMAGE_MAP).filter((family) => existingFamilies.has(family));
-  const unmatchedFamilies = [...existingFamilies].filter((family) => !MODEL_IMAGE_MAP[family]);
-
-  let updatedFamilies = 0;
-  let updatedDeviceRows = 0;
-
-  await pgClient.query("BEGIN");
-  try {
-    for (const family of mappedFamilies) {
-      const imageUrl = MODEL_IMAGE_MAP[family];
-      const updateResult = await pgClient.query(
-        `UPDATE ${postgresTableRef("devices")} SET image_url = $1, updated_at = CURRENT_TIMESTAMP WHERE model_family = $2`,
-        [imageUrl, family]
-      );
-      if (!updateResult.rowCount) continue;
-      updatedFamilies += 1;
-      const idsResult = await pgClient.query(
-        `SELECT id FROM ${postgresTableRef("devices")} WHERE model_family = $1`,
-        [family]
-      );
-      for (const row of (idsResult.rows || [])) {
-        await pgClient.query(`DELETE FROM ${postgresTableRef("device_images")} WHERE device_id = $1`, [row.id]);
-        await pgClient.query(
-          `INSERT INTO ${postgresTableRef("device_images")} (device_id, image_url, sort_order) VALUES ($1, $2, 0)`,
-          [row.id, imageUrl]
-        );
-        updatedDeviceRows += 1;
-      }
-    }
-    await pgClient.query("COMMIT");
-  } catch (error) {
-    await pgClient.query("ROLLBACK");
-    throw error;
-  }
-
-  return {
-    mappedFamilies: mappedFamilies.length,
-    updatedFamilies,
-    updatedDeviceRows,
-    unmatchedFamilies
-  };
-}
-
-async function applyCatalogImageMappingsRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
-    try {
-      return await applyCatalogImageMappingsPostgres();
-    } catch (error) {
-      console.error(`[postgres-write] /api/admin/catalog/apply-image-mapping fallback: ${error?.message || error}`);
-    }
-  }
-  return applyCatalogImageMappings();
-}
-
 async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
   const nextValue = weeklySpecial ? 1 : 0;
   if (effectiveDbEngine === "postgres" && pgClient) {
@@ -4831,100 +4953,6 @@ async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
   const result = db.prepare("UPDATE devices SET weekly_special = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .run(nextValue, deviceId);
   return Number(result?.changes || 0);
-}
-
-function seedAdminTestDevicesPerCategory(countPerCategory) {
-  const categories = db.prepare("SELECT id, name FROM categories").all();
-  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
-  const locations = db.prepare("SELECT id FROM locations ORDER BY id").all().map((l) => l.id);
-  const manufacturerByName = new Map(
-    db.prepare("SELECT id, name FROM manufacturers").all().map((m) => [m.name, m.id])
-  );
-  const ensureManufacturer = db.prepare("INSERT INTO manufacturers (name) VALUES (?)");
-  const config = [
-    { name: "Smartphones", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["iPhone 15", "iPhone 15 Pro", "Galaxy S24", "Pixel 8"], storages: ["128GB", "256GB", "512GB"], colors: ["Black", "Blue", "Gray", "Silver"], basePrice: 420 },
-    { name: "Tablets", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["iPad Pro 11", "iPad Air 11", "Galaxy Tab S9", "Pixel Tablet"], storages: ["64GB", "128GB", "256GB"], colors: ["Gray", "Blue", "Silver"], basePrice: 260 },
-    { name: "Laptops", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["MacBook Air 13", "MacBook Pro 14", "Galaxy Book4 Pro", "ThinkPad X1 Carbon"], storages: ["256GB", "512GB", "1TB"], colors: ["Black", "Gray", "Silver"], basePrice: 740 },
-    { name: "Wearables", manufacturers: ["Apple", "Samsung", "Google"], models: ["Apple Watch Series 9", "Watch Ultra 2", "Galaxy Watch 6", "Pixel Watch 2"], storages: ["32GB", "64GB"], colors: ["Black", "Blue", "Silver"], basePrice: 180 },
-    { name: "Accessories", manufacturers: ["Apple", "Samsung", "Google", "Lenovo"], models: ["AirPods Pro", "Galaxy Buds2 Pro", "65W USB-C Charger", "Wireless Mouse"], storages: ["N/A"], colors: ["Black", "White", "Blue"], basePrice: 45 }
-  ];
-
-  const deviceInsert = db.prepare(`
-    INSERT INTO devices (
-      id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
-      image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1)
-  `);
-  const inventoryInsert = db.prepare(`
-    INSERT INTO device_inventory (device_id, location_id, quantity)
-    VALUES (?, ?, ?)
-  `);
-  const imageInsert = db.prepare(`
-    INSERT INTO device_images (device_id, image_url, sort_order)
-    VALUES (?, ?, ?)
-  `);
-
-  db.exec("BEGIN TRANSACTION");
-  try {
-    db.exec("DELETE FROM devices WHERE id LIKE 'admintest-%'");
-    for (const cfg of config) {
-      const categoryId = categoryByName.get(cfg.name);
-      if (!categoryId) continue;
-      for (let i = 0; i < countPerCategory; i += 1) {
-        const manufacturerName = cfg.manufacturers[i % cfg.manufacturers.length];
-        let manufacturerId = manufacturerByName.get(manufacturerName);
-        if (!manufacturerId) {
-          manufacturerId = Number(ensureManufacturer.run(manufacturerName).lastInsertRowid);
-          manufacturerByName.set(manufacturerName, manufacturerId);
-        }
-        const modelFamily = cfg.models[i % cfg.models.length];
-        const storage = cfg.storages[i % cfg.storages.length];
-        const color = cfg.colors[i % cfg.colors.length];
-        const defaultLocationId = locations[i % locations.length];
-        const id = `admintest-${cfg.name.toLowerCase()}-${String(i + 1).padStart(4, "0")}`;
-        const modelName = storage === "N/A" ? `${modelFamily} - ${color}` : `${modelFamily} ${storage} - ${color}`;
-        const price = Number((cfg.basePrice + (i % 15)).toFixed(2));
-        const carrier = cfg.name === "Accessories" ? "Bluetooth" : (cfg.name === "Laptops" || cfg.name === "Tablets" ? "WiFi" : "Unlocked");
-        const screenSize = cfg.name === "Wearables" ? "47 mm" : cfg.name === "Tablets" ? "11 inches" : cfg.name === "Laptops" ? "14 inches" : (cfg.name === "Accessories" ? "N/A" : "6.1 inches");
-        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
-
-        deviceInsert.run(
-          id,
-          manufacturerId,
-          categoryId,
-          modelName,
-          modelFamily,
-          storage,
-          "A",
-          price,
-          carrier,
-          screenSize,
-          "No",
-          color,
-          kitType,
-          `Admin test device for ${cfg.name}.`,
-          defaultLocationId
-        );
-
-        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
-          const qty = 10 + ((i * 7 + locIdx * 11) % 120);
-          inventoryInsert.run(id, locations[locIdx], qty);
-        }
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-1/900/700`, 1);
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-2/900/700`, 2);
-        imageInsert.run(id, `https://picsum.photos/seed/${id}-3/900/700`, 3);
-      }
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  return {
-    categoriesSeeded: config.length,
-    countPerCategory
-  };
 }
 
 function seedAdminRealDevicesPerCategory(countPerCategory) {
@@ -7455,7 +7483,7 @@ const server = createServer(async (req, res) => {
       const body = await parseBody(req);
       const count = Number(body?.count || 20);
       try {
-        const result = seedHistoricalCompletedEstimatesForUser(targetUserId, count);
+        const result = await seedHistoricalCompletedEstimatesForUserRuntime(targetUserId, count);
         json(req, res, 200, result);
       } catch (error) {
         const message = String(error?.message || "Failed to seed historical estimates.");
@@ -7492,7 +7520,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      json(req, res, 200, parseAiFilters(body.prompt, body.selectedCategory));
+      json(req, res, 200, await parseAiFiltersRuntime(body.prompt, body.selectedCategory));
       return;
     }
 
