@@ -3581,7 +3581,7 @@ export default function App() {
           });
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        await new Promise((resolve) => setTimeout(resolve, 700));
       }
       throw new Error("Sync timed out while waiting for completion.");
     } catch (error) {
@@ -4289,11 +4289,13 @@ export default function App() {
                 <h3 style={{ margin: "0 0 8px" }}>Inventory Sync</h3>
                 <p className="small" style={{ marginTop: 0 }}>Fetch and map inventory from Boomi/NetSuite into the local database.</p>
                 <button type="button" style={{ width: "auto" }} disabled={syncLoading} onClick={triggerBoomiSync}>
-                  {syncLoading ? `Syncing... ${String(syncStatus?.stage || "starting")}` : "Sync Boomi Inventory"}
+                  {syncLoading
+                    ? `Syncing... ${String(syncStatus?.stage || "starting")} (${Math.round(((Number(syncStatus?.processed || 0) + Number(syncStatus?.skipped || 0)) / Math.max(1, Number(syncStatus?.fetched || 0))) * 100)}%)`
+                    : "Sync Boomi Inventory"}
                 </button>
                 {syncLoading && syncStatus ? (
                   <p className="small" style={{ marginTop: 8 }}>
-                    Stage: {String(syncStatus.stage || "starting")}. Fetched: {Number(syncStatus.fetched || 0)}, Processed: {Number(syncStatus.processed || 0)}, Skipped: {Number(syncStatus.skipped || 0)}.
+                    Stage: {String(syncStatus.stage || "starting")}. Progress: {Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)} / {Math.max(1, Number(syncStatus.fetched || 0))} ({Math.round(((Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)) / Math.max(1, Number(syncStatus.fetched || 0))) * 100)}%). Processed: {Number(syncStatus.processed || 0)}, Skipped: {Number(syncStatus.skipped || 0)}.
                   </p>
                 ) : null}
                 {syncResult ? (

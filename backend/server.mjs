@@ -562,6 +562,7 @@ const boomiSyncJob = {
   processed: 0,
   skipped: 0
 };
+const BOOMI_SYNC_PROGRESS_EVERY = Math.max(1, Number.parseInt(String(process.env.BOOMI_SYNC_PROGRESS_EVERY || "25"), 10) || 25);
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
@@ -5455,7 +5456,10 @@ function startBoomiSyncJob() {
       const rows = await fetchBoomiInventory();
       boomiSyncJob.fetched = Number(rows?.length || 0);
       boomiSyncJob.stage = "processing";
-      const { processed, skipped } = await syncBoomiInventoryRowsRuntime(rows);
+      const { processed, skipped } = await syncBoomiInventoryRowsRuntime(rows, (progress) => {
+        boomiSyncJob.processed = Number(progress?.processed || 0);
+        boomiSyncJob.skipped = Number(progress?.skipped || 0);
+      });
       boomiSyncJob.processed = Number(processed || 0);
       boomiSyncJob.skipped = Number(skipped || 0);
       boomiSyncJob.stage = "completed";
@@ -5739,7 +5743,7 @@ function extractBoomiRowsFromPayload(payload) {
   return null;
 }
 
-function syncBoomiInventoryRows(rows) {
+function syncBoomiInventoryRows(rows, progressCallback = null) {
   const getCategoryId = db.prepare("SELECT id FROM categories WHERE name = ?");
   const insertCategory = db.prepare("INSERT INTO categories (name) VALUES (?)");
   const getManufacturerId = db.prepare("SELECT id FROM manufacturers WHERE name = ?");
@@ -5789,6 +5793,13 @@ function syncBoomiInventoryRows(rows) {
 
   let processed = 0;
   let skipped = 0;
+  const total = Array.isArray(rows) ? rows.length : 0;
+  const publishProgress = (force = false) => {
+    if (typeof progressCallback !== "function") return;
+    const completed = processed + skipped;
+    if (!force && completed % BOOMI_SYNC_PROGRESS_EVERY !== 0) return;
+    progressCallback({ processed, skipped, total });
+  };
   db.exec("BEGIN TRANSACTION");
   try {
     for (const row of rows) {
@@ -5809,6 +5820,7 @@ function syncBoomiInventoryRows(rows) {
 
       if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
         skipped += 1;
+        publishProgress();
         continue;
       }
 
@@ -5875,12 +5887,14 @@ function syncBoomiInventoryRows(rows) {
       }
 
       processed += 1;
+      publishProgress();
     }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+  publishProgress(true);
 
   return { processed, skipped };
 }
@@ -5933,10 +5947,55 @@ async function getOrCreateLocationByExternalIdPostgres(externalId, fallbackName)
   }
 }
 
-async function syncBoomiInventoryRowsPostgres(rows) {
-  if (!pgClient) return syncBoomiInventoryRows(rows);
+async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
+  if (!pgClient) return syncBoomiInventoryRows(rows, progressCallback);
+  const total = Array.isArray(rows) ? rows.length : 0;
   let processed = 0;
   let skipped = 0;
+  const publishProgress = (force = false) => {
+    if (typeof progressCallback !== "function") return;
+    const completed = processed + skipped;
+    if (!force && completed % BOOMI_SYNC_PROGRESS_EVERY !== 0) return;
+    progressCallback({ processed, skipped, total });
+  };
+  const manufacturerIdCache = new Map();
+  const categoryIdCache = new Map();
+  const locationIdCache = new Map();
+  const existingDeviceIdCache = new Map();
+
+  const preloadManufacturerNames = [...new Set(rows.map((row) => toTitleCase(String(row?.manufacturer || "").trim())).filter(Boolean))];
+  const preloadCategoryNames = [...new Set(rows.map((row) => inferCategoryFromBoomi(row)).filter(Boolean))];
+  const preloadLocationExternalIds = [...new Set(rows.map((row) => String(row?.location_id || "").trim()).filter(Boolean))];
+  const preloadSourceExternalIds = [...new Set(rows.map((row) => String(row?.id || "").trim()).filter(Boolean))];
+  if (preloadManufacturerNames.length) {
+    const res = await pgClient.query(
+      `SELECT id, name FROM ${postgresTableRef("manufacturers")} WHERE name = ANY($1::text[])`,
+      [preloadManufacturerNames]
+    );
+    for (const row of (res.rows || [])) manufacturerIdCache.set(String(row.name || ""), Number(row.id));
+  }
+  if (preloadCategoryNames.length) {
+    const res = await pgClient.query(
+      `SELECT id, name FROM ${postgresTableRef("categories")} WHERE name = ANY($1::text[])`,
+      [preloadCategoryNames]
+    );
+    for (const row of (res.rows || [])) categoryIdCache.set(String(row.name || ""), Number(row.id));
+  }
+  if (preloadLocationExternalIds.length) {
+    const res = await pgClient.query(
+      `SELECT id, external_id AS "externalId" FROM ${postgresTableRef("locations")} WHERE external_id = ANY($1::text[])`,
+      [preloadLocationExternalIds]
+    );
+    for (const row of (res.rows || [])) locationIdCache.set(String(row.externalId || ""), Number(row.id));
+  }
+  if (preloadSourceExternalIds.length) {
+    const res = await pgClient.query(
+      `SELECT id, source_external_id AS "sourceExternalId" FROM ${postgresTableRef("devices")} WHERE source_external_id = ANY($1::text[])`,
+      [preloadSourceExternalIds]
+    );
+    for (const row of (res.rows || [])) existingDeviceIdCache.set(String(row.sourceExternalId || ""), String(row.id || ""));
+  }
+
   await pgClient.query("BEGIN");
   try {
     for (const row of rows) {
@@ -5957,6 +6016,7 @@ async function syncBoomiInventoryRowsPostgres(rows) {
 
       if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
         skipped += 1;
+        publishProgress();
         continue;
       }
 
@@ -5986,12 +6046,25 @@ async function syncBoomiInventoryRowsPostgres(rows) {
       );
 
       const manufacturerName = toTitleCase(manufacturerRaw);
-      const manufacturerId = await getOrCreateByNamePostgres("manufacturers", manufacturerName);
+      let manufacturerId = Number(manufacturerIdCache.get(manufacturerName) || 0);
+      if (!manufacturerId) {
+        manufacturerId = Number(await getOrCreateByNamePostgres("manufacturers", manufacturerName) || 0);
+        if (manufacturerId) manufacturerIdCache.set(manufacturerName, manufacturerId);
+      }
       const categoryName = inferCategoryFromBoomi(row);
-      const categoryId = await getOrCreateByNamePostgres("categories", categoryName);
-      const locationId = await getOrCreateLocationByExternalIdPostgres(sourceLocationId, `${countryCode} Location ${sourceLocationId}`);
+      let categoryId = Number(categoryIdCache.get(categoryName) || 0);
+      if (!categoryId) {
+        categoryId = Number(await getOrCreateByNamePostgres("categories", categoryName) || 0);
+        if (categoryId) categoryIdCache.set(categoryName, categoryId);
+      }
+      let locationId = Number(locationIdCache.get(sourceLocationId) || 0);
+      if (!locationId) {
+        locationId = Number(await getOrCreateLocationByExternalIdPostgres(sourceLocationId, `${countryCode} Location ${sourceLocationId}`) || 0);
+        if (locationId) locationIdCache.set(sourceLocationId, locationId);
+      }
       if (!manufacturerId || !categoryId || !locationId) {
         skipped += 1;
+        publishProgress();
         continue;
       }
 
@@ -6002,11 +6075,7 @@ async function syncBoomiInventoryRowsPostgres(rows) {
       const modelWithStorage = hasStorageInModel || storageUpper === "N/A" ? modelRaw : `${modelRaw} ${storage}`;
       const modelName = colorRaw ? `${modelWithStorage} - ${toTitleCase(colorRaw)}` : modelWithStorage;
 
-      const existingDeviceRes = await pgClient.query(
-        `SELECT id FROM ${postgresTableRef("devices")} WHERE source_external_id = $1 LIMIT 1`,
-        [sourceExternalId]
-      );
-      const existingDeviceId = String(existingDeviceRes.rows?.[0]?.id || "").trim();
+      const existingDeviceId = String(existingDeviceIdCache.get(sourceExternalId) || "").trim();
       const deviceId = existingDeviceId || `boomi-${sourceExternalId}`;
 
       await pgClient.query(
@@ -6085,24 +6154,26 @@ async function syncBoomiInventoryRowsPostgres(rows) {
       }
 
       processed += 1;
+      publishProgress();
     }
     await pgClient.query("COMMIT");
   } catch (error) {
     await pgClient.query("ROLLBACK");
     throw error;
   }
+  publishProgress(true);
   return { processed, skipped };
 }
 
-async function syncBoomiInventoryRowsRuntime(rows) {
+async function syncBoomiInventoryRowsRuntime(rows, progressCallback = null) {
   if (effectiveDbEngine === "postgres" && pgClient) {
     try {
-      return await syncBoomiInventoryRowsPostgres(rows);
+      return await syncBoomiInventoryRowsPostgres(rows, progressCallback);
     } catch (error) {
       console.error(`[postgres-write] boomi sync fallback: ${error?.message || error}`);
     }
   }
-  return syncBoomiInventoryRows(rows);
+  return syncBoomiInventoryRows(rows, progressCallback);
 }
 
 function isInteger(value) {
