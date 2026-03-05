@@ -3563,6 +3563,30 @@ function getDeviceQuantityByDisplayLocation(deviceId, displayLocationName) {
   return Number(row?.quantity || 0);
 }
 
+async function getDeviceQuantityByDisplayLocationRuntime(deviceId, displayLocationName) {
+  const normalizedDeviceId = String(deviceId || "").trim();
+  const normalizedDisplay = String(displayLocationName || "").trim();
+  if (!normalizedDeviceId || !normalizedDisplay) return 0;
+
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    const storedNames = await resolveStoredLocationNamesPostgres([normalizedDisplay]);
+    if (!storedNames.length) return 0;
+    const rowRes = await pgClient.query(
+      `
+      SELECT COALESCE(SUM(di.quantity), 0) AS quantity
+      FROM ${postgresTableRef("device_inventory")} di
+      JOIN ${postgresTableRef("locations")} l ON l.id = di.location_id
+      WHERE di.device_id::text = $1
+        AND l.name = ANY($2::text[])
+      `,
+      [normalizedDeviceId, storedNames]
+    );
+    return Number(rowRes.rows?.[0]?.quantity || 0);
+  }
+
+  return getDeviceQuantityByDisplayLocation(normalizedDeviceId, normalizedDisplay);
+}
+
 async function validateRequestWithAi(body) {
   const lines = Array.isArray(body?.lines) ? body.lines : [];
   const selectedLocation = String(body?.selectedLocation || "").trim();
@@ -3578,7 +3602,8 @@ async function validateRequestWithAi(body) {
     warnings.push({ code: "INVENTORY_SOURCE", message: netsuiteInventory.warning });
   }
 
-  lines.forEach((line, index) => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const quantity = Number(line.quantity);
     const offerPrice = Number(line.offerPrice);
     const model = String(line.model || "").trim();
@@ -3591,7 +3616,7 @@ async function validateRequestWithAi(body) {
     if (selectedLocation && deviceId) {
       const externalKey = `${deviceId}|${selectedLocation}`;
       const externalAvailable = netsuiteInventory.map.has(externalKey) ? Number(netsuiteInventory.map.get(externalKey)) : null;
-      const localAvailable = getDeviceQuantityByDisplayLocation(deviceId, selectedLocation);
+      const localAvailable = await getDeviceQuantityByDisplayLocationRuntime(deviceId, selectedLocation);
       const available = externalAvailable !== null ? externalAvailable : localAvailable;
       if (Number.isInteger(quantity) && quantity > available) {
         warnings.push({
@@ -3613,7 +3638,7 @@ async function validateRequestWithAi(body) {
         });
       }
     }
-  });
+  }
 
   if (!selectedLocation) {
     suggestions.push({ type: "SELECT_LOCATION", message: "Select an order location before submitting." });
