@@ -186,6 +186,7 @@ const DEFAULT_DEMO_BUYER_COMPANY = "PCSWW";
 const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
 const DEMO_SAVED_FILTERS_PREFIX = "pcs.demo.savedFilters.";
+const DEMO_CART_DRAFTS_PREFIX = "pcs.demo.cartDrafts.";
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
 const GRADE_DEFINITIONS = [
   {
@@ -436,6 +437,18 @@ function getDemoRequests(company) {
 
 function setDemoRequests(company, requests) {
   writeJson(localStorage, demoRequestsKey(company), requests);
+}
+
+function demoCartDraftsKey(userId) {
+  return `${DEMO_CART_DRAFTS_PREFIX}${Number(userId || 0)}`;
+}
+
+function getDemoCartDraft(userId) {
+  return readJson(localStorage, demoCartDraftsKey(userId), null);
+}
+
+function setDemoCartDraft(userId, draft) {
+  writeJson(localStorage, demoCartDraftsKey(userId), draft);
 }
 
 function demoSavedFiltersKey(userId, viewKey = "category") {
@@ -1216,6 +1229,50 @@ async function demoApiRequest(path, options = {}) {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
+  if (method === "GET" && pathname === "/api/cart-draft") {
+    const auth = requireAuth();
+    const draft = getDemoCartDraft(auth.id);
+    if (!draft) {
+      return { status: "active", lines: [], lineCount: 0, totalAmount: 0 };
+    }
+    return draft;
+  }
+
+  if (method === "PUT" && pathname === "/api/cart-draft") {
+    const auth = requireAuth();
+    const rawLines = Array.isArray(body.lines) ? body.lines : [];
+    const lines = rawLines
+      .map((line) => ({
+        productId: String(line.productId || line.deviceId || "").trim(),
+        model: String(line.model || "").trim(),
+        grade: String(line.grade || "").trim(),
+        quantity: Number(line.quantity || 0),
+        offerPrice: Number(line.offerPrice || 0),
+        note: String(line.note || "").trim()
+      }))
+      .filter((line) => line.model && line.grade && Number.isFinite(line.quantity) && line.quantity >= 1 && Number.isFinite(line.offerPrice) && line.offerPrice >= 0);
+    const totalAmount = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
+    const existing = getDemoCartDraft(auth.id);
+    const now = new Date().toISOString();
+    const next = {
+      id: Number(existing?.id || auth.id),
+      userId: auth.id,
+      company: auth.company,
+      email: auth.email,
+      status: "active",
+      lineCount: lines.length,
+      totalAmount,
+      lines,
+      lastActivityAt: now,
+      updatedAt: now,
+      createdAt: existing?.createdAt || now,
+      submittedAt: null,
+      submittedRequestId: null
+    };
+    setDemoCartDraft(auth.id, next);
+    return next;
+  }
+
   if (method === "POST" && pathname === "/api/requests") {
     const auth = requireAuth();
     const linesRaw = Array.isArray(body.lines) ? body.lines : [];
@@ -1259,7 +1316,33 @@ async function demoApiRequest(path, options = {}) {
       lines
     };
     setDemoRequests(auth.company, [...requests, request]);
+    const existingDraft = getDemoCartDraft(auth.id);
+    if (existingDraft) {
+      setDemoCartDraft(auth.id, {
+        ...existingDraft,
+        status: "submitted",
+        submittedRequestId: request.id,
+        submittedAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
     return request;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/cart-drafts") {
+    requireAdmin();
+    const users = getDemoUsers();
+    const drafts = users
+      .map((u) => {
+        const draft = getDemoCartDraft(u.id);
+        if (!draft) return null;
+        const fullName = [String(u.firstName || "").trim(), String(u.lastName || "").trim()].filter(Boolean).join(" ") || null;
+        return { ...draft, fullName, isActiveUser: u.isActive === true };
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.lastActivityAt || 0).getTime() - new Date(a.lastActivityAt || 0).getTime());
+    return drafts;
   }
 
   if (method === "POST" && pathname === "/api/integrations/netsuite/estimates/dummy") {
@@ -1657,6 +1740,9 @@ export default function App() {
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
   const [adminAiInsights, setAdminAiInsights] = useState(null);
   const [adminAiError, setAdminAiError] = useState("");
+  const [adminCartDraftsLoading, setAdminCartDraftsLoading] = useState(false);
+  const [adminCartDraftsError, setAdminCartDraftsError] = useState("");
+  const [adminCartDrafts, setAdminCartDrafts] = useState([]);
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
@@ -1668,6 +1754,8 @@ export default function App() {
   const aiCopilotPendingResultCheckRef = useRef(null);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
+  const cartLoadedFromBackendRef = useRef(false);
+  const cartDraftSyncTimerRef = useRef(null);
 
   const markAuth0LogoutRequested = () => {
     if (typeof window === "undefined") return;
@@ -2026,12 +2114,86 @@ export default function App() {
   }, [authToken, refreshToken, user]);
 
   useEffect(() => {
-    if (!cartKey) {
-      setCart([]);
-      return;
+    let ignore = false;
+    async function loadCartDraft() {
+      if (!cartKey || !user || !authToken) {
+        cartLoadedFromBackendRef.current = false;
+        setCart([]);
+        return;
+      }
+      const fallbackCart = readJson(sessionStorage, cartKey, []);
+      try {
+        const payload = await apiRequest("/api/cart-draft", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        const lines = Array.isArray(payload?.lines) ? payload.lines : [];
+        const next = lines.length
+          ? lines.map((line) => ({
+            id: crypto.randomUUID(),
+            productId: String(line.productId || line.deviceId || "").trim(),
+            model: String(line.model || "").trim(),
+            grade: String(line.grade || "").trim(),
+            quantity: Math.max(1, Math.floor(Number(line.quantity || 1))),
+            offerPrice: Number(line.offerPrice || 0),
+            note: String(line.note || "").trim()
+          }))
+          : fallbackCart;
+        if (!ignore) {
+          setCart(next);
+          if (cartKey) writeJson(sessionStorage, cartKey, next);
+          cartLoadedFromBackendRef.current = true;
+        }
+      } catch {
+        if (!ignore) {
+          setCart(fallbackCart);
+          cartLoadedFromBackendRef.current = true;
+        }
+      }
     }
-    setCart(readJson(sessionStorage, cartKey, []));
-  }, [cartKey]);
+    loadCartDraft();
+    return () => {
+      ignore = true;
+    };
+  }, [authToken, refreshToken, user, cartKey]);
+
+  useEffect(() => {
+    if (!user || !authToken || !cartLoadedFromBackendRef.current) return;
+    if (cartDraftSyncTimerRef.current) {
+      clearTimeout(cartDraftSyncTimerRef.current);
+    }
+    cartDraftSyncTimerRef.current = setTimeout(async () => {
+      try {
+        await apiRequest("/api/cart-draft", {
+          method: "PUT",
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState,
+          body: {
+            lines: cart.map((line) => ({
+              productId: line.productId,
+              model: line.model,
+              grade: line.grade,
+              quantity: Number(line.quantity || 0),
+              offerPrice: Number(line.offerPrice || 0),
+              note: line.note || ""
+            }))
+          }
+        });
+      } catch {
+        // best-effort telemetry save
+      }
+    }, 700);
+    return () => {
+      if (cartDraftSyncTimerRef.current) {
+        clearTimeout(cartDraftSyncTimerRef.current);
+        cartDraftSyncTimerRef.current = null;
+      }
+    };
+  }, [cart, authToken, refreshToken, user]);
 
   useEffect(() => {
     if (!requestPrefsKey) {
@@ -2548,6 +2710,11 @@ export default function App() {
     };
   }, [authToken, refreshToken, route, user]);
 
+  useEffect(() => {
+    if (route !== "users" || user?.role !== "admin" || !authToken) return;
+    loadAdminCartDrafts();
+  }, [route, user, authToken]);
+
   const refreshUsers = async () => {
     if (!user || user.role !== "admin") return;
     setUsersLoading(true);
@@ -2564,6 +2731,25 @@ export default function App() {
       setUsersError(error.message);
     } finally {
       setUsersLoading(false);
+    }
+  };
+
+  const loadAdminCartDrafts = async () => {
+    if (!user || user.role !== "admin" || !authToken) return;
+    setAdminCartDraftsLoading(true);
+    setAdminCartDraftsError("");
+    try {
+      const payload = await apiRequest("/api/admin/cart-drafts?limit=200", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setAdminCartDrafts(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setAdminCartDraftsError(error.message || "Failed to load cart tracking.");
+    } finally {
+      setAdminCartDraftsLoading(false);
     }
   };
 
@@ -4443,6 +4629,48 @@ export default function App() {
                 </div>
                 {historySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historySeedNotice}</p> : null}
                 {historyChatResetNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historyChatResetNotice}</p> : null}
+              </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Cart Tracking</h3>
+                <p className="small" style={{ marginTop: 0 }}>
+                  Track users with saved carts so sales can follow up before request submission.
+                </p>
+                <button type="button" style={{ width: "auto" }} onClick={loadAdminCartDrafts} disabled={adminCartDraftsLoading}>
+                  {adminCartDraftsLoading ? "Refreshing..." : "Refresh Cart Tracking"}
+                </button>
+                {adminCartDraftsError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{adminCartDraftsError}</p> : null}
+                {adminCartDrafts.length ? (
+                  <div style={{ overflowX: "auto", marginTop: 8 }}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Company</th>
+                          <th>Status</th>
+                          <th>Lines</th>
+                          <th>Total</th>
+                          <th>Last Activity</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminCartDrafts.map((draft) => (
+                          <tr key={`cart-draft-${draft.userId}`}>
+                            <td>{draft.fullName || "-"}</td>
+                            <td>{draft.email}</td>
+                            <td>{draft.company}</td>
+                            <td>{draft.status}</td>
+                            <td>{Number(draft.lineCount || 0)}</td>
+                            <td>{formatUsd(Number(draft.totalAmount || 0))}</td>
+                            <td>{draft.lastActivityAt ? new Date(draft.lastActivityAt).toLocaleString() : "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="small" style={{ marginTop: 8 }}>No tracked carts yet.</p>
+                )}
               </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">

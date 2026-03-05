@@ -700,6 +700,23 @@ async function ensurePostgresRuntimeSchema() {
     )
   `);
   await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("cart_drafts")} (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL UNIQUE REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      company TEXT NOT NULL,
+      email TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'submitted', 'abandoned')),
+      payload_json TEXT NOT NULL DEFAULT '{"lines":[]}',
+      line_count BIGINT NOT NULL DEFAULT 0,
+      total_amount DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+      submitted_request_id TEXT REFERENCES ${postgresTableRef("quote_requests")}(id) ON DELETE SET NULL,
+      last_activity_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("app_settings")} (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -712,6 +729,7 @@ async function ensurePostgresRuntimeSchema() {
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_events_request ON ${postgresTableRef("quote_request_events")} (request_id)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_user_saved_filters_user ON ${postgresTableRef("user_saved_filters")} (user_id)`);
   await pgClient.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_saved_filters_unique_name ON ${postgresTableRef("user_saved_filters")} (user_id, view_key, name)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_cart_drafts_status_activity ON ${postgresTableRef("cart_drafts")} (status, last_activity_at DESC)`);
 }
 
 async function ensurePostgresSerialSequence(tableName, columnName = "id") {
@@ -755,6 +773,7 @@ async function initializePostgresRuntime() {
   await ensurePostgresSerialSequence("manufacturers", "id");
   await ensurePostgresSerialSequence("categories", "id");
   await ensurePostgresSerialSequence("user_saved_filters", "id");
+  await ensurePostgresSerialSequence("cart_drafts", "id");
   await ensurePostgresSerialSequence("inventory_events", "id");
   await ensurePostgresSerialSequence("boomi_inventory_raw", "id");
   db = createNoSqliteFallbackAdapter();
@@ -6393,6 +6412,134 @@ function validateRequestLines(linesRaw) {
   });
 }
 
+function sanitizeCartDraftLines(linesRaw) {
+  const lines = Array.isArray(linesRaw) ? linesRaw : [];
+  if (!lines.length) return [];
+  return validateRequestLines(lines);
+}
+
+function mapCartDraftRow(row) {
+  if (!row) return null;
+  let payload = {};
+  try {
+    payload = row.payload_json ? JSON.parse(row.payload_json) : {};
+  } catch {
+    payload = {};
+  }
+  const lines = Array.isArray(payload?.lines)
+    ? payload.lines.map((line) => ({
+      productId: String(line?.productId || line?.deviceId || "").trim(),
+      model: String(line?.model || "").trim(),
+      grade: String(line?.grade || "").trim(),
+      quantity: Number(line?.quantity || 0),
+      offerPrice: Number(line?.offerPrice || 0),
+      note: String(line?.note || "").trim()
+    })).filter((line) => line.model && line.grade && Number.isFinite(line.quantity) && line.quantity > 0)
+    : [];
+  return {
+    id: Number(row.id || 0),
+    userId: Number(row.user_id || 0),
+    company: String(row.company || ""),
+    email: String(row.email || ""),
+    status: String(row.status || "active"),
+    lineCount: Number(row.line_count || 0),
+    totalAmount: Number(row.total_amount || 0),
+    lastActivityAt: row.last_activity_at || row.updated_at || row.created_at || null,
+    submittedAt: row.submitted_at || null,
+    submittedRequestId: row.submitted_request_id || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    lines
+  };
+}
+
+async function getCartDraftForUserPostgres(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const userId = await ensurePostgresUserForRuntime(user);
+  if (!userId) return null;
+  const result = await pgClient.query(
+    `SELECT * FROM ${postgresTableRef("cart_drafts")} WHERE user_id = $1 LIMIT 1`,
+    [userId]
+  );
+  return mapCartDraftRow(result.rows?.[0] || null);
+}
+
+async function upsertCartDraftForUserPostgres(user, body) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const userId = await ensurePostgresUserForRuntime(user);
+  if (!userId) throw new Error("Failed to resolve user for cart draft.");
+  const lines = sanitizeCartDraftLines(body?.lines);
+  const totalAmount = Number(lines.reduce((sum, line) => sum + (Number(line.quantity || 0) * Number(line.offerPrice || 0)), 0).toFixed(2));
+  const lineCount = lines.length;
+  const payload = JSON.stringify({ lines });
+  await pgClient.query(
+    `
+      INSERT INTO ${postgresTableRef("cart_drafts")} (
+        user_id, company, email, status, payload_json, line_count, total_amount, submitted_request_id, last_activity_at, submitted_at, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, 'active', $4, $5, $6, NULL, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT (user_id) DO UPDATE
+      SET company = EXCLUDED.company,
+          email = EXCLUDED.email,
+          status = 'active',
+          payload_json = EXCLUDED.payload_json,
+          line_count = EXCLUDED.line_count,
+          total_amount = EXCLUDED.total_amount,
+          submitted_request_id = NULL,
+          submitted_at = NULL,
+          last_activity_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+    `,
+    [userId, String(user?.company || "").trim(), String(user?.email || "").trim(), payload, lineCount, totalAmount]
+  );
+  return getCartDraftForUserPostgres(user);
+}
+
+async function markCartDraftSubmittedForUserPostgres(user, requestId) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const userId = await ensurePostgresUserForRuntime(user);
+  if (!userId) return;
+  await pgClient.query(
+    `
+      UPDATE ${postgresTableRef("cart_drafts")}
+      SET status = 'submitted',
+          submitted_request_id = $1,
+          submitted_at = CURRENT_TIMESTAMP,
+          last_activity_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = $2
+    `,
+    [String(requestId || "").trim() || null, userId]
+  );
+}
+
+async function listCartDraftsForAdminPostgres(limitRaw = 100) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const safeLimit = Math.max(1, Math.min(500, Number(limitRaw || 100)));
+  const result = await pgClient.query(
+    `
+      SELECT
+        cd.*,
+        u.first_name,
+        u.last_name,
+        u.is_active
+      FROM ${postgresTableRef("cart_drafts")} cd
+      LEFT JOIN ${postgresTableRef("users")} u ON u.id = cd.user_id
+      ORDER BY cd.last_activity_at DESC
+      LIMIT ${safeLimit}
+    `
+  );
+  return (result.rows || []).map((row) => {
+    const mapped = mapCartDraftRow(row);
+    return {
+      ...mapped,
+      fullName: [String(row.first_name || "").trim(), String(row.last_name || "").trim()].filter(Boolean).join(" ") || null,
+      isActiveUser: Number(row.is_active || 0) === 1
+    };
+  });
+}
+
 async function getRequestLinesPostgres(requestId) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(`
@@ -6642,7 +6789,15 @@ async function getRequestByIdForUserRuntime(user, requestId) {
 
 async function createRequestForUserRuntime(user, body) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
-  return createRequestForUserPostgres(user, body);
+  const created = await createRequestForUserPostgres(user, body);
+  if (created?.id) {
+    try {
+      await markCartDraftSubmittedForUserPostgres(user, created.id);
+    } catch (error) {
+      console.warn(`[cart-draft] Failed to mark draft submitted: ${error?.message || error}`);
+    }
+  }
+  return created;
 }
 
 async function createDummyEstimateForRequestRuntime(user, requestId) {
@@ -6653,6 +6808,21 @@ async function createDummyEstimateForRequestRuntime(user, requestId) {
 async function updateDummyEstimateStatusRuntime(user, requestId, status) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   return updateDummyEstimateStatusPostgres(user, requestId, status);
+}
+
+async function getCartDraftForUserRuntime(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  return getCartDraftForUserPostgres(user);
+}
+
+async function upsertCartDraftForUserRuntime(user, body) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  return upsertCartDraftForUserPostgres(user, body);
+}
+
+async function listCartDraftsForAdminRuntime(limitRaw = 100) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  return listCartDraftsForAdminPostgres(limitRaw);
 }
 
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
@@ -7152,6 +7322,34 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/cart-draft") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const draft = await getCartDraftForUserRuntime(user);
+      json(req, res, 200, draft || { status: "active", lines: [], lineCount: 0, totalAmount: 0 });
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/cart-draft") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const body = await parseBody(req);
+      try {
+        const draft = await upsertCartDraftForUserRuntime(user, body);
+        json(req, res, 200, draft || { ok: true });
+      } catch (error) {
+        const message = String(error?.message || "Failed to save cart draft.");
+        json(req, res, 400, { error: message });
+      }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/users") {
       const user = requireAdmin(req, res);
       if (!user) return;
@@ -7162,6 +7360,15 @@ const server = createServer(async (req, res) => {
       }
       const users = await listUsersForAdminRuntime();
       json(req, res, 200, users);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/cart-drafts") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const limit = Number(url.searchParams.get("limit") || 100);
+      const drafts = await listCartDraftsForAdminRuntime(limit);
+      json(req, res, 200, drafts);
       return;
     }
 
