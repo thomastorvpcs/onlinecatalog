@@ -48,7 +48,6 @@ const dbDir = join(__dirname, "db");
 const defaultDbPath = IS_RENDER_RUNTIME ? "/var/data/catalog.sqlite" : join(dbDir, "catalog.sqlite");
 const dbPath = String(process.env.DB_PATH || "").trim() || defaultDbPath;
 const DB_ENGINE = String(process.env.DB_ENGINE || "sqlite").trim().toLowerCase();
-const POSTGRES_RUNTIME_EXPERIMENTAL = String(process.env.POSTGRES_RUNTIME_EXPERIMENTAL || "false").toLowerCase() === "true";
 const POSTGRES_URL = String(process.env.DATABASE_URL || "").trim();
 const PG_SCHEMA = String(process.env.PG_SCHEMA || "public").trim() || "public";
 const schemaPath = join(dbDir, "schema.sql");
@@ -525,10 +524,7 @@ function getDisplayLocationName(storedName, externalId) {
   return mapped || String(storedName || "").trim();
 }
 
-if (DB_ENGINE === "postgres" && !POSTGRES_RUNTIME_EXPERIMENTAL) {
-  console.warn("[startup] DB_ENGINE=postgres requested, but Postgres runtime is not enabled yet. Falling back to SQLite. Set POSTGRES_RUNTIME_EXPERIMENTAL=true only after migration verification.");
-}
-const effectiveDbEngine = (DB_ENGINE === "postgres" && POSTGRES_RUNTIME_EXPERIMENTAL) ? "postgres" : "sqlite";
+const effectiveDbEngine = DB_ENGINE === "postgres" ? "postgres" : "sqlite";
 const POSTGRES_STRICT_RUNTIME = (effectiveDbEngine === "postgres");
 if (effectiveDbEngine === "postgres" && !POSTGRES_URL) {
   throw new Error("Postgres runtime requested but DATABASE_URL is missing.");
@@ -7818,7 +7814,7 @@ async function deleteSavedFilterForUser(userId, filterIdRaw) {
   }
 }
 
-if (!POSTGRES_STRICT_RUNTIME || effectiveDbEngine !== "postgres") {
+if (effectiveDbEngine !== "postgres") {
   initDb();
 }
 
