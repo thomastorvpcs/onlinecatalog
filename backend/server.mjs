@@ -1120,136 +1120,7 @@ function ensureHistoricalCompletedEstimates() {
   }
 }
 
-function seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw = 20) {
-  const targetUserId = Number(targetUserIdRaw);
-  if (!Number.isInteger(targetUserId) || targetUserId < 1) {
-    throw new Error("Valid targetUserId is required.");
-  }
-  const count = Math.max(1, Math.min(100, Math.floor(Number(countRaw || 20))));
-  const targetUser = db.prepare("SELECT id, email, company FROM users WHERE id = ?").get(targetUserId);
-  if (!targetUser?.id) {
-    throw new Error("User not found.");
-  }
-
-  const deviceRows = db.prepare(`
-    SELECT
-      d.id,
-      d.model_name AS model,
-      d.grade,
-      d.base_price AS price,
-      c.name AS category
-    FROM devices d
-    JOIN categories c ON c.id = d.category_id
-    WHERE d.is_active = 1
-    ORDER BY c.name ASC, d.model_name ASC
-  `).all();
-  if (!deviceRows.length) {
-    throw new Error("No active devices available for seeding.");
-  }
-
-  const byCategory = new Map();
-  for (const row of deviceRows) {
-    const key = String(row.category || "Other");
-    const list = byCategory.get(key) || [];
-    list.push(row);
-    byCategory.set(key, list);
-  }
-  const categories = [...byCategory.keys()].sort((a, b) => a.localeCompare(b));
-  if (!categories.length) {
-    throw new Error("No categories available for seeding.");
-  }
-
-  const requestInsert = db.prepare(`
-    INSERT INTO quote_requests (
-      id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code,
-      netsuite_estimate_id, netsuite_estimate_number, netsuite_status, netsuite_last_sync_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'Completed', ?, 'USD', ?, ?, 'Completed', ?, ?, ?)
-  `);
-  const lineInsert = db.prepare(`
-    INSERT INTO quote_request_lines (
-      request_id, device_id, model, grade, quantity, offer_price, note
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const eventInsert = db.prepare(`
-    INSERT INTO quote_request_events (request_id, event_type, payload_json, created_at)
-    VALUES (?, 'admin_seeded_history', ?, ?)
-  `);
-
-  let created = 0;
-  db.exec("BEGIN TRANSACTION");
-  try {
-    for (let i = 0; i < count; i += 1) {
-      const requestId = `usrhist-${targetUser.id}-${randomBytes(8).toString("hex")}`;
-      const requestNumber = getNextRequestNumber();
-      const estimateId = `usrhist-est-${randomBytes(8).toString("hex")}`;
-      const estimateNumber = getNextDummyEstimateNumber();
-      const createdAt = new Date(Date.now() - ((count - i + 3) * 24 * 60 * 60 * 1000)).toISOString();
-      const lineCount = 3 + ((i + targetUser.id) % 3);
-      const lines = [];
-      let total = 0;
-
-      for (let j = 0; j < lineCount; j += 1) {
-        const categoryName = categories[(i + j) % categories.length];
-        const list = byCategory.get(categoryName) || deviceRows;
-        const device = list[(i * 7 + j * 11 + targetUser.id) % list.length];
-        const quantity = 50 + ((i * 13 + j * 19 + targetUser.id) % 120);
-        const multiplier = 0.64 + (((i + j + targetUser.id) % 8) * 0.05);
-        const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
-        total += quantity * offerPrice;
-        lines.push({
-          deviceId: device.id,
-          model: device.model,
-          grade: device.grade || "A",
-          quantity,
-          offerPrice,
-          note: `Admin seeded history (${categoryName}).`
-        });
-      }
-      total = Number(total.toFixed(2));
-
-      requestInsert.run(
-        requestId,
-        requestNumber,
-        targetUser.company || "PCSWW",
-        targetUser.id,
-        targetUser.email,
-        total,
-        estimateId,
-        estimateNumber,
-        createdAt,
-        createdAt,
-        createdAt
-      );
-
-      for (const line of lines) {
-        lineInsert.run(requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note);
-      }
-
-      eventInsert.run(requestId, JSON.stringify({ seededByAdmin: true, lineCount: lines.length, total, targetUserId: targetUser.id }), createdAt);
-      created += 1;
-    }
-
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  return {
-    ok: true,
-    created,
-    targetUser: {
-      id: targetUser.id,
-      email: targetUser.email,
-      company: targetUser.company
-    }
-  };
-}
-
 async function seedHistoricalCompletedEstimatesForUserRuntime(targetUserIdRaw, countRaw = 20) {
-  if (effectiveDbEngine !== "postgres") {
-    return seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw);
-  }
   if (!pgClient) {
     throw new Error("Postgres runtime is not initialized.");
   }
@@ -3973,27 +3844,7 @@ function extractOrderReference(messageRaw) {
   return match ? String(match[1] || "").toUpperCase() : "";
 }
 
-function queryOrdersForCopilot(user, limit = 8) {
-  const clauses = [];
-  const params = [];
-  if (user?.role !== "admin") {
-    clauses.push("company = ?");
-    params.push(String(user?.company || "").trim());
-  }
-  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  return db.prepare(`
-    SELECT *
-    FROM quote_requests
-    ${whereSql}
-    ORDER BY created_at DESC
-    LIMIT ${Math.max(1, Math.min(40, Number(limit || 8)))}
-  `).all(...params);
-}
-
 async function queryOrdersForCopilotRuntime(user, limit = 8) {
-  if (effectiveDbEngine !== "postgres") {
-    return queryOrdersForCopilot(user, limit);
-  }
   if (!pgClient) {
     throw new Error("Postgres runtime is not initialized.");
   }
@@ -4011,43 +3862,7 @@ async function queryOrdersForCopilotRuntime(user, limit = 8) {
   return Array.isArray(result.rows) ? result.rows : [];
 }
 
-function answerOrderDetailsQuestion(user, message) {
-  const orderRef = extractOrderReference(message);
-  const rows = queryOrdersForCopilot(user, 15);
-  if (!rows.length) return null;
-
-  const targetRow = orderRef
-    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
-    : rows[0];
-
-  if (orderRef && !targetRow) {
-    return {
-      reply: `I couldn't find order ${orderRef} in your accessible order history.`,
-      action: null
-    };
-  }
-
-  if (!targetRow) return null;
-  const mapped = mapRequestRow(targetRow);
-  const lineDetails = Array.isArray(mapped.lines) ? mapped.lines : [];
-  const linePreview = lineDetails.slice(0, 8).map((line) => {
-    const qty = Number(line.quantity || 0);
-    const price = Number(line.offerPrice || 0);
-    return `${line.model} (${line.grade}) x${qty} @ ${formatUsdValue(price)} = ${formatUsdValue(qty * price)}`;
-  });
-  const moreCount = Math.max(0, lineDetails.length - linePreview.length);
-  const header = `Order ${mapped.requestNumber} is ${mapped.status}. Created ${new Date(mapped.createdAt).toLocaleDateString("en-US")}. Total ${formatUsdValue(mapped.total)} (${lineDetails.length} lines).`;
-  const linesText = linePreview.length ? ` Lines: ${linePreview.join("; ")}${moreCount ? `; +${moreCount} more line(s).` : "."}` : " This order has no line items.";
-  return {
-    reply: `${header}${linesText}`,
-    action: null
-  };
-}
-
 async function answerOrderDetailsQuestionRuntime(user, message) {
-  if (effectiveDbEngine !== "postgres") {
-    return answerOrderDetailsQuestion(user, message);
-  }
   if (!pgClient) {
     throw new Error("Postgres runtime is not initialized.");
   }
@@ -4082,95 +3897,7 @@ function isAddFromHistoryIntent(messageRaw) {
   return asksToAdd && referencesHistory;
 }
 
-function buildAddFromHistoricalOrderAction(user, message, allDevicesInput = null) {
-  const rows = queryOrdersForCopilot(user, 25);
-  if (!rows.length) return null;
-  const orderRef = extractOrderReference(message);
-  const targetRow = orderRef
-    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
-    : rows[0];
-  if (!targetRow) {
-    return {
-      reply: `I couldn't find order ${orderRef} in your accessible order history.`,
-      action: null
-    };
-  }
-
-  const request = mapRequestRow(targetRow);
-  const allDevices = Array.isArray(allDevicesInput)
-    ? allDevicesInput
-    : getDevices(new URL("http://localhost/api/devices"));
-  const addLines = [];
-  const unavailableModels = [];
-  const adjustedModels = [];
-
-  for (const line of Array.isArray(request.lines) ? request.lines : []) {
-    const lineModel = String(line.model || "").trim();
-    const lineGrade = String(line.grade || "").trim();
-    if (!lineModel) continue;
-    const candidates = allDevices
-      .filter((d) => String(d.model || "").toLowerCase() === lineModel.toLowerCase()
-        && (!lineGrade || String(d.grade || "").toLowerCase() === lineGrade.toLowerCase()))
-      .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
-    const fallbackCandidates = candidates.length
-      ? candidates
-      : allDevices
-        .filter((d) => String(d.model || "").toLowerCase().includes(lineModel.toLowerCase()))
-        .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
-    const chosen = fallbackCandidates[0];
-    const available = Number(chosen?.available || 0);
-    if (!chosen || available <= 0) {
-      unavailableModels.push(lineModel);
-      continue;
-    }
-    const requestedQty = Math.max(1, Math.floor(Number(line.quantity || 1)));
-    const quantity = Math.min(requestedQty, available);
-    if (quantity < requestedQty) {
-      adjustedModels.push(`${lineModel} (${requestedQty} requested, ${quantity} added)`);
-    }
-    addLines.push({
-      deviceId: chosen.id,
-      quantity,
-      offerPrice: Number.isFinite(Number(line.offerPrice)) ? Number(line.offerPrice) : Number(chosen.price || 0),
-      note: `From historical order ${request.requestNumber}`
-    });
-  }
-
-  if (!addLines.length) {
-    const unavailableText = unavailableModels.length
-      ? ` Unavailable: ${unavailableModels.slice(0, 5).join(", ")}.`
-      : "";
-    return {
-      reply: `I found ${request.requestNumber}, but none of its items are currently available in inventory.${unavailableText}`,
-      action: null
-    };
-  }
-
-  const addedCount = addLines.length;
-  const skippedCount = unavailableModels.length;
-  const adjustmentsText = adjustedModels.length
-    ? ` Quantities adjusted due to inventory limits: ${adjustedModels.slice(0, 4).join("; ")}.`
-    : "";
-  const skippedText = skippedCount
-    ? ` I skipped ${skippedCount} unavailable item${skippedCount === 1 ? "" : "s"}: ${unavailableModels.slice(0, 5).join(", ")}.`
-    : "";
-
-  return {
-    reply: `I prepared ${addedCount} item${addedCount === 1 ? "" : "s"} from ${request.requestNumber} and will add only what is currently in inventory.${skippedText}${adjustmentsText}`,
-    action: {
-      type: "add_lines_to_request",
-      payload: {
-        sourceOrder: request.requestNumber,
-        lines: addLines
-      }
-    }
-  };
-}
-
 async function buildAddFromHistoricalOrderActionRuntime(user, message, allDevicesInput = null) {
-  if (effectiveDbEngine !== "postgres") {
-    return buildAddFromHistoricalOrderAction(user, message, allDevicesInput);
-  }
   if (!pgClient) {
     throw new Error("Postgres runtime is not initialized.");
   }

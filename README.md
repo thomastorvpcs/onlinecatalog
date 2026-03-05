@@ -26,7 +26,7 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
 
 ## Technical Notes
 - Frontend: React + Vite
-- Backend: Node.js API (`backend/server.mjs`) with SQLite database (`backend/db`)
+- Backend: Node.js API (`backend/server.mjs`) with PostgreSQL runtime (`DATABASE_URL`)
 - Catalog data source:
   - Frontend fetches `/api/devices` from backend
   - If backend is unavailable, frontend falls back to local demo seed data
@@ -48,7 +48,7 @@ This project is a working local MVP demo of the "PCS Online Catalog & Request Ma
   - Demo reset verification code: `123456`
 - Current storage model for request flow:
   - `sessionStorage` for in-session request builder state
-  - backend SQLite for submitted requests and request lines
+  - backend PostgreSQL for submitted requests and request lines
   - `localStorage` for user session and UI state
 - Token/session settings:
   - `ACCESS_TOKEN_TTL_MINUTES` (default `30`)
@@ -152,24 +152,18 @@ See docs/inventory-api.md for inventory update endpoint design and examples.
   - Seed realistic devices: `POST /api/admin/catalog/seed-real` (defaults to 100 per category)
 
 ## Deploy Startup Seed
-- By default, backend startup auto-seeds realistic catalog rows (`adminreal-*`) so deploys include 100 devices per category with images.
+- Backend startup can auto-seed realistic catalog rows (`adminreal-*`) so deploys include 100 devices per category with images.
 - Optional env vars:
   - `AUTO_SEED_REAL_ON_STARTUP` (`true`/`false`, default `true`)
   - `DEPLOY_REAL_SEED_COUNT` (default `100`, max `1000`)
 
-## PostgreSQL 16 Staged Migration (Rollback-Safe)
-- Runtime remains SQLite by default (`DB_ENGINE=sqlite`).
-- Migration tooling:
-  - `npm run db:pg:migrate` (copies SQLite tables/data into Postgres)
-  - `npm run db:pg:verify` (row-count parity check)
-- Required env vars for migration scripts:
+## PostgreSQL Runtime
+- Runtime is PostgreSQL-only.
+- Required env vars:
+  - `DB_ENGINE=postgres`
   - `DATABASE_URL` (Render Postgres connection string)
-  - optional `SQLITE_DB_PATH` (default `backend/db/catalog.sqlite`)
   - optional `PG_SCHEMA` (default `public`)
-- Runtime safety guard:
-  - If `DB_ENGINE=postgres` but `POSTGRES_RUNTIME_EXPERIMENTAL` is not `true`, server auto-falls back to SQLite and logs a warning.
-  - If both are set (`DB_ENGINE=postgres`, `POSTGRES_RUNTIME_EXPERIMENTAL=true`), server exits intentionally because full Postgres runtime query layer is not enabled in this step.
-- Full cutover/rollback checklist: `docs/postgres-migration-runbook.md`
+- `POSTGRES_RUNTIME_EXPERIMENTAL` is no longer used.
 
 ## Auth0 (React SDK)
 - SDK installed: `@auth0/auth0-react`

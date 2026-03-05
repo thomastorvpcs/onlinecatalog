@@ -1,6 +1,6 @@
 ﻿# Inventory Update API Documentation
 
-This document defines the API we should expose to update device inventory in the SQLite table `device_inventory`.
+This document defines the API used to update device inventory in PostgreSQL table `device_inventory`.
 
 ## Base URL
 - Local: `http://localhost:8787`
