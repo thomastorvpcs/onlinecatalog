@@ -5490,17 +5490,7 @@ async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
         `UPDATE ${postgresTableRef("devices")} SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
         [nextValue, deviceId]
       );
-      if (Number(qualifiedResult.rowCount || 0) > 0) {
-        return Number(qualifiedResult.rowCount || 0);
-      }
-      // Compatibility fallback: some older runtime paths read unqualified table names.
-      const unqualifiedResult = await pgClient.query(
-        "UPDATE devices SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-        [nextValue, deviceId]
-      );
-      if (Number(unqualifiedResult.rowCount || 0) > 0) {
-        return Number(unqualifiedResult.rowCount || 0);
-      }
+      return Number(qualifiedResult.rowCount || 0);
     } catch (error) {
       if (POSTGRES_STRICT_RUNTIME) {
         throw new Error(`Postgres weekly special update failed: ${error?.message || error}`);
@@ -7530,35 +7520,50 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
 }
 
 async function getRequestsForUserRuntime(user) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     return getRequestsForUserPostgres(user);
   }
   return getRequestsForUser(user);
 }
 
 async function getRequestByIdForUserRuntime(user, requestId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     return getRequestByIdForUserPostgres(user, requestId);
   }
   return getRequestByIdForUser(user, requestId);
 }
 
 async function createRequestForUserRuntime(user, body) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     return createRequestForUserPostgres(user, body);
   }
   return createRequestForUser(user, body);
 }
 
 async function createDummyEstimateForRequestRuntime(user, requestId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     return createDummyEstimateForRequestPostgres(user, requestId);
   }
   return createDummyEstimateForRequest(user, requestId);
 }
 
 async function updateDummyEstimateStatusRuntime(user, requestId, status) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     return updateDummyEstimateStatusPostgres(user, requestId, status);
   }
   return updateDummyEstimateStatus(user, requestId, status);
@@ -7609,7 +7614,10 @@ function mapSavedFilterRow(row) {
 async function getSavedFiltersForUser(userId, viewKeyRaw) {
   const viewKey = normalizeSavedFilterViewKey(viewKeyRaw);
   let rows = [];
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     const result = await pgClient.query(
       `
         SELECT id, view_key, name, payload_json, created_at, updated_at
@@ -7643,7 +7651,10 @@ async function upsertSavedFilterForUser(userId, body) {
   const payload = sanitizeSavedFilterPayload(body.payload);
   const payloadJson = JSON.stringify(payload);
   let row = null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     const result = await pgClient.query(
       `
         INSERT INTO ${postgresTableRef("user_saved_filters")} (user_id, view_key, name, payload_json, created_at, updated_at)
@@ -7682,7 +7693,10 @@ async function updateSavedFilterForUser(userId, filterIdRaw, body) {
     throw new Error("Saved filter not found.");
   }
   let existing = null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     const existingResult = await pgClient.query(
       `
         SELECT id, view_key, name
@@ -7719,7 +7733,10 @@ async function updateSavedFilterForUser(userId, filterIdRaw, body) {
   const payloadJson = JSON.stringify(payload);
   let row = null;
   try {
-    if (effectiveDbEngine === "postgres" && pgClient) {
+    if (effectiveDbEngine === "postgres") {
+      if (!pgClient) {
+        throw new Error("Postgres runtime is not initialized.");
+      }
       const result = await pgClient.query(
         `
           UPDATE ${postgresTableRef("user_saved_filters")}
@@ -7761,7 +7778,10 @@ async function deleteSavedFilterForUser(userId, filterIdRaw) {
   if (!Number.isInteger(filterId) || filterId < 1) {
     throw new Error("Saved filter not found.");
   }
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     const result = await pgClient.query(
       `
         DELETE FROM ${postgresTableRef("user_saved_filters")}
@@ -8759,7 +8779,10 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      if (effectiveDbEngine === "postgres" && pgClient) {
+      if (effectiveDbEngine === "postgres") {
+        if (!pgClient) {
+          throw new Error("Postgres runtime is not initialized.");
+        }
         await pgClient.query("BEGIN");
         try {
           for (const row of updates) {
