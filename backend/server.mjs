@@ -552,6 +552,16 @@ const adminSeedRealJob = {
   categoriesSeeded: 0,
   countPerCategory: 0
 };
+const boomiSyncJob = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  stage: "idle",
+  error: "",
+  fetched: 0,
+  processed: 0,
+  skipped: 0
+};
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
@@ -5386,6 +5396,53 @@ function getAdminSeedRealJobStatus() {
   };
 }
 
+function getBoomiSyncJobStatus() {
+  return {
+    running: boomiSyncJob.running,
+    startedAt: boomiSyncJob.startedAt,
+    finishedAt: boomiSyncJob.finishedAt,
+    stage: boomiSyncJob.stage,
+    error: boomiSyncJob.error,
+    fetched: Number(boomiSyncJob.fetched || 0),
+    processed: Number(boomiSyncJob.processed || 0),
+    skipped: Number(boomiSyncJob.skipped || 0)
+  };
+}
+
+function startBoomiSyncJob() {
+  if (boomiSyncJob.running) {
+    return { started: false, status: getBoomiSyncJobStatus() };
+  }
+  boomiSyncJob.running = true;
+  boomiSyncJob.startedAt = new Date().toISOString();
+  boomiSyncJob.finishedAt = null;
+  boomiSyncJob.stage = "fetching";
+  boomiSyncJob.error = "";
+  boomiSyncJob.fetched = 0;
+  boomiSyncJob.processed = 0;
+  boomiSyncJob.skipped = 0;
+
+  void (async () => {
+    try {
+      const rows = await fetchBoomiInventory();
+      boomiSyncJob.fetched = Number(rows?.length || 0);
+      boomiSyncJob.stage = "processing";
+      const { processed, skipped } = await syncBoomiInventoryRowsRuntime(rows);
+      boomiSyncJob.processed = Number(processed || 0);
+      boomiSyncJob.skipped = Number(skipped || 0);
+      boomiSyncJob.stage = "completed";
+    } catch (error) {
+      boomiSyncJob.error = String(error?.message || error || "Boomi sync failed.");
+      boomiSyncJob.stage = "failed";
+    } finally {
+      boomiSyncJob.running = false;
+      boomiSyncJob.finishedAt = new Date().toISOString();
+    }
+  })();
+
+  return { started: true, status: getBoomiSyncJobStatus() };
+}
+
 function startAdminSeedRealJob(countPerCategory) {
   const safeCount = Math.max(1, Math.min(1000, Number(countPerCategory || 100)));
   if (adminSeedRealJob.running) {
@@ -7698,14 +7755,15 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/integrations/boomi/inventory/sync") {
       const user = requireAdmin(req, res);
       if (!user) return;
-      const rows = await fetchBoomiInventory();
-      const { processed, skipped } = await syncBoomiInventoryRowsRuntime(rows);
-      json(req, res, 200, {
-        ok: true,
-        fetched: rows.length,
-        processed,
-        skipped
-      });
+      const started = startBoomiSyncJob();
+      json(req, res, 202, { ok: true, ...started });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/integrations/boomi/inventory/sync/status") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      json(req, res, 200, { ok: true, status: getBoomiSyncJobStatus() });
       return;
     }
 

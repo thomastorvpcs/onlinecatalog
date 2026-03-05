@@ -1585,6 +1585,7 @@ export default function App() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [syncError, setSyncError] = useState("");
+  const [syncStatus, setSyncStatus] = useState(null);
   const [adminCatalogLoading, setAdminCatalogLoading] = useState(false);
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
@@ -3550,14 +3551,39 @@ export default function App() {
       setSyncLoading(true);
       setSyncError("");
       setSyncResult(null);
-      const payload = await apiRequest("/api/integrations/boomi/inventory/sync", {
+      setSyncStatus(null);
+      await apiRequest("/api/integrations/boomi/inventory/sync", {
         method: "POST",
         token: authToken,
         refreshToken,
         onAuthUpdate: applyAuthTokens,
         onAuthFail: clearAuthState
       });
-      setSyncResult(payload);
+      const pollStartedAt = Date.now();
+      const pollTimeoutMs = 10 * 60 * 1000;
+      while (Date.now() - pollStartedAt < pollTimeoutMs) {
+        const payload = await apiRequest("/api/integrations/boomi/inventory/sync/status", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        const status = payload?.status || {};
+        setSyncStatus(status);
+        if (!status.running) {
+          if (status.error) {
+            throw new Error(status.error);
+          }
+          setSyncResult({
+            fetched: Number(status.fetched || 0),
+            processed: Number(status.processed || 0),
+            skipped: Number(status.skipped || 0)
+          });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+      throw new Error("Sync timed out while waiting for completion.");
     } catch (error) {
       setSyncError(error.message || "Sync failed.");
     } finally {
@@ -4263,8 +4289,13 @@ export default function App() {
                 <h3 style={{ margin: "0 0 8px" }}>Inventory Sync</h3>
                 <p className="small" style={{ marginTop: 0 }}>Fetch and map inventory from Boomi/NetSuite into the local database.</p>
                 <button type="button" style={{ width: "auto" }} disabled={syncLoading} onClick={triggerBoomiSync}>
-                  {syncLoading ? "Syncing..." : "Sync Boomi Inventory"}
+                  {syncLoading ? `Syncing... ${String(syncStatus?.stage || "starting")}` : "Sync Boomi Inventory"}
                 </button>
+                {syncLoading && syncStatus ? (
+                  <p className="small" style={{ marginTop: 8 }}>
+                    Stage: {String(syncStatus.stage || "starting")}. Fetched: {Number(syncStatus.fetched || 0)}, Processed: {Number(syncStatus.processed || 0)}, Skipped: {Number(syncStatus.skipped || 0)}.
+                  </p>
+                ) : null}
                 {syncResult ? (
                   <p className="small" style={{ marginTop: 8, color: "#166534" }}>
                     Sync complete. Fetched: {Number(syncResult.fetched || 0)}, Processed: {Number(syncResult.processed || 0)}, Skipped: {Number(syncResult.skipped || 0)}.
