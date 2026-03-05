@@ -5864,6 +5864,7 @@ function syncBoomiInventoryRows(rows, progressCallback = null) {
       country_code = excluded.country_code,
       effective_date = excluded.effective_date,
       default_location_id = excluded.default_location_id,
+      is_active = 1,
       updated_at = CURRENT_TIMESTAMP
   `);
   const upsertInventory = db.prepare(`
@@ -6057,6 +6058,7 @@ async function upsertDevicesPostgres(rows) {
           country_code = excluded.country_code,
           effective_date = excluded.effective_date,
           default_location_id = excluded.default_location_id,
+          is_active = 1,
           updated_at = CURRENT_TIMESTAMP
       `,
       values
