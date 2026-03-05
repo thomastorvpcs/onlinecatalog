@@ -1764,6 +1764,9 @@ async function getBooleanAppSettingRuntime(key, defaultValue = false) {
     try {
       return await getBooleanAppSettingPostgres(key, defaultValue);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres app setting read failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] app_settings fallback: ${error?.message || error}`);
     }
   }
@@ -1776,6 +1779,9 @@ async function setBooleanAppSettingRuntime(key, value) {
       await setBooleanAppSettingPostgres(key, value);
       return;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres app setting write failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] app_settings fallback: ${error?.message || error}`);
     }
   }
@@ -6936,6 +6942,9 @@ async function getInventoryByDeviceIdRuntime(deviceId) {
     try {
       return await getInventoryByDeviceIdPostgres(deviceId);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres inventory-by-device query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] inventory-by-device fallback: ${error?.message || error}`);
     }
   }
@@ -6970,6 +6979,9 @@ async function upsertInventoryQuantityRuntime(deviceId, locationId, quantity) {
       await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
       return;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres inventory upsert failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] upsert-inventory fallback: ${error?.message || error}`);
     }
   }
@@ -7004,6 +7016,9 @@ async function getInventoryQuantityRuntime(deviceId, locationId) {
     try {
       return await getInventoryQuantityPostgres(deviceId, locationId);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres inventory quantity query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] inventory-quantity fallback: ${error?.message || error}`);
     }
   }
@@ -7036,6 +7051,9 @@ async function addInventoryEventRuntime(payload) {
       await addInventoryEventPostgres(payload);
       return;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres inventory event write failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] inventory-event fallback: ${error?.message || error}`);
     }
   }
@@ -7051,6 +7069,9 @@ async function getDeviceExistsRuntime(deviceId) {
       );
       return result.rows?.[0] || null;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres device lookup failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] device-exists fallback: ${error?.message || error}`);
     }
   }
@@ -7066,6 +7087,9 @@ async function getLocationExistsRuntime(locationId) {
       );
       return result.rows?.[0] || null;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres location lookup failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] location-exists fallback: ${error?.message || error}`);
     }
   }
