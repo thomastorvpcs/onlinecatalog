@@ -5381,6 +5381,226 @@ function syncBoomiInventoryRows(rows) {
   return { processed, skipped };
 }
 
+async function getOrCreateByNamePostgres(tableName, name) {
+  const normalized = String(name || "").trim();
+  if (!normalized) return null;
+  const selectResult = await pgClient.query(
+    `SELECT id FROM ${postgresTableRef(tableName)} WHERE name = $1 LIMIT 1`,
+    [normalized]
+  );
+  if (selectResult.rows?.[0]?.id) return Number(selectResult.rows[0].id);
+  try {
+    const insertResult = await pgClient.query(
+      `INSERT INTO ${postgresTableRef(tableName)} (name) VALUES ($1) RETURNING id`,
+      [normalized]
+    );
+    return Number(insertResult.rows?.[0]?.id || 0) || null;
+  } catch (error) {
+    if (String(error?.code || "") !== "23505") throw error;
+    const retryResult = await pgClient.query(
+      `SELECT id FROM ${postgresTableRef(tableName)} WHERE name = $1 LIMIT 1`,
+      [normalized]
+    );
+    return Number(retryResult.rows?.[0]?.id || 0) || null;
+  }
+}
+
+async function getOrCreateLocationByExternalIdPostgres(externalId, fallbackName) {
+  const normalizedExternalId = String(externalId || "").trim();
+  if (!normalizedExternalId) return null;
+  const selectResult = await pgClient.query(
+    `SELECT id FROM ${postgresTableRef("locations")} WHERE external_id = $1 LIMIT 1`,
+    [normalizedExternalId]
+  );
+  if (selectResult.rows?.[0]?.id) return Number(selectResult.rows[0].id);
+  try {
+    const insertResult = await pgClient.query(
+      `INSERT INTO ${postgresTableRef("locations")} (name, external_id) VALUES ($1, $2) RETURNING id`,
+      [String(fallbackName || "").trim() || `Location ${normalizedExternalId}`, normalizedExternalId]
+    );
+    return Number(insertResult.rows?.[0]?.id || 0) || null;
+  } catch (error) {
+    if (String(error?.code || "") !== "23505") throw error;
+    const retryResult = await pgClient.query(
+      `SELECT id FROM ${postgresTableRef("locations")} WHERE external_id = $1 LIMIT 1`,
+      [normalizedExternalId]
+    );
+    return Number(retryResult.rows?.[0]?.id || 0) || null;
+  }
+}
+
+async function syncBoomiInventoryRowsPostgres(rows) {
+  if (!pgClient) return syncBoomiInventoryRows(rows);
+  let processed = 0;
+  let skipped = 0;
+  await pgClient.query("BEGIN");
+  try {
+    for (const row of rows) {
+      const sourceExternalId = String(row.id || "").trim();
+      const sku = String(row.sku || "").trim();
+      const manufacturerRaw = String(row.manufacturer || "").trim();
+      const modelRaw = String(row.model || "").trim();
+      const colorRaw = String(row.color || "").trim();
+      const grade = String(row.grade || "A").trim() || "A";
+      const storage = String(row.storage_capacity || "N/A").trim() || "N/A";
+      const carrier = String(row.carrier || "Unlocked").trim() || "Unlocked";
+      const currencyCode = String(row.currency_code || "USD").trim() || "USD";
+      const countryCode = String(row.country || "US").trim() || "US";
+      const effectiveDate = String(row.effective_date || "").trim() || null;
+      const sourceLocationId = String(row.location_id || "").trim();
+      const price = Number(row.price || 0);
+      const quantity = Math.max(0, Number(row.quantity_on_hand || 0));
+
+      if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
+        skipped += 1;
+        continue;
+      }
+
+      await pgClient.query(
+        `
+          INSERT INTO ${postgresTableRef("boomi_inventory_raw")} (
+            source_external_id, sku, manufacturer, model, color, grade, storage_capacity,
+            price, quantity_on_hand, carrier, currency_code, country, effective_date, source_location_id
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `,
+        [
+          sourceExternalId,
+          sku || null,
+          manufacturerRaw,
+          modelRaw,
+          colorRaw || null,
+          grade,
+          storage,
+          price,
+          quantity,
+          carrier,
+          currencyCode,
+          countryCode,
+          effectiveDate,
+          sourceLocationId
+        ]
+      );
+
+      const manufacturerName = toTitleCase(manufacturerRaw);
+      const manufacturerId = await getOrCreateByNamePostgres("manufacturers", manufacturerName);
+      const categoryName = inferCategoryFromBoomi(row);
+      const categoryId = await getOrCreateByNamePostgres("categories", categoryName);
+      const locationId = await getOrCreateLocationByExternalIdPostgres(sourceLocationId, `${countryCode} Location ${sourceLocationId}`);
+      if (!manufacturerId || !categoryId || !locationId) {
+        skipped += 1;
+        continue;
+      }
+
+      const modelFamily = modelRaw;
+      const modelUpper = modelRaw.toUpperCase();
+      const storageUpper = storage.toUpperCase();
+      const hasStorageInModel = storageUpper !== "N/A" && modelUpper.includes(storageUpper);
+      const modelWithStorage = hasStorageInModel || storageUpper === "N/A" ? modelRaw : `${modelRaw} ${storage}`;
+      const modelName = colorRaw ? `${modelWithStorage} - ${toTitleCase(colorRaw)}` : modelWithStorage;
+
+      const existingDeviceRes = await pgClient.query(
+        `SELECT id FROM ${postgresTableRef("devices")} WHERE source_external_id = $1 LIMIT 1`,
+        [sourceExternalId]
+      );
+      const existingDeviceId = String(existingDeviceRes.rows?.[0]?.id || "").trim();
+      const deviceId = existingDeviceId || `boomi-${sourceExternalId}`;
+
+      await pgClient.query(
+        `
+          INSERT INTO ${postgresTableRef("devices")} (
+            id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
+            image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active,
+            source_external_id, source_sku, currency_code, country_code, effective_date
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $10, $11, $12, $13, $14, $15, 1, $16, $17, $18, $19, $20)
+          ON CONFLICT(id) DO UPDATE SET
+            manufacturer_id = excluded.manufacturer_id,
+            category_id = excluded.category_id,
+            model_name = excluded.model_name,
+            model_family = excluded.model_family,
+            storage_capacity = excluded.storage_capacity,
+            grade = excluded.grade,
+            base_price = excluded.base_price,
+            carrier = excluded.carrier,
+            color = excluded.color,
+            source_sku = excluded.source_sku,
+            currency_code = excluded.currency_code,
+            country_code = excluded.country_code,
+            effective_date = excluded.effective_date,
+            default_location_id = excluded.default_location_id,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          deviceId,
+          manufacturerId,
+          categoryId,
+          modelName,
+          modelFamily,
+          storage,
+          grade,
+          price,
+          carrier,
+          categoryName === "Wearables" ? "47 mm" : categoryName === "Tablets" ? "11 inches" : categoryName === "Laptops" ? "14 inches" : "6.1 inches",
+          "No",
+          colorRaw ? toTitleCase(colorRaw) : "N/A",
+          categoryName === "Accessories" ? "Retail Pack" : "Full Kit",
+          `Imported from Boomi inventory feed. SKU: ${sku || "N/A"}`,
+          locationId,
+          sourceExternalId,
+          sku || null,
+          currencyCode,
+          countryCode,
+          effectiveDate
+        ]
+      );
+
+      await pgClient.query(
+        `
+          INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity)
+          VALUES ($1, $2, $3)
+          ON CONFLICT(device_id, location_id)
+          DO UPDATE SET quantity = excluded.quantity
+        `,
+        [deviceId, locationId, quantity]
+      );
+
+      const imageCountRes = await pgClient.query(
+        `SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("device_images")} WHERE device_id = $1`,
+        [deviceId]
+      );
+      const imageCount = Number(imageCountRes.rows?.[0]?.count || 0);
+      if (imageCount === 0) {
+        await pgClient.query(
+          `INSERT INTO ${postgresTableRef("device_images")} (device_id, image_url, sort_order) VALUES ($1, $2, $3), ($1, $4, $5), ($1, $6, $7)`,
+          [
+            deviceId,
+            `https://picsum.photos/seed/${deviceId}-1/900/700`, 1,
+            `https://picsum.photos/seed/${deviceId}-2/900/700`, 2,
+            `https://picsum.photos/seed/${deviceId}-3/900/700`, 3
+          ]
+        );
+      }
+
+      processed += 1;
+    }
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+  return { processed, skipped };
+}
+
+async function syncBoomiInventoryRowsRuntime(rows) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await syncBoomiInventoryRowsPostgres(rows);
+    } catch (error) {
+      console.error(`[postgres-write] boomi sync fallback: ${error?.message || error}`);
+    }
+  }
+  return syncBoomiInventoryRows(rows);
+}
+
 function isInteger(value) {
   return Number.isInteger(value);
 }
@@ -6906,7 +7126,7 @@ const server = createServer(async (req, res) => {
       const user = requireAdmin(req, res);
       if (!user) return;
       const rows = await fetchBoomiInventory();
-      const { processed, skipped } = syncBoomiInventoryRows(rows);
+      const { processed, skipped } = await syncBoomiInventoryRowsRuntime(rows);
       json(req, res, 200, {
         ok: true,
         fetched: rows.length,
