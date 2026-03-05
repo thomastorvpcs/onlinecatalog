@@ -3462,8 +3462,10 @@ function deviceMatchesCopilotPayload(device, payload) {
   return true;
 }
 
-function buildCopilotFilterOptions(promptRaw, parsed) {
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+function buildCopilotFilterOptions(promptRaw, parsed, allDevicesInput = null) {
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   const categories = [...new Set(allDevices.map((d) => d.category))];
   if (categories.length < 2) return [];
   const shouldOfferChoices = String(parsed?.selectedCategory || "") === "__ALL__" || !hasExplicitCategoryIntent(promptRaw);
@@ -3758,6 +3760,31 @@ function buildCopilotCatalogContext() {
     grades: allGrades,
     storages: db.prepare("SELECT DISTINCT storage_capacity AS name FROM devices WHERE is_active = 1 ORDER BY storage_capacity").all().map((r) => String(r.name || "").trim()).filter(Boolean),
     regions: getDisplayRegions()
+  };
+}
+
+function buildCopilotCatalogContextFromDevices(allDevices) {
+  const devices = Array.isArray(allDevices) ? allDevices : [];
+  const categories = [...new Set(devices.map((d) => String(d.category || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const manufacturers = [...new Set(devices.map((d) => String(d.manufacturer || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const modelFamilies = [...new Set(devices.map((d) => String(d.modelFamily || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const storages = [...new Set(devices.map((d) => String(d.storage || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const regions = [...new Set(
+    devices.flatMap((device) => Object.entries(device?.locations || {})
+      .filter(([, qty]) => Number(qty || 0) > 0)
+      .map(([name]) => String(name || "").trim())
+      .filter(Boolean))
+  )].sort((a, b) => a.localeCompare(b));
+  const dbGrades = [...new Set(devices.map((d) => String(d.grade || "").trim()).filter(Boolean))];
+  const allGrades = [...new Set([...dbGrades, ...GRADE_DEFINITIONS.map((item) => item.code)])].sort((a, b) => a.localeCompare(b));
+
+  return {
+    categories,
+    manufacturers,
+    modelFamilies,
+    grades: allGrades,
+    storages,
+    regions
   };
 }
 
@@ -4081,7 +4108,7 @@ function isAddFromHistoryIntent(messageRaw) {
   return asksToAdd && referencesHistory;
 }
 
-function buildAddFromHistoricalOrderAction(user, message) {
+function buildAddFromHistoricalOrderAction(user, message, allDevicesInput = null) {
   const rows = queryOrdersForCopilot(user, 25);
   if (!rows.length) return null;
   const orderRef = extractOrderReference(message);
@@ -4096,7 +4123,9 @@ function buildAddFromHistoricalOrderAction(user, message) {
   }
 
   const request = mapRequestRow(targetRow);
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   const addLines = [];
   const unavailableModels = [];
   const adjustedModels = [];
@@ -4255,8 +4284,10 @@ function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
   };
 }
 
-function countCopilotPayloadMatches(payload) {
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+function countCopilotPayloadMatches(payload, allDevicesInput = null) {
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   return allDevices.filter((device) => deviceMatchesCopilotPayload(device, payload)).length;
 }
 
@@ -4316,27 +4347,31 @@ function isCopilotAddWeeklySpecialIntent(messageRaw) {
     && /\b(weekly\s*special|weekly\s*deal|specials|promotions?|promo|deals?|offers?)\b/.test(message);
 }
 
-function getCopilotDeviceCandidates(payload, limit = 6) {
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+function getCopilotDeviceCandidates(payload, limit = 6, allDevicesInput = null) {
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   return allDevices
     .filter((device) => deviceMatchesCopilotPayload(device, payload))
     .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || String(a.model).localeCompare(String(b.model)))
     .slice(0, limit);
 }
 
-function getCopilotWeeklySpecialCandidates(message, selectedCategory, limit = 6) {
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+function getCopilotWeeklySpecialCandidates(message, selectedCategory, limit = 6, allDevicesInput = null) {
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   return allDevices
     .filter((device) => device.weeklySpecial === true)
     .sort((a, b) => Number(b.available || 0) - Number(a.available || 0) || Number(a.price || 0) - Number(b.price || 0))
     .slice(0, limit);
 }
 
-function buildWeeklySpecialResponse(message, selectedCategory) {
+function buildWeeklySpecialResponse(message, selectedCategory, allDevicesInput = null) {
   const quantity = parseCopilotRequestedQuantity(message);
   const offerPriceRequested = parseCopilotRequestedOfferPrice(message);
   const isAddIntent = isCopilotAddWeeklySpecialIntent(message);
-  const candidates = getCopilotWeeklySpecialCandidates(message, selectedCategory, 8);
+  const candidates = getCopilotWeeklySpecialCandidates(message, selectedCategory, 8, allDevicesInput);
 
   if (!candidates.length) {
     return {
@@ -4394,8 +4429,10 @@ function buildWeeklySpecialResponse(message, selectedCategory) {
   };
 }
 
-function buildCopilotWeeklySpecialContext(limit = 10) {
-  const allDevices = getDevices(new URL("http://localhost/api/devices"));
+function buildCopilotWeeklySpecialContext(limit = 10, allDevicesInput = null) {
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
   const weekly = allDevices.filter((device) => device.weeklySpecial === true);
   return {
     totalActiveWeeklySpecials: weekly.length,
@@ -4415,10 +4452,10 @@ function buildCopilotWeeklySpecialContext(limit = 10) {
   };
 }
 
-function buildCopilotAddToRequestAction(message, payload) {
+function buildCopilotAddToRequestAction(message, payload, allDevicesInput = null) {
   const quantity = parseCopilotRequestedQuantity(message);
   const offerPriceRequested = parseCopilotRequestedOfferPrice(message);
-  const candidates = getCopilotDeviceCandidates(payload, 6);
+  const candidates = getCopilotDeviceCandidates(payload, 6, allDevicesInput);
   if (!candidates.length) return null;
 
   if (candidates.length === 1) {
@@ -4569,13 +4606,18 @@ async function runAiCopilot(user, body) {
   }
 
   try {
+    const allDevicesPayload = await getDevicesRuntime(new URL("http://localhost/api/devices"));
+    const allDevices = Array.isArray(allDevicesPayload)
+      ? allDevicesPayload
+      : (Array.isArray(allDevicesPayload?.items) ? allDevicesPayload.items : []);
+
     const deterministicWeeklySpecial = isCopilotWeeklySpecialIntent(message)
-      ? buildWeeklySpecialResponse(message, selectedCategory)
+      ? buildWeeklySpecialResponse(message, selectedCategory, allDevices)
       : null;
     if (deterministicWeeklySpecial) return deterministicWeeklySpecial;
 
     const deterministicAddFromHistory = isAddFromHistoryIntent(message)
-      ? buildAddFromHistoricalOrderAction(user, message)
+      ? buildAddFromHistoricalOrderAction(user, message, allDevices)
       : null;
     if (deterministicAddFromHistory) return deterministicAddFromHistory;
 
@@ -4589,23 +4631,30 @@ async function runAiCopilot(user, body) {
       : null;
     if (deterministicHistoryAnswer) return deterministicHistoryAnswer;
 
-    const catalog = buildCopilotCatalogContext();
-    const history = buildCopilotHistoricalSalesContext();
-    const userHistory = buildCopilotUserOrderHistoryContext(user);
-    const weeklySpecials = buildCopilotWeeklySpecialContext();
+    const useStrictPostgresContexts = POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres";
+    const catalog = useStrictPostgresContexts
+      ? buildCopilotCatalogContextFromDevices(allDevices)
+      : buildCopilotCatalogContext();
+    const history = useStrictPostgresContexts
+      ? { completedEstimateCount: 0, completedRevenue: 0, completedUnits: 0, topCategories: [], topModels: [] }
+      : buildCopilotHistoricalSalesContext();
+    const userHistory = useStrictPostgresContexts
+      ? { scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`, totalLineItems: 0, topModelPriceStats: [], recentOrders: [] }
+      : buildCopilotUserOrderHistoryContext(user);
+    const weeklySpecials = buildCopilotWeeklySpecialContext(10, allDevices);
     const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
-    const heuristicPayload = parseAiFilters(message, selectedCategory);
+    const heuristicPayload = await parseAiFiltersRuntime(message, selectedCategory);
     const heuristicHasFilters = Object.keys(heuristicPayload.filters || {}).length > 0 || String(heuristicPayload.search || "").trim().length > 0;
     const payloadForAdd = hasFilters ? normalizedPayload : (heuristicHasFilters ? heuristicPayload : normalizedPayload);
     const suggestedName = buildCopilotSuggestedFilterName(normalizedPayload);
-    const options = buildCopilotFilterOptions(message, normalizedPayload);
+    const options = buildCopilotFilterOptions(message, normalizedPayload, allDevices);
     const intent = String(plan?.intent || "none").trim();
     const addIntent = isCopilotAddToRequestIntent(message);
 
     if (addIntent && (hasFilters || heuristicHasFilters)) {
-      const addAction = buildCopilotAddToRequestAction(message, payloadForAdd);
+      const addAction = buildCopilotAddToRequestAction(message, payloadForAdd, allDevices);
       if (!addAction) {
         return {
           reply: buildCopilotNoMatchReply(payloadForAdd),
@@ -4626,7 +4675,7 @@ async function runAiCopilot(user, body) {
           suggestedName: suggestedName || "AI Suggested Filter"
         }
       };
-      const matchCount = countCopilotPayloadMatches(action.payload);
+      const matchCount = countCopilotPayloadMatches(action.payload, allDevices);
       if (matchCount <= 0) {
         action = null;
       }
