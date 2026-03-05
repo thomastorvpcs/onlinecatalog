@@ -814,6 +814,13 @@ async function ensurePostgresRuntimeSchema() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("app_settings")} (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON ${postgresTableRef("quote_request_lines")} (request_id)`);
@@ -888,6 +895,7 @@ async function initializePostgresRuntime() {
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
   await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
   await backfillPostgresTableFromSqliteIfEmpty("user_saved_filters");
+  await backfillPostgresTableFromSqliteIfEmpty("app_settings");
   await ensurePostgresSerialSequence("quote_request_lines", "id");
   await ensurePostgresSerialSequence("quote_request_events", "id");
   await ensurePostgresSerialSequence("refresh_tokens", "id");
@@ -1486,6 +1494,55 @@ function setBooleanAppSetting(key, value) {
     VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
   `).run(key, value ? "1" : "0");
+}
+
+async function getBooleanAppSettingPostgres(key, defaultValue = false) {
+  if (!pgClient) return defaultValue;
+  const result = await pgClient.query(
+    `SELECT value FROM ${postgresTableRef("app_settings")} WHERE key = $1 LIMIT 1`,
+    [key]
+  );
+  const row = result.rows?.[0];
+  if (!row) return defaultValue;
+  const normalized = String(row.value || "").trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") return true;
+  if (normalized === "0" || normalized === "false") return false;
+  return defaultValue;
+}
+
+async function setBooleanAppSettingPostgres(key, value) {
+  if (!pgClient) return;
+  await pgClient.query(
+    `
+      INSERT INTO ${postgresTableRef("app_settings")} (key, value, updated_at)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `,
+    [key, value ? "1" : "0"]
+  );
+}
+
+async function getBooleanAppSettingRuntime(key, defaultValue = false) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await getBooleanAppSettingPostgres(key, defaultValue);
+    } catch (error) {
+      console.error(`[postgres-read] app_settings fallback: ${error?.message || error}`);
+    }
+  }
+  return getBooleanAppSetting(key, defaultValue);
+}
+
+async function setBooleanAppSettingRuntime(key, value) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      await setBooleanAppSettingPostgres(key, value);
+      return;
+    } catch (error) {
+      console.error(`[postgres-write] app_settings fallback: ${error?.message || error}`);
+    }
+  }
+  setBooleanAppSetting(key, value);
 }
 
 function ensureLargeCatalog() {
@@ -6799,7 +6856,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 401, { error: "Unauthorized" });
         return;
       }
-      json(req, res, 200, { enabled: getBooleanAppSetting("weekly_special_banner_enabled", false) });
+      json(req, res, 200, { enabled: await getBooleanAppSettingRuntime("weekly_special_banner_enabled", false) });
       return;
     }
 
@@ -6811,7 +6868,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "enabled must be boolean." });
         return;
       }
-      setBooleanAppSetting("weekly_special_banner_enabled", body.enabled);
+      await setBooleanAppSettingRuntime("weekly_special_banner_enabled", body.enabled);
       json(req, res, 200, { ok: true, enabled: body.enabled });
       return;
     }
