@@ -1593,6 +1593,7 @@ export default function App() {
   const [adminCatalogLoading, setAdminCatalogLoading] = useState(false);
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
+  const [adminRealSeedStatus, setAdminRealSeedStatus] = useState(null);
   const [adminImageMapLoading, setAdminImageMapLoading] = useState(false);
   const [expandedFilters, setExpandedFilters] = useState({});
   const [savedFilters, setSavedFilters] = useState([]);
@@ -3616,6 +3617,7 @@ export default function App() {
       setAdminCatalogLoading(true);
       setAdminCatalogError("");
       setAdminCatalogResult("");
+      setAdminRealSeedStatus(null);
       const payload = await apiRequest("/api/admin/catalog/seed-real", {
         method: "POST",
         token: authToken,
@@ -3624,7 +3626,32 @@ export default function App() {
         onAuthFail: clearAuthState,
         body: { countPerCategory: 100 }
       });
-      setAdminCatalogResult(`Realistic seed complete. Added ${Number(payload.countPerCategory || 0)} devices per category (${Number(payload.categoriesSeeded || 0)} categories).`);
+      const pollStartedAt = Date.now();
+      const pollTimeoutMs = 10 * 60 * 1000;
+      while (Date.now() - pollStartedAt < pollTimeoutMs) {
+        const statusPayload = await apiRequest("/api/admin/catalog/seed-real/status", {
+          token: authToken,
+          refreshToken,
+          onAuthUpdate: applyAuthTokens,
+          onAuthFail: clearAuthState
+        });
+        const status = statusPayload?.status || {};
+        setAdminRealSeedStatus(status);
+        if (!status.running) {
+          if (status.error) {
+            throw new Error(status.error);
+          }
+          setAdminCatalogResult(
+            `Realistic seed complete. Processed ${Number(status.processed || 0)} of ${Number(status.totalPlanned || 0)} devices.`
+          );
+          return;
+        }
+        setAdminCatalogResult(
+          `Seeding realistic devices... ${Number(status.processed || 0)} / ${Math.max(1, Number(status.totalPlanned || 0))}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+      throw new Error("Seed operation timed out while waiting for completion.");
     } catch (error) {
       setAdminCatalogError(error.message || "Failed to seed realistic devices.");
     } finally {
@@ -4313,7 +4340,7 @@ export default function App() {
                     {adminCatalogLoading ? "Working..." : "Add 500 Test Devices/Category"}
                   </button>
                   <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedRealDevicesForAdmin}>
-                    {adminCatalogLoading ? "Working..." : "Add 100 Real Devices/Category"}
+                    {adminCatalogLoading ? `Seeding... ${Number(adminRealSeedStatus?.processed || 0)}/${Number(adminRealSeedStatus?.totalPlanned || 0)}` : "Add 100 Real Devices/Category"}
                   </button>
                   <button type="button" style={{ width: "auto" }} disabled={adminImageMapLoading} onClick={applyImageMappingForAdmin}>
                     {adminImageMapLoading ? "Working..." : "Apply Product Image Mapping"}

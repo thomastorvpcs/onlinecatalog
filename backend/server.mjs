@@ -542,6 +542,16 @@ let postgresMirrorEnabled = false;
 let postgresMirrorRunning = false;
 const postgresMirrorQueue = [];
 const postgresMirrorLoggedFailures = new Set();
+const adminSeedRealJob = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  error: "",
+  totalPlanned: 0,
+  processed: 0,
+  categoriesSeeded: 0,
+  countPerCategory: 0
+};
 if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.warn(`[startup] Render runtime detected but DB_PATH is not using persistent disk: ${dbPath}`);
 } else {
@@ -572,6 +582,30 @@ function quoteIdent(name) {
 
 function postgresTableRef(tableName) {
   return `${quoteIdent(PG_SCHEMA)}.${quoteIdent(tableName)}`;
+}
+
+async function insertRowsPostgres(tableRef, columns, rows, chunkSize = 250) {
+  if (!pgClient) return;
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const safeColumns = (Array.isArray(columns) ? columns : []).map((name) => String(name || "").trim()).filter(Boolean);
+  if (!safeColumns.length) return;
+  for (let start = 0; start < rows.length; start += chunkSize) {
+    const chunk = rows.slice(start, start + chunkSize);
+    if (!chunk.length) continue;
+    const values = [];
+    const marks = [];
+    for (let rowIdx = 0; rowIdx < chunk.length; rowIdx += 1) {
+      const row = chunk[rowIdx];
+      const rowMarks = [];
+      for (let colIdx = 0; colIdx < safeColumns.length; colIdx += 1) {
+        values.push(Array.isArray(row) ? row[colIdx] : null);
+        rowMarks.push(`$${values.length}`);
+      }
+      marks.push(`(${rowMarks.join(", ")})`);
+    }
+    const sql = `INSERT INTO ${tableRef} (${safeColumns.map((c) => quoteIdent(c)).join(", ")}) VALUES ${marks.join(", ")}`;
+    await pgClient.query(sql, values);
+  }
 }
 
 function normalizeBindParams(args) {
@@ -5093,7 +5127,7 @@ function seedAdminRealDevicesPerCategory(countPerCategory) {
   };
 }
 
-async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
+async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory, progressCallback = null) {
   if (!pgClient) return seedAdminRealDevicesPerCategory(countPerCategory);
   const categoriesResult = await pgClient.query(`SELECT id, name FROM ${postgresTableRef("categories")}`);
   const categories = categoriesResult.rows || [];
@@ -5175,6 +5209,19 @@ async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
     }
   ];
 
+  const totalPlanned = config.length * Number(countPerCategory || 0);
+  let processed = 0;
+  const reportProgress = () => {
+    if (typeof progressCallback === "function") {
+      progressCallback({
+        processed,
+        totalPlanned,
+        categoriesSeeded: config.length,
+        countPerCategory: Number(countPerCategory || 0)
+      });
+    }
+  };
+
   await pgClient.query("BEGIN");
   try {
     await pgClient.query(`DELETE FROM ${postgresTableRef("devices")} WHERE id LIKE 'adminreal-%'`);
@@ -5195,6 +5242,42 @@ async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
           }
         }
       }
+      const deviceRows = [];
+      const inventoryRows = [];
+      const imageRows = [];
+      const flushBatches = async () => {
+        if (deviceRows.length) {
+          await insertRowsPostgres(
+            postgresTableRef("devices"),
+            [
+              "id", "manufacturer_id", "category_id", "model_name", "model_family", "storage_capacity", "grade", "base_price",
+              "image_url", "carrier", "screen_size", "modular", "color", "kit_type", "product_notes", "default_location_id", "is_active"
+            ],
+            deviceRows,
+            200
+          );
+          deviceRows.length = 0;
+        }
+        if (inventoryRows.length) {
+          await insertRowsPostgres(
+            postgresTableRef("device_inventory"),
+            ["device_id", "location_id", "quantity"],
+            inventoryRows,
+            500
+          );
+          inventoryRows.length = 0;
+        }
+        if (imageRows.length) {
+          await insertRowsPostgres(
+            postgresTableRef("device_images"),
+            ["device_id", "image_url", "sort_order"],
+            imageRows,
+            500
+          );
+          imageRows.length = 0;
+        }
+      };
+
       for (let i = 0; i < countPerCategory; i += 1) {
         const variant = variants[i % variants.length];
         const cycle = Math.floor(i / variants.length) + 1;
@@ -5232,24 +5315,16 @@ async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
           && grade === "A"
           && cycle === 1;
 
-        await pgClient.query(
-          `
-            INSERT INTO ${postgresTableRef("devices")} (
-              id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
-              image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 1)
-          `,
-          [id, manufacturerId, categoryId, modelName, modelFamily, storage, grade, price, heroImage, carrier, screenSize, "No", color, kitType, `Admin realistic test device for ${cfg.name}.`, defaultLocationId]
-        );
+        deviceRows.push([
+          id, manufacturerId, categoryId, modelName, modelFamily, storage, grade, price,
+          heroImage, carrier, screenSize, "No", color, kitType, `Admin realistic test device for ${cfg.name}.`, defaultLocationId, 1
+        ]);
 
         for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
           const qty = isShortageTestTarget && (locIdx === 0 || locIdx === 1)
             ? 0
             : 10 + ((i * 7 + locIdx * 11) % 120);
-          await pgClient.query(
-            `INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity) VALUES ($1, $2, $3)`,
-            [id, locations[locIdx], qty]
-          );
+          inventoryRows.push([id, locations[locIdx], qty]);
         }
         const gallery = [heroImage];
         if (seedImagePool.length > 1) {
@@ -5265,29 +5340,84 @@ async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
           if (alt3 && !gallery.includes(alt3)) gallery.push(alt3);
         }
         for (let idx = 0; idx < gallery.length; idx += 1) {
-          await pgClient.query(
-            `INSERT INTO ${postgresTableRef("device_images")} (device_id, image_url, sort_order) VALUES ($1, $2, $3)`,
-            [id, gallery[idx], idx + 1]
-          );
+          imageRows.push([id, gallery[idx], idx + 1]);
+        }
+
+        processed += 1;
+        if (processed % 25 === 0) {
+          reportProgress();
+        }
+        if (deviceRows.length >= 120 || inventoryRows.length >= 1200 || imageRows.length >= 900) {
+          await flushBatches();
         }
       }
+      await flushBatches();
+      reportProgress();
     }
     await pgClient.query("COMMIT");
   } catch (error) {
     await pgClient.query("ROLLBACK");
     throw error;
   }
+  reportProgress();
   return {
     categoriesSeeded: config.length,
     countPerCategory
   };
 }
 
-async function seedAdminRealDevicesPerCategoryRuntime(countPerCategory) {
+async function seedAdminRealDevicesPerCategoryRuntime(countPerCategory, progressCallback = null) {
   if (effectiveDbEngine === "postgres" && pgClient) {
-    return seedAdminRealDevicesPerCategoryPostgres(countPerCategory);
+    return seedAdminRealDevicesPerCategoryPostgres(countPerCategory, progressCallback);
   }
   return seedAdminRealDevicesPerCategory(countPerCategory);
+}
+
+function getAdminSeedRealJobStatus() {
+  return {
+    running: adminSeedRealJob.running,
+    startedAt: adminSeedRealJob.startedAt,
+    finishedAt: adminSeedRealJob.finishedAt,
+    error: adminSeedRealJob.error,
+    totalPlanned: Number(adminSeedRealJob.totalPlanned || 0),
+    processed: Number(adminSeedRealJob.processed || 0),
+    categoriesSeeded: Number(adminSeedRealJob.categoriesSeeded || 0),
+    countPerCategory: Number(adminSeedRealJob.countPerCategory || 0)
+  };
+}
+
+function startAdminSeedRealJob(countPerCategory) {
+  const safeCount = Math.max(1, Math.min(1000, Number(countPerCategory || 100)));
+  if (adminSeedRealJob.running) {
+    return { started: false, status: getAdminSeedRealJobStatus() };
+  }
+  adminSeedRealJob.running = true;
+  adminSeedRealJob.startedAt = new Date().toISOString();
+  adminSeedRealJob.finishedAt = null;
+  adminSeedRealJob.error = "";
+  adminSeedRealJob.countPerCategory = safeCount;
+  adminSeedRealJob.categoriesSeeded = 5;
+  adminSeedRealJob.totalPlanned = 5 * safeCount;
+  adminSeedRealJob.processed = 0;
+
+  void (async () => {
+    try {
+      await seedAdminRealDevicesPerCategoryRuntime(safeCount, (progress) => {
+        adminSeedRealJob.processed = Number(progress?.processed || adminSeedRealJob.processed || 0);
+        adminSeedRealJob.totalPlanned = Number(progress?.totalPlanned || adminSeedRealJob.totalPlanned || 0);
+        adminSeedRealJob.categoriesSeeded = Number(progress?.categoriesSeeded || adminSeedRealJob.categoriesSeeded || 0);
+        adminSeedRealJob.countPerCategory = Number(progress?.countPerCategory || adminSeedRealJob.countPerCategory || 0);
+      });
+    } catch (error) {
+      adminSeedRealJob.error = String(error?.message || error || "Seed job failed.");
+    } finally {
+      adminSeedRealJob.running = false;
+      adminSeedRealJob.finishedAt = new Date().toISOString();
+      adminSeedRealJob.processed = Math.min(adminSeedRealJob.processed, adminSeedRealJob.totalPlanned);
+    }
+  })();
+
+  return { started: true, status: getAdminSeedRealJobStatus() };
 }
 
 function toTitleCase(value) {
@@ -7602,8 +7732,15 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const body = await parseBody(req);
       const countPerCategory = Math.max(1, Math.min(1000, Number(body.countPerCategory || 100)));
-      const result = await seedAdminRealDevicesPerCategoryRuntime(countPerCategory);
-      json(req, res, 200, { ok: true, ...result });
+      const started = startAdminSeedRealJob(countPerCategory);
+      json(req, res, 202, { ok: true, ...started });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/catalog/seed-real/status") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      json(req, res, 200, { ok: true, status: getAdminSeedRealJobStatus() });
       return;
     }
 
