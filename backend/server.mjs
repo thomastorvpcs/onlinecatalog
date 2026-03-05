@@ -3836,6 +3836,60 @@ function buildCopilotHistoricalSalesContext() {
   };
 }
 
+async function buildCopilotHistoricalSalesContextRuntime() {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return buildCopilotHistoricalSalesContext();
+  }
+  const totalsRes = await pgClient.query(`
+    SELECT
+      COUNT(*)::bigint AS "completedCount",
+      COALESCE(SUM(total_amount), 0) AS "completedRevenue"
+    FROM ${postgresTableRef("quote_requests")}
+    WHERE status = 'Completed'
+  `);
+  const totalUnitsRes = await pgClient.query(`
+    SELECT COALESCE(SUM(qrl.quantity), 0) AS units
+    FROM ${postgresTableRef("quote_request_lines")} qrl
+    JOIN ${postgresTableRef("quote_requests")} qr ON qr.id = qrl.request_id
+    WHERE qr.status = 'Completed'
+  `);
+  const topCategoriesRes = await pgClient.query(`
+    SELECT
+      COALESCE(c.name, 'Unknown') AS category,
+      COALESCE(SUM(qrl.quantity), 0) AS qty
+    FROM ${postgresTableRef("quote_request_lines")} qrl
+    JOIN ${postgresTableRef("quote_requests")} qr ON qr.id = qrl.request_id
+    LEFT JOIN ${postgresTableRef("devices")} d ON d.id = qrl.device_id
+    LEFT JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+    WHERE qr.status = 'Completed'
+    GROUP BY COALESCE(c.name, 'Unknown')
+    ORDER BY qty DESC, category ASC
+    LIMIT 5
+  `);
+  const topModelsRes = await pgClient.query(`
+    SELECT
+      qrl.model AS model,
+      COALESCE(SUM(qrl.quantity), 0) AS qty
+    FROM ${postgresTableRef("quote_request_lines")} qrl
+    JOIN ${postgresTableRef("quote_requests")} qr ON qr.id = qrl.request_id
+    WHERE qr.status = 'Completed'
+    GROUP BY qrl.model
+    ORDER BY qty DESC, qrl.model ASC
+    LIMIT 8
+  `);
+  const totals = totalsRes.rows?.[0] || {};
+  const totalUnits = totalUnitsRes.rows?.[0] || {};
+  const topCategories = (topCategoriesRes.rows || []).map((r) => ({ category: r.category, quantity: Number(r.qty || 0) }));
+  const topModels = (topModelsRes.rows || []).map((r) => ({ model: r.model, quantity: Number(r.qty || 0) }));
+  return {
+    completedEstimateCount: Number(totals.completedCount || 0),
+    completedRevenue: Number(totals.completedRevenue || 0),
+    completedUnits: Number(totalUnits.units || 0),
+    topCategories,
+    topModels
+  };
+}
+
 function formatUsdValue(value) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric)) return "$0.00";
@@ -3874,6 +3928,17 @@ function buildGradeDefinitionReply(messageRaw) {
 
 function buildOrderHistoryFiltersFromMessage(message, selectedCategory) {
   const parsed = parseAiFilters(message, selectedCategory);
+  return {
+    search: String(parsed?.search || "").trim(),
+    manufacturers: Array.isArray(parsed?.filters?.manufacturer) ? parsed.filters.manufacturer : [],
+    modelFamilies: Array.isArray(parsed?.filters?.modelFamily) ? parsed.filters.modelFamily : [],
+    grades: Array.isArray(parsed?.filters?.grade) ? parsed.filters.grade : [],
+    storages: Array.isArray(parsed?.filters?.storage) ? parsed.filters.storage : []
+  };
+}
+
+async function buildOrderHistoryFiltersFromMessageRuntime(message, selectedCategory) {
+  const parsed = await parseAiFiltersRuntime(message, selectedCategory);
   return {
     search: String(parsed?.search || "").trim(),
     manufacturers: Array.isArray(parsed?.filters?.manufacturer) ? parsed.filters.manufacturer : [],
@@ -3945,6 +4010,85 @@ function queryOrderHistoryLineRows(user, message, selectedCategory, limit = 150)
   `;
 
   return db.prepare(sql).all(...params).map((row) => ({
+    model: String(row.model || "").trim(),
+    grade: String(row.grade || "").trim(),
+    quantity: Number(row.quantity || 0),
+    offerPrice: Number(row.offerPrice || 0),
+    requestNumber: String(row.requestNumber || "").trim(),
+    createdAt: String(row.createdAt || "").trim(),
+    status: String(row.status || "").trim()
+  }));
+}
+
+async function queryOrderHistoryLineRowsRuntime(user, message, selectedCategory, limit = 150) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return queryOrderHistoryLineRows(user, message, selectedCategory, limit);
+  }
+  const filters = await buildOrderHistoryFiltersFromMessageRuntime(message, selectedCategory);
+  const clauses = [];
+  const params = [];
+  const pushParam = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (user?.role !== "admin") {
+    const marker = pushParam(String(user?.company || "").trim());
+    clauses.push(`qr.company = ${marker}`);
+  }
+  if (filters.search) {
+    const marker = pushParam(`%${filters.search.toLowerCase()}%`);
+    clauses.push(`LOWER(qrl.model) LIKE ${marker}`);
+  }
+  if (filters.modelFamilies.length) {
+    const parts = [];
+    for (const family of filters.modelFamilies) {
+      const marker = pushParam(`%${String(family || "").toLowerCase()}%`);
+      parts.push(`LOWER(qrl.model) LIKE ${marker}`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+  if (filters.manufacturers.length) {
+    const parts = [];
+    for (const manufacturer of filters.manufacturers) {
+      const marker = pushParam(`%${String(manufacturer || "").toLowerCase()}%`);
+      parts.push(`LOWER(qrl.model) LIKE ${marker}`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+  if (filters.grades.length) {
+    const marker = pushParam(filters.grades);
+    clauses.push(`qrl.grade = ANY(${marker}::text[])`);
+  }
+  if (filters.storages.length) {
+    const parts = [];
+    for (const storage of filters.storages) {
+      const marker = pushParam(`%${String(storage || "").toLowerCase()}%`);
+      parts.push(`LOWER(qrl.model) LIKE ${marker}`);
+    }
+    clauses.push(`(${parts.join(" OR ")})`);
+  }
+
+  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const limitValue = Math.max(1, Math.min(500, Number(limit || 150)));
+  const limitMarker = pushParam(limitValue);
+  const sql = `
+    SELECT
+      qrl.model AS model,
+      qrl.grade AS grade,
+      qrl.quantity AS quantity,
+      qrl.offer_price AS "offerPrice",
+      qr.request_number AS "requestNumber",
+      qr.created_at AS "createdAt",
+      qr.status AS status
+    FROM ${postgresTableRef("quote_request_lines")} qrl
+    JOIN ${postgresTableRef("quote_requests")} qr ON qr.id = qrl.request_id
+    ${whereSql}
+    ORDER BY qr.created_at DESC, qrl.id DESC
+    LIMIT ${limitMarker}
+  `;
+  const result = await pgClient.query(sql, params);
+  return (result.rows || []).map((row) => ({
     model: String(row.model || "").trim(),
     grade: String(row.grade || "").trim(),
     quantity: Number(row.quantity || 0),
@@ -4033,6 +4177,87 @@ function buildCopilotUserOrderHistoryContext(user) {
   };
 }
 
+async function buildCopilotUserOrderHistoryContextRuntime(user) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return buildCopilotUserOrderHistoryContext(user);
+  }
+  const lines = await queryOrderHistoryLineRowsRuntime(user, "", "Smartphones", 300);
+  const byModel = new Map();
+  for (const row of lines) {
+    const key = row.model || "Unknown";
+    const entry = byModel.get(key) || {
+      model: key,
+      orders: 0,
+      units: 0,
+      weightedValue: 0,
+      lastOfferPrice: 0,
+      lastPurchasedAt: "",
+      lastRequestNumber: ""
+    };
+    entry.orders += 1;
+    entry.units += Number(row.quantity || 0);
+    entry.weightedValue += Number(row.offerPrice || 0) * Number(row.quantity || 0);
+    if (!entry.lastPurchasedAt || new Date(row.createdAt).getTime() > new Date(entry.lastPurchasedAt).getTime()) {
+      entry.lastPurchasedAt = row.createdAt;
+      entry.lastOfferPrice = Number(row.offerPrice || 0);
+      entry.lastRequestNumber = row.requestNumber || "";
+    }
+    byModel.set(key, entry);
+  }
+  const topModelPriceStats = [...byModel.values()]
+    .map((row) => ({
+      model: row.model,
+      orders: row.orders,
+      units: row.units,
+      averageOfferPrice: row.units > 0 ? Number((row.weightedValue / row.units).toFixed(2)) : 0,
+      lastOfferPrice: Number((row.lastOfferPrice || 0).toFixed(2)),
+      lastPurchasedAt: row.lastPurchasedAt,
+      lastRequestNumber: row.lastRequestNumber
+    }))
+    .sort((a, b) => b.units - a.units || a.model.localeCompare(b.model))
+    .slice(0, 40);
+
+  const clauses = [];
+  const params = [];
+  if (user?.role !== "admin") {
+    params.push(String(user?.company || "").trim());
+    clauses.push(`qr.company = $${params.length}`);
+  }
+  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const recentRes = await pgClient.query(
+    `
+      SELECT
+        qr.request_number AS "requestNumber",
+        qr.status AS status,
+        qr.total_amount AS "totalAmount",
+        qr.currency_code AS "currencyCode",
+        qr.created_at AS "createdAt",
+        COUNT(qrl.id)::bigint AS "lineCount"
+      FROM ${postgresTableRef("quote_requests")} qr
+      LEFT JOIN ${postgresTableRef("quote_request_lines")} qrl ON qrl.request_id = qr.id
+      ${whereSql}
+      GROUP BY qr.id, qr.request_number, qr.status, qr.total_amount, qr.currency_code, qr.created_at
+      ORDER BY qr.created_at DESC
+      LIMIT 8
+    `,
+    params
+  );
+  const recentOrders = (recentRes.rows || []).map((row) => ({
+    requestNumber: String(row.requestNumber || "").trim(),
+    status: String(row.status || "").trim(),
+    totalAmount: Number(row.totalAmount || 0),
+    currencyCode: String(row.currencyCode || "USD").trim(),
+    createdAt: String(row.createdAt || "").trim(),
+    lineCount: Number(row.lineCount || 0)
+  }));
+  return {
+    scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`,
+    totalLineItems: lines.length,
+    topModelPriceStats,
+    recentOrders
+  };
+}
+
 function isOrderHistoryQuestion(messageRaw) {
   const text = String(messageRaw || "").toLowerCase();
   return /(last time|previous order|previously|what price|price did|average price|avg price|paid|bought|historical|order history)/.test(text);
@@ -4067,6 +4292,24 @@ function queryOrdersForCopilot(user, limit = 8) {
   `).all(...params);
 }
 
+async function queryOrdersForCopilotRuntime(user, limit = 8) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return queryOrdersForCopilot(user, limit);
+  }
+  const safeLimit = Math.max(1, Math.min(40, Number(limit || 8)));
+  if (user?.role === "admin") {
+    const result = await pgClient.query(
+      `SELECT * FROM ${postgresTableRef("quote_requests")} ORDER BY created_at DESC LIMIT ${safeLimit}`
+    );
+    return Array.isArray(result.rows) ? result.rows : [];
+  }
+  const result = await pgClient.query(
+    `SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = $1 ORDER BY created_at DESC LIMIT ${safeLimit}`,
+    [String(user?.company || "").trim()]
+  );
+  return Array.isArray(result.rows) ? result.rows : [];
+}
+
 function answerOrderDetailsQuestion(user, message) {
   const orderRef = extractOrderReference(message);
   const rows = queryOrdersForCopilot(user, 15);
@@ -4098,6 +4341,33 @@ function answerOrderDetailsQuestion(user, message) {
     reply: `${header}${linesText}`,
     action: null
   };
+}
+
+async function answerOrderDetailsQuestionRuntime(user, message) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return answerOrderDetailsQuestion(user, message);
+  }
+  const orderRef = extractOrderReference(message);
+  const rows = await queryOrdersForCopilotRuntime(user, 15);
+  if (!rows.length) return null;
+  const targetRow = orderRef
+    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
+    : rows[0];
+  if (orderRef && !targetRow) {
+    return { reply: `I couldn't find order ${orderRef} in your accessible order history.`, action: null };
+  }
+  if (!targetRow) return null;
+  const mapped = await mapRequestRowPostgres(targetRow);
+  const lineDetails = Array.isArray(mapped.lines) ? mapped.lines : [];
+  const linePreview = lineDetails.slice(0, 8).map((line) => {
+    const qty = Number(line.quantity || 0);
+    const price = Number(line.offerPrice || 0);
+    return `${line.model} (${line.grade}) x${qty} @ ${formatUsdValue(price)} = ${formatUsdValue(qty * price)}`;
+  });
+  const moreCount = Math.max(0, lineDetails.length - linePreview.length);
+  const header = `Order ${mapped.requestNumber} is ${mapped.status}. Created ${new Date(mapped.createdAt).toLocaleDateString("en-US")}. Total ${formatUsdValue(mapped.total)} (${lineDetails.length} lines).`;
+  const linesText = linePreview.length ? ` Lines: ${linePreview.join("; ")}${moreCount ? `; +${moreCount} more line(s).` : "."}` : " This order has no line items.";
+  return { reply: `${header}${linesText}`, action: null };
 }
 
 function isAddFromHistoryIntent(messageRaw) {
@@ -4193,6 +4463,69 @@ function buildAddFromHistoricalOrderAction(user, message, allDevicesInput = null
   };
 }
 
+async function buildAddFromHistoricalOrderActionRuntime(user, message, allDevicesInput = null) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return buildAddFromHistoricalOrderAction(user, message, allDevicesInput);
+  }
+  const rows = await queryOrdersForCopilotRuntime(user, 25);
+  if (!rows.length) return null;
+  const orderRef = extractOrderReference(message);
+  const targetRow = orderRef
+    ? rows.find((r) => String(r.request_number || "").toUpperCase() === orderRef || String(r.netsuite_estimate_number || "").toUpperCase() === orderRef)
+    : rows[0];
+  if (!targetRow) {
+    return { reply: `I couldn't find order ${orderRef} in your accessible order history.`, action: null };
+  }
+  const request = await mapRequestRowPostgres(targetRow);
+  const allDevices = Array.isArray(allDevicesInput)
+    ? allDevicesInput
+    : getDevices(new URL("http://localhost/api/devices"));
+  const addLines = [];
+  const unavailableModels = [];
+  const adjustedModels = [];
+  for (const line of Array.isArray(request.lines) ? request.lines : []) {
+    const lineModel = String(line.model || "").trim();
+    const lineGrade = String(line.grade || "").trim();
+    if (!lineModel) continue;
+    const candidates = allDevices
+      .filter((d) => String(d.model || "").toLowerCase() === lineModel.toLowerCase()
+        && (!lineGrade || String(d.grade || "").toLowerCase() === lineGrade.toLowerCase()))
+      .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
+    const fallbackCandidates = candidates.length
+      ? candidates
+      : allDevices
+        .filter((d) => String(d.model || "").toLowerCase().includes(lineModel.toLowerCase()))
+        .sort((a, b) => Number(b.available || 0) - Number(a.available || 0));
+    const chosen = fallbackCandidates[0];
+    const available = Number(chosen?.available || 0);
+    if (!chosen || available <= 0) {
+      unavailableModels.push(lineModel);
+      continue;
+    }
+    const requestedQty = Math.max(1, Math.floor(Number(line.quantity || 1)));
+    const quantity = Math.min(requestedQty, available);
+    if (quantity < requestedQty) adjustedModels.push(`${lineModel} (${requestedQty} requested, ${quantity} added)`);
+    addLines.push({
+      deviceId: chosen.id,
+      quantity,
+      offerPrice: Number.isFinite(Number(line.offerPrice)) ? Number(line.offerPrice) : Number(chosen.price || 0),
+      note: `From historical order ${request.requestNumber}`
+    });
+  }
+  if (!addLines.length) {
+    const unavailableText = unavailableModels.length ? ` Unavailable: ${unavailableModels.slice(0, 5).join(", ")}.` : "";
+    return { reply: `I found ${request.requestNumber}, but none of its items are currently available in inventory.${unavailableText}`, action: null };
+  }
+  const addedCount = addLines.length;
+  const skippedCount = unavailableModels.length;
+  const adjustmentsText = adjustedModels.length ? ` Quantities adjusted due to inventory limits: ${adjustedModels.slice(0, 4).join("; ")}.` : "";
+  const skippedText = skippedCount ? ` I skipped ${skippedCount} unavailable item${skippedCount === 1 ? "" : "s"}: ${unavailableModels.slice(0, 5).join(", ")}.` : "";
+  return {
+    reply: `I prepared ${addedCount} item${addedCount === 1 ? "" : "s"} from ${request.requestNumber} and will add only what is currently in inventory.${skippedText}${adjustmentsText}`,
+    action: { type: "add_lines_to_request", payload: { sourceOrder: request.requestNumber, lines: addLines } }
+  };
+}
+
 function answerOrderHistoryQuestion(user, message, selectedCategory) {
   const rows = queryOrderHistoryLineRows(user, message, selectedCategory, 250);
   if (!rows.length) return null;
@@ -4245,6 +4578,42 @@ function answerOrderHistoryQuestion(user, message, selectedCategory) {
     reply: parts.join(" "),
     action: null
   };
+}
+
+async function answerOrderHistoryQuestionRuntime(user, message, selectedCategory) {
+  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+    return answerOrderHistoryQuestion(user, message, selectedCategory);
+  }
+  const rows = await queryOrderHistoryLineRowsRuntime(user, message, selectedCategory, 250);
+  if (!rows.length) return null;
+  const text = String(message || "").toLowerCase();
+  const wantsAverage = /\b(average|avg|mean)\b/.test(text);
+  const wantsLast = /\b(last|latest|previous|last time)\b/.test(text) || !wantsAverage;
+  const distinctModels = [...new Set(rows.map((r) => r.model).filter(Boolean))];
+  if (distinctModels.length > 3 && !/\biphone|galaxy|pixel|ipad|watch|airpods|macbook|thinkpad|model\b/.test(text)) {
+    const sample = distinctModels.slice(0, 3).join(", ");
+    return { reply: `I found order history for multiple models. Please specify the model (for example: ${sample}).`, action: null };
+  }
+  const byModel = new Map();
+  for (const row of rows) {
+    const key = row.model;
+    const entry = byModel.get(key) || { model: key, units: 0, weightedValue: 0, last: row };
+    entry.units += Number(row.quantity || 0);
+    entry.weightedValue += Number(row.offerPrice || 0) * Number(row.quantity || 0);
+    if (new Date(row.createdAt).getTime() > new Date(entry.last.createdAt).getTime()) {
+      entry.last = row;
+    }
+    byModel.set(key, entry);
+  }
+  const ranked = [...byModel.values()].sort((a, b) => b.units - a.units || a.model.localeCompare(b.model));
+  const target = ranked[0];
+  const avg = target.units > 0 ? Number((target.weightedValue / target.units).toFixed(2)) : Number(target.last.offerPrice || 0);
+  const last = target.last;
+  const parts = [];
+  if (wantsLast) parts.push(`Last time for ${target.model}: ${formatUsdValue(last.offerPrice)} in ${last.requestNumber} on ${new Date(last.createdAt).toLocaleDateString("en-US")}.`);
+  if (wantsAverage) parts.push(`Average historical offer price for ${target.model}: ${formatUsdValue(avg)} across ${target.units} units.`);
+  else parts.push(`Historical average for ${target.model}: ${formatUsdValue(avg)} across ${target.units} units.`);
+  return { reply: parts.join(" "), action: null };
 }
 
 function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
@@ -4617,30 +4986,25 @@ async function runAiCopilot(user, body) {
     if (deterministicWeeklySpecial) return deterministicWeeklySpecial;
 
     const deterministicAddFromHistory = isAddFromHistoryIntent(message)
-      ? buildAddFromHistoricalOrderAction(user, message, allDevices)
+      ? await buildAddFromHistoricalOrderActionRuntime(user, message, allDevices)
       : null;
     if (deterministicAddFromHistory) return deterministicAddFromHistory;
 
     const deterministicOrderDetailsAnswer = isOrderDetailsQuestion(message)
-      ? answerOrderDetailsQuestion(user, message)
+      ? await answerOrderDetailsQuestionRuntime(user, message)
       : null;
     if (deterministicOrderDetailsAnswer) return deterministicOrderDetailsAnswer;
 
     const deterministicHistoryAnswer = isOrderHistoryQuestion(message)
-      ? answerOrderHistoryQuestion(user, message, selectedCategory)
+      ? await answerOrderHistoryQuestionRuntime(user, message, selectedCategory)
       : null;
     if (deterministicHistoryAnswer) return deterministicHistoryAnswer;
 
-    const useStrictPostgresContexts = POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres";
-    const catalog = useStrictPostgresContexts
+    const catalog = (POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres")
       ? buildCopilotCatalogContextFromDevices(allDevices)
       : buildCopilotCatalogContext();
-    const history = useStrictPostgresContexts
-      ? { completedEstimateCount: 0, completedRevenue: 0, completedUnits: 0, topCategories: [], topModels: [] }
-      : buildCopilotHistoricalSalesContext();
-    const userHistory = useStrictPostgresContexts
-      ? { scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`, totalLineItems: 0, topModelPriceStats: [], recentOrders: [] }
-      : buildCopilotUserOrderHistoryContext(user);
+    const history = await buildCopilotHistoricalSalesContextRuntime();
+    const userHistory = await buildCopilotUserOrderHistoryContextRuntime(user);
     const weeklySpecials = buildCopilotWeeklySpecialContext(10, allDevices);
     const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials);
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
