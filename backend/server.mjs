@@ -4475,6 +4475,38 @@ function clearCatalogData() {
   return before;
 }
 
+async function clearCatalogDataPostgres() {
+  if (!pgClient) return clearCatalogData();
+  const beforeDevicesRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("devices")}`);
+  const beforeRawRes = await pgClient.query(`SELECT COUNT(*)::bigint AS count FROM ${postgresTableRef("boomi_inventory_raw")}`);
+  const before = {
+    devices: Number(beforeDevicesRes.rows?.[0]?.count || 0),
+    raw: Number(beforeRawRes.rows?.[0]?.count || 0)
+  };
+  await pgClient.query("BEGIN");
+  try {
+    await pgClient.query(`DELETE FROM ${postgresTableRef("boomi_inventory_raw")}`);
+    await pgClient.query(`DELETE FROM ${postgresTableRef("inventory_events")}`);
+    await pgClient.query(`DELETE FROM ${postgresTableRef("devices")}`);
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+  return before;
+}
+
+async function clearCatalogDataRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await clearCatalogDataPostgres();
+    } catch (error) {
+      console.error(`[postgres-write] /api/admin/catalog/clear fallback: ${error?.message || error}`);
+    }
+  }
+  return clearCatalogData();
+}
+
 function applyCatalogImageMappings() {
   const familyRows = db.prepare("SELECT model_family, COUNT(*) AS count FROM devices GROUP BY model_family ORDER BY model_family").all();
   const existingFamilies = new Set(familyRows.map((r) => r.model_family));
@@ -4515,6 +4547,87 @@ function applyCatalogImageMappings() {
     updatedDeviceRows,
     unmatchedFamilies
   };
+}
+
+async function applyCatalogImageMappingsPostgres() {
+  if (!pgClient) return applyCatalogImageMappings();
+  const familyRowsResult = await pgClient.query(`
+    SELECT model_family, COUNT(*)::bigint AS count
+    FROM ${postgresTableRef("devices")}
+    GROUP BY model_family
+    ORDER BY model_family
+  `);
+  const existingFamilies = new Set((familyRowsResult.rows || []).map((r) => r.model_family));
+  const mappedFamilies = Object.keys(MODEL_IMAGE_MAP).filter((family) => existingFamilies.has(family));
+  const unmatchedFamilies = [...existingFamilies].filter((family) => !MODEL_IMAGE_MAP[family]);
+
+  let updatedFamilies = 0;
+  let updatedDeviceRows = 0;
+
+  await pgClient.query("BEGIN");
+  try {
+    for (const family of mappedFamilies) {
+      const imageUrl = MODEL_IMAGE_MAP[family];
+      const updateResult = await pgClient.query(
+        `UPDATE ${postgresTableRef("devices")} SET image_url = $1, updated_at = CURRENT_TIMESTAMP WHERE model_family = $2`,
+        [imageUrl, family]
+      );
+      if (!updateResult.rowCount) continue;
+      updatedFamilies += 1;
+      const idsResult = await pgClient.query(
+        `SELECT id FROM ${postgresTableRef("devices")} WHERE model_family = $1`,
+        [family]
+      );
+      for (const row of (idsResult.rows || [])) {
+        await pgClient.query(`DELETE FROM ${postgresTableRef("device_images")} WHERE device_id = $1`, [row.id]);
+        await pgClient.query(
+          `INSERT INTO ${postgresTableRef("device_images")} (device_id, image_url, sort_order) VALUES ($1, $2, 0)`,
+          [row.id, imageUrl]
+        );
+        updatedDeviceRows += 1;
+      }
+    }
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    mappedFamilies: mappedFamilies.length,
+    updatedFamilies,
+    updatedDeviceRows,
+    unmatchedFamilies
+  };
+}
+
+async function applyCatalogImageMappingsRuntime() {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await applyCatalogImageMappingsPostgres();
+    } catch (error) {
+      console.error(`[postgres-write] /api/admin/catalog/apply-image-mapping fallback: ${error?.message || error}`);
+    }
+  }
+  return applyCatalogImageMappings();
+}
+
+async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
+  const nextValue = weeklySpecial ? 1 : 0;
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      const result = await pgClient.query(
+        `UPDATE ${postgresTableRef("devices")} SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [nextValue, deviceId]
+      );
+      return Number(result.rowCount || 0);
+    } catch (error) {
+      console.error(`[postgres-write] /api/admin/devices/:id/weekly-special fallback: ${error?.message || error}`);
+    }
+  }
+  const result = db.prepare("UPDATE devices SET weekly_special = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run(nextValue, deviceId);
+  return Number(result?.changes || 0);
 }
 
 function seedAdminTestDevicesPerCategory(countPerCategory) {
@@ -6713,9 +6826,8 @@ const server = createServer(async (req, res) => {
         return;
       }
       const deviceId = decodeURIComponent(weeklySpecialMatch[1]);
-      const result = db.prepare("UPDATE devices SET weekly_special = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .run(body.weeklySpecial ? 1 : 0, deviceId);
-      if (!result.changes) {
+      const changed = await updateWeeklySpecialFlagRuntime(deviceId, body.weeklySpecial);
+      if (!changed) {
         json(req, res, 404, { error: "Device not found." });
         return;
       }
@@ -6740,7 +6852,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/admin/catalog/clear") {
       const user = requireAdmin(req, res);
       if (!user) return;
-      const before = clearCatalogData();
+      const before = await clearCatalogDataRuntime();
       json(req, res, 200, { ok: true, removedDevices: before.devices, removedRawRows: before.raw });
       return;
     }
@@ -6768,7 +6880,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/admin/catalog/apply-image-mapping") {
       const user = requireAdmin(req, res);
       if (!user) return;
-      const result = applyCatalogImageMappings();
+      const result = await applyCatalogImageMappingsRuntime();
       json(req, res, 200, { ok: true, ...result });
       return;
     }
