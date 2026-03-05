@@ -2112,7 +2112,7 @@ async function issueRefreshTokenPostgres(userId) {
   const tokenHash = hashRefreshToken(refreshToken);
   const expiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
   await pgClient.query(`
-    INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+    INSERT INTO ${postgresTableRef("refresh_tokens")} (user_id, token_hash, expires_at)
     VALUES ($1, $2, $3)
   `, [userId, tokenHash, expiresAt]);
   return refreshToken;
@@ -2139,7 +2139,7 @@ async function revokeRefreshTokenPostgres(refreshToken, replacedByToken) {
   const tokenHash = hashRefreshToken(refreshToken);
   const replacedByHash = replacedByToken ? hashRefreshToken(replacedByToken) : null;
   await pgClient.query(`
-    UPDATE refresh_tokens
+    UPDATE ${postgresTableRef("refresh_tokens")}
     SET revoked_at = CURRENT_TIMESTAMP,
         replaced_by_hash = COALESCE($1, replaced_by_hash),
         last_used_at = CURRENT_TIMESTAMP
@@ -2192,7 +2192,7 @@ async function rotateRefreshTokenPostgres(refreshToken) {
   const tokenHash = hashRefreshToken(refreshToken);
   const rowRes = await pgClient.query(`
     SELECT id, user_id, expires_at, revoked_at
-    FROM refresh_tokens
+    FROM ${postgresTableRef("refresh_tokens")}
     WHERE token_hash = $1
     LIMIT 1
   `, [tokenHash]);
@@ -2200,7 +2200,7 @@ async function rotateRefreshTokenPostgres(refreshToken) {
   if (!row?.id) return null;
   if (row.revoked_at) return null;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    await pgClient.query("UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = $1", [row.id]);
+    await pgClient.query(`UPDATE ${postgresTableRef("refresh_tokens")} SET revoked_at = CURRENT_TIMESTAMP WHERE id = $1`, [row.id]);
     return null;
   }
 
@@ -2211,14 +2211,14 @@ async function rotateRefreshTokenPostgres(refreshToken) {
   await pgClient.query("BEGIN");
   try {
     await pgClient.query(`
-      UPDATE refresh_tokens
+      UPDATE ${postgresTableRef("refresh_tokens")}
       SET revoked_at = CURRENT_TIMESTAMP,
           replaced_by_hash = $1,
           last_used_at = CURRENT_TIMESTAMP
       WHERE id = $2
     `, [newRefreshHash, row.id]);
     await pgClient.query(`
-      INSERT INTO refresh_tokens (user_id, token_hash, expires_at, last_used_at)
+      INSERT INTO ${postgresTableRef("refresh_tokens")} (user_id, token_hash, expires_at, last_used_at)
       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
     `, [row.user_id, newRefreshHash, newExpiresAt]);
     await pgClient.query("COMMIT");
@@ -2509,7 +2509,8 @@ async function getUserByEmailRuntime(email, includePassword = false) {
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
-    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE email = $1 LIMIT 1`, [normalized]);
+    const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE email = $1 LIMIT 1`;
+    const result = await pgClient.query(sql, [normalized]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
@@ -2526,7 +2527,8 @@ async function getUserByIdRuntime(userId, includePassword = false) {
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
-    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE id = $1 LIMIT 1`, [id]);
+    const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`;
+    const result = await pgClient.query(sql, [id]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
@@ -2543,7 +2545,8 @@ async function getUserByAuth0SubRuntime(auth0Sub, includePassword = false) {
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
-    const result = await pgClient.query(`SELECT ${fields} FROM users WHERE auth0_sub = $1 LIMIT 1`, [sub]);
+    const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE auth0_sub = $1 LIMIT 1`;
+    const result = await pgClient.query(sql, [sub]);
     return result.rows?.[0] || null;
   }
   return db.prepare(
@@ -2570,7 +2573,7 @@ async function createUserRuntime({
   if (!normalizedEmail || !safeCompany || !passwordHash) throw new Error("Invalid user payload.");
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(`
-      INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
+      INSERT INTO ${postgresTableRef("users")} (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
     `, [normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null, String(firstName || "").trim(), String(lastName || "").trim(), registrationCompleted ? 1 : 0]);
@@ -2587,7 +2590,7 @@ async function setUserResetCodeRuntime(userId, resetCode, expiresAt) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return;
   if (effectiveDbEngine === "postgres" && pgClient) {
-    await pgClient.query("UPDATE users SET reset_code = $1, reset_code_expires_at = $2 WHERE id = $3", [resetCode, expiresAt, id]);
+    await pgClient.query(`UPDATE ${postgresTableRef("users")} SET reset_code = $1, reset_code_expires_at = $2 WHERE id = $3`, [resetCode, expiresAt, id]);
     return;
   }
   db.prepare("UPDATE users SET reset_code = ?, reset_code_expires_at = ? WHERE id = ?").run(resetCode, expiresAt, id);
@@ -2598,7 +2601,7 @@ async function setUserAuth0SubRuntime(userId, auth0Sub) {
   const sub = String(auth0Sub || "").trim();
   if (!Number.isInteger(id) || id < 1 || !sub) return;
   if (effectiveDbEngine === "postgres" && pgClient) {
-    await pgClient.query("UPDATE users SET auth0_sub = $1 WHERE id = $2", [sub, id]);
+    await pgClient.query(`UPDATE ${postgresTableRef("users")} SET auth0_sub = $1 WHERE id = $2`, [sub, id]);
     return;
   }
   db.prepare("UPDATE users SET auth0_sub = ? WHERE id = ?").run(sub, id);
@@ -2608,7 +2611,7 @@ async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return;
   if (effectiveDbEngine === "postgres" && pgClient) {
-    await pgClient.query("UPDATE users SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL WHERE id = $2", [passwordHash, id]);
+    await pgClient.query(`UPDATE ${postgresTableRef("users")} SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL WHERE id = $2`, [passwordHash, id]);
     return;
   }
   db.prepare("UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires_at = NULL WHERE id = ?").run(passwordHash, id);
@@ -2625,7 +2628,7 @@ async function completeUserRegistrationRuntime(userId, firstName, lastName, comp
   }
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(`
-      UPDATE users
+      UPDATE ${postgresTableRef("users")}
       SET first_name = $1,
           last_name = $2,
           company = $3,
@@ -2647,7 +2650,7 @@ async function completeUserRegistrationRuntime(userId, firstName, lastName, comp
 async function listUsersForAdminRuntime() {
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(
-      "SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM users ORDER BY created_at DESC"
+      `SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM ${postgresTableRef("users")} ORDER BY created_at DESC`
     );
     return (result.rows || []).map(makePublicUser);
   }
@@ -2661,7 +2664,7 @@ async function getUserForAdminByIdRuntime(userId) {
   if (!Number.isInteger(id) || id < 1) return null;
   if (effectiveDbEngine === "postgres" && pgClient) {
     const result = await pgClient.query(
-      "SELECT id, email, auth0_sub, role, is_active, registration_completed, company, first_name, last_name, created_at FROM users WHERE id = $1 LIMIT 1",
+      `SELECT id, email, auth0_sub, role, is_active, registration_completed, company, first_name, last_name, created_at FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`,
       [id]
     );
     return result.rows?.[0] || null;
@@ -2707,7 +2710,7 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
     }
     pgParams.push(id);
     const result = await pgClient.query(
-      `UPDATE users SET ${pgSet.join(", ")} WHERE id = $${pgParams.length}`,
+      `UPDATE ${postgresTableRef("users")} SET ${pgSet.join(", ")} WHERE id = $${pgParams.length}`,
       pgParams
     );
     if (Number(result.rowCount || 0) < 1) throw new Error("User not found.");
@@ -2725,9 +2728,9 @@ async function deleteUserRuntime(userId) {
   if (effectiveDbEngine === "postgres" && pgClient) {
     await pgClient.query("BEGIN");
     try {
-      await pgClient.query("UPDATE quote_requests SET created_by_user_id = NULL WHERE created_by_user_id = $1", [id]);
-      await pgClient.query("DELETE FROM refresh_tokens WHERE user_id = $1", [id]);
-      const deleted = await pgClient.query("DELETE FROM users WHERE id = $1", [id]);
+      await pgClient.query(`UPDATE ${postgresTableRef("quote_requests")} SET created_by_user_id = NULL WHERE created_by_user_id = $1`, [id]);
+      await pgClient.query(`DELETE FROM ${postgresTableRef("refresh_tokens")} WHERE user_id = $1`, [id]);
+      const deleted = await pgClient.query(`DELETE FROM ${postgresTableRef("users")} WHERE id = $1`, [id]);
       if (Number(deleted.rowCount || 0) < 1) {
         await pgClient.query("ROLLBACK");
         throw new Error("User not found.");
@@ -2766,7 +2769,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
 
   let result = await pgClient.query(`
     SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
-    FROM users
+    FROM ${postgresTableRef("users")}
     WHERE auth0_sub = $1
     LIMIT 1
   `, [auth0Sub]);
@@ -2774,7 +2777,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   if (!user) {
     result = await pgClient.query(`
       SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
-      FROM users
+      FROM ${postgresTableRef("users")}
       WHERE email = $1
       LIMIT 1
     `, [email]);
@@ -2783,14 +2786,14 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   if (user?.id) {
     const normalizedPreferredCompany = normalizeCompanyName(preferredCompany);
     if (!String(user.auth0_sub || "").trim()) {
-      await pgClient.query("UPDATE users SET auth0_sub = $1 WHERE id = $2", [auth0Sub, user.id]);
+      await pgClient.query(`UPDATE ${postgresTableRef("users")} SET auth0_sub = $1 WHERE id = $2`, [auth0Sub, user.id]);
     }
     if (normalizedPreferredCompany && normalizedPreferredCompany !== String(user.company || "").trim()) {
-      await pgClient.query("UPDATE users SET company = $1 WHERE id = $2", [normalizedPreferredCompany, user.id]);
+      await pgClient.query(`UPDATE ${postgresTableRef("users")} SET company = $1 WHERE id = $2`, [normalizedPreferredCompany, user.id]);
     }
     const finalRes = await pgClient.query(`
       SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
-      FROM users
+      FROM ${postgresTableRef("users")}
       WHERE id = $1
       LIMIT 1
     `, [user.id]);
@@ -7293,7 +7296,7 @@ async function getRequestLinesPostgres(requestId) {
   if (!pgClient) return [];
   const result = await pgClient.query(`
     SELECT device_id, model, grade, quantity, offer_price, note
-    FROM quote_request_lines
+    FROM ${postgresTableRef("quote_request_lines")}
     WHERE request_id = $1
     ORDER BY id
   `, [requestId]);
@@ -7334,8 +7337,8 @@ async function mapRequestRowPostgres(row) {
 async function getRequestsForUserPostgres(user) {
   if (!pgClient) return [];
   const result = user.role === "admin"
-    ? await pgClient.query("SELECT * FROM quote_requests ORDER BY created_at DESC")
-    : await pgClient.query("SELECT * FROM quote_requests WHERE company = $1 ORDER BY created_at DESC", [user.company]);
+    ? await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} ORDER BY created_at DESC`)
+    : await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = $1 ORDER BY created_at DESC`, [user.company]);
   const rows = Array.isArray(result.rows) ? result.rows : [];
   const mapped = [];
   for (const row of rows) {
@@ -7346,7 +7349,7 @@ async function getRequestsForUserPostgres(user) {
 
 async function getRequestByIdForUserPostgres(user, requestId) {
   if (!pgClient) return null;
-  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`, [requestId]);
   const row = result.rows?.[0];
   if (!row?.id) return null;
   if (user.role !== "admin" && row.company !== user.company) return null;
@@ -7358,7 +7361,7 @@ async function getNextRequestNumberPostgres() {
   const year = new Date().getFullYear();
   const prefix = `REQ-${year}-`;
   const result = await pgClient.query(
-    "SELECT request_number FROM quote_requests WHERE request_number LIKE $1 ORDER BY request_number DESC LIMIT 1",
+    `SELECT request_number FROM ${postgresTableRef("quote_requests")} WHERE request_number LIKE $1 ORDER BY request_number DESC LIMIT 1`,
     [`${prefix}%`]
   );
   const latest = String(result.rows?.[0]?.request_number || "");
@@ -7372,7 +7375,7 @@ async function getNextDummyEstimateNumberPostgres() {
   const year = new Date().getFullYear();
   const prefix = `EST-${year}-`;
   const result = await pgClient.query(
-    "SELECT netsuite_estimate_number FROM quote_requests WHERE netsuite_estimate_number LIKE $1 ORDER BY netsuite_estimate_number DESC LIMIT 1",
+    `SELECT netsuite_estimate_number FROM ${postgresTableRef("quote_requests")} WHERE netsuite_estimate_number LIKE $1 ORDER BY netsuite_estimate_number DESC LIMIT 1`,
     [`${prefix}%`]
   );
   const latest = String(result.rows?.[0]?.netsuite_estimate_number || "");
@@ -7389,10 +7392,10 @@ async function ensurePostgresUserForRuntime(user) {
   const requestedId = Number.isInteger(numericId) && numericId > 0 ? numericId : null;
 
   if (requestedId !== null) {
-    const byId = await pgClient.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [requestedId]);
+    const byId = await pgClient.query(`SELECT id FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`, [requestedId]);
     if (byId.rows?.[0]?.id) return Number(byId.rows[0].id);
   }
-  const byEmail = await pgClient.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [email]);
+  const byEmail = await pgClient.query(`SELECT id FROM ${postgresTableRef("users")} WHERE email = $1 LIMIT 1`, [email]);
   if (byEmail.rows?.[0]?.id) return Number(byEmail.rows[0].id);
 
   const company = String(user.company || "Unknown").trim() || "Unknown";
@@ -7401,20 +7404,20 @@ async function ensurePostgresUserForRuntime(user) {
   if (requestedId !== null) {
     try {
       const inserted = await pgClient.query(`
-        INSERT INTO users (id, email, company, role, password_hash, is_active, created_at)
+        INSERT INTO ${postgresTableRef("users")} (id, email, company, role, password_hash, is_active, created_at)
         VALUES ($1, $2, $3, $4, $5, 1, CURRENT_TIMESTAMP)
         RETURNING id
       `, [requestedId, email, company, role, placeholderPasswordHash]);
       if (inserted.rows?.[0]?.id) return Number(inserted.rows[0].id);
     } catch {
-      const retryById = await pgClient.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [requestedId]);
+      const retryById = await pgClient.query(`SELECT id FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`, [requestedId]);
       if (retryById.rows?.[0]?.id) return Number(retryById.rows[0].id);
-      const retryByEmail = await pgClient.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [email]);
+      const retryByEmail = await pgClient.query(`SELECT id FROM ${postgresTableRef("users")} WHERE email = $1 LIMIT 1`, [email]);
       if (retryByEmail.rows?.[0]?.id) return Number(retryByEmail.rows[0].id);
     }
   }
   const inserted = await pgClient.query(`
-    INSERT INTO users (email, company, role, password_hash, is_active, created_at)
+    INSERT INTO ${postgresTableRef("users")} (email, company, role, password_hash, is_active, created_at)
     VALUES ($1, $2, $3, $4, 1, CURRENT_TIMESTAMP)
     RETURNING id
   `, [email, company, role, placeholderPasswordHash]);
@@ -7433,21 +7436,21 @@ async function createRequestForUserPostgres(user, body) {
     await pgClient.query("BEGIN");
     try {
       await pgClient.query(`
-        INSERT INTO quote_requests (
+        INSERT INTO ${postgresTableRef("quote_requests")} (
           id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, 'New', $6, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `, [requestId, requestNumber, user.company, createdByUserId, user.email, total]);
 
       for (const line of lines) {
         await pgClient.query(`
-          INSERT INTO quote_request_lines (
+          INSERT INTO ${postgresTableRef("quote_request_lines")} (
             request_id, device_id, model, grade, quantity, offer_price, note
           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         `, [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null]);
       }
 
       await pgClient.query(`
-        INSERT INTO quote_request_events (request_id, event_type, payload_json)
+        INSERT INTO ${postgresTableRef("quote_request_events")} (request_id, event_type, payload_json)
         VALUES ($1, 'request_created', $2)
       `, [requestId, JSON.stringify({ lineCount: lines.length, total })]);
       await pgClient.query("COMMIT");
@@ -7467,7 +7470,7 @@ async function createRequestForUserPostgres(user, body) {
 
 async function createDummyEstimateForRequestPostgres(user, requestId) {
   if (!pgClient) return createDummyEstimateForRequest(user, requestId);
-  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`, [requestId]);
   const row = result.rows?.[0];
   if (!row?.id) {
     throw new Error("Request not found.");
@@ -7483,7 +7486,7 @@ async function createDummyEstimateForRequestPostgres(user, requestId) {
   const estimateNumber = await getNextDummyEstimateNumberPostgres();
   const syncAt = new Date().toISOString();
   await pgClient.query(`
-    UPDATE quote_requests
+    UPDATE ${postgresTableRef("quote_requests")}
     SET status = 'Estimate Created',
         netsuite_estimate_id = $1,
         netsuite_estimate_number = $2,
@@ -7493,7 +7496,7 @@ async function createDummyEstimateForRequestPostgres(user, requestId) {
     WHERE id = $4
   `, [estimateId, estimateNumber, syncAt, requestId]);
   await pgClient.query(`
-    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    INSERT INTO ${postgresTableRef("quote_request_events")} (request_id, event_type, payload_json)
     VALUES ($1, 'dummy_estimate_created', $2)
   `, [requestId, JSON.stringify({ estimateId, estimateNumber, syncedAt: syncAt })]);
   return getRequestByIdForUserPostgres(user, requestId);
@@ -7501,7 +7504,7 @@ async function createDummyEstimateForRequestPostgres(user, requestId) {
 
 async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
   if (!pgClient) return updateDummyEstimateStatus(user, requestId, nextStatus);
-  const result = await pgClient.query("SELECT * FROM quote_requests WHERE id = $1 LIMIT 1", [requestId]);
+  const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`, [requestId]);
   const row = result.rows?.[0];
   if (!row?.id) {
     throw new Error("Request not found.");
@@ -7512,7 +7515,7 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
   const status = normalizeRequestStatus(nextStatus, row.status || "New");
   const syncAt = new Date().toISOString();
   await pgClient.query(`
-    UPDATE quote_requests
+    UPDATE ${postgresTableRef("quote_requests")}
     SET status = $1,
         netsuite_status = $2,
         netsuite_last_sync_at = $3,
@@ -7520,7 +7523,7 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
     WHERE id = $4
   `, [status, status, syncAt, requestId]);
   await pgClient.query(`
-    INSERT INTO quote_request_events (request_id, event_type, payload_json)
+    INSERT INTO ${postgresTableRef("quote_request_events")} (request_id, event_type, payload_json)
     VALUES ($1, 'dummy_status_update', $2)
   `, [requestId, JSON.stringify({ status, syncedAt: syncAt })]);
   return getRequestByIdForUserPostgres(user, requestId);
