@@ -2803,7 +2803,7 @@ function getDevices(url) {
 
 async function getCategoriesPostgres() {
   if (!pgClient) return [];
-  const result = await pgClient.query("SELECT name FROM categories ORDER BY id");
+  const result = await pgClient.query(`SELECT name FROM ${postgresTableRef("categories")} ORDER BY id`);
   return result.rows.map((row) => row.name);
 }
 
@@ -2854,8 +2854,8 @@ async function getDevicesPostgres(url) {
       filters.push(`
         EXISTS (
           SELECT 1
-          FROM device_inventory di_r
-          JOIN locations l_r ON l_r.id = di_r.location_id
+          FROM ${postgresTableRef("device_inventory")} di_r
+          JOIN ${postgresTableRef("locations")} l_r ON l_r.id = di_r.location_id
           WHERE di_r.device_id = d.id
             AND di_r.quantity > 0
             AND l_r.name = ANY(${marker}::text[])
@@ -2871,11 +2871,11 @@ async function getDevicesPostgres(url) {
     SELECT COUNT(*)::bigint AS count
     FROM (
       SELECT d.id
-      FROM devices d
-      JOIN manufacturers m ON m.id = d.manufacturer_id
-      JOIN categories c ON c.id = d.category_id
-      LEFT JOIN locations dl ON dl.id = d.default_location_id
-      LEFT JOIN device_inventory di ON di.device_id = d.id
+      FROM ${postgresTableRef("devices")} d
+      JOIN ${postgresTableRef("manufacturers")} m ON m.id = d.manufacturer_id
+      JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+      LEFT JOIN ${postgresTableRef("locations")} dl ON dl.id = d.default_location_id
+      LEFT JOIN ${postgresTableRef("device_inventory")} di ON di.device_id = d.id
       ${whereSql}
       GROUP BY d.id
     ) x
@@ -2903,11 +2903,11 @@ async function getDevicesPostgres(url) {
       d.product_notes AS "productNotes",
       d.weekly_special AS "weeklySpecial",
       COALESCE(SUM(di.quantity), 0) AS available
-    FROM devices d
-    JOIN manufacturers m ON m.id = d.manufacturer_id
-    JOIN categories c ON c.id = d.category_id
-    LEFT JOIN locations dl ON dl.id = d.default_location_id
-    LEFT JOIN device_inventory di ON di.device_id = d.id
+    FROM ${postgresTableRef("devices")} d
+    JOIN ${postgresTableRef("manufacturers")} m ON m.id = d.manufacturer_id
+    JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+    LEFT JOIN ${postgresTableRef("locations")} dl ON dl.id = d.default_location_id
+    LEFT JOIN ${postgresTableRef("device_inventory")} di ON di.device_id = d.id
     ${whereSql}
     GROUP BY d.id, m.name, d.model_name, d.model_family, c.name, d.grade, dl.name, d.storage_capacity, d.base_price, d.image_url, d.carrier, d.screen_size, d.modular, d.color, d.kit_type, d.product_notes, d.weekly_special
     ORDER BY c.id, m.name, d.model_name
@@ -2925,7 +2925,7 @@ async function getDevicesPostgres(url) {
   const devices = Array.isArray(deviceRes.rows) ? deviceRes.rows : [];
   const deviceIds = devices.map((row) => row.id).filter(Boolean);
 
-  const allLocationsRes = await pgClient.query("SELECT id, name, external_id AS \"externalId\" FROM locations ORDER BY id");
+  const allLocationsRes = await pgClient.query(`SELECT id, name, external_id AS "externalId" FROM ${postgresTableRef("locations")} ORDER BY id`);
   const allLocations = Array.isArray(allLocationsRes.rows) ? allLocationsRes.rows : [];
 
   const inventoryByDevice = new Map();
@@ -2933,7 +2933,7 @@ async function getDevicesPostgres(url) {
   if (deviceIds.length) {
     const invRes = await pgClient.query(
       `SELECT device_id AS "deviceId", location_id AS "locationId", COALESCE(quantity, 0) AS quantity
-       FROM device_inventory
+       FROM ${postgresTableRef("device_inventory")}
        WHERE device_id = ANY($1::text[])`,
       [deviceIds]
     );
@@ -2943,7 +2943,7 @@ async function getDevicesPostgres(url) {
     }
     const imgRes = await pgClient.query(
       `SELECT device_id AS "deviceId", image_url AS "imageUrl"
-       FROM device_images
+       FROM ${postgresTableRef("device_images")}
        WHERE device_id = ANY($1::text[])
        ORDER BY sort_order, id`,
       [deviceIds]
@@ -2999,6 +2999,9 @@ async function getCategoriesRuntime() {
     try {
       return await getCategoriesPostgres();
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres categories query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] /api/categories fallback: ${error?.message || error}`);
     }
   }
@@ -3010,6 +3013,9 @@ async function getDevicesRuntime(url) {
     try {
       return await getDevicesPostgres(url);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres devices query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] /api/devices fallback: ${error?.message || error}`);
     }
   }
