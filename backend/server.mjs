@@ -5916,7 +5916,16 @@ async function upsertLocationsPostgres(rows) {
     marks.push(`($${values.length - 1}, $${values.length})`);
   }
   await pgClient.query(
-    `INSERT INTO ${postgresTableRef("locations")} (name, external_id) VALUES ${marks.join(", ")} ON CONFLICT(external_id) DO NOTHING`,
+    `
+      INSERT INTO ${postgresTableRef("locations")} (name, external_id)
+      SELECT src.name, src.external_id
+      FROM (VALUES ${marks.join(", ")}) AS src(name, external_id)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ${postgresTableRef("locations")} l
+        WHERE l.external_id = src.external_id
+      )
+    `,
     values
   );
 }
@@ -5973,19 +5982,36 @@ async function upsertDevicesPostgres(rows) {
 async function upsertDeviceInventoryPostgres(rows) {
   if (!rows.length) return;
   for (let start = 0; start < rows.length; start += BOOMI_SYNC_PG_CHUNK_SIZE) {
-    const chunk = rows.slice(start, start + BOOMI_SYNC_PG_CHUNK_SIZE);
+    const rawChunk = rows.slice(start, start + BOOMI_SYNC_PG_CHUNK_SIZE);
+    const dedup = new Map();
+    for (const row of rawChunk) {
+      const key = `${row.deviceId}::${row.locationId}`;
+      dedup.set(key, row);
+    }
+    const chunk = [...dedup.values()];
     const values = [];
     const marks = [];
+    const deleteValues = [];
+    const deleteMarks = [];
     for (const row of chunk) {
       values.push(row.deviceId, row.locationId, row.quantity);
       marks.push(`($${values.length - 2}, $${values.length - 1}, $${values.length})`);
+      deleteValues.push(row.deviceId, row.locationId);
+      deleteMarks.push(`($${deleteValues.length - 1}, $${deleteValues.length})`);
     }
+    await pgClient.query(
+      `
+        DELETE FROM ${postgresTableRef("device_inventory")} di
+        USING (VALUES ${deleteMarks.join(", ")}) AS src(device_id, location_id)
+        WHERE di.device_id = src.device_id
+          AND di.location_id = src.location_id
+      `,
+      deleteValues
+    );
     await pgClient.query(
       `
         INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity)
         VALUES ${marks.join(", ")}
-        ON CONFLICT(device_id, location_id)
-        DO UPDATE SET quantity = excluded.quantity
       `,
       values
     );
@@ -6075,13 +6101,31 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
 
       if (manufacturerNames.length) {
         await pgClient.query(
-          `INSERT INTO ${postgresTableRef("manufacturers")} (name) SELECT DISTINCT unnest($1::text[]) ON CONFLICT(name) DO NOTHING`,
+          `
+            INSERT INTO ${postgresTableRef("manufacturers")} (name)
+            SELECT src.name
+            FROM (SELECT DISTINCT unnest($1::text[]) AS name) src
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM ${postgresTableRef("manufacturers")} m
+              WHERE m.name = src.name
+            )
+          `,
           [manufacturerNames]
         );
       }
       if (categoryNames.length) {
         await pgClient.query(
-          `INSERT INTO ${postgresTableRef("categories")} (name) SELECT DISTINCT unnest($1::text[]) ON CONFLICT(name) DO NOTHING`,
+          `
+            INSERT INTO ${postgresTableRef("categories")} (name)
+            SELECT src.name
+            FROM (SELECT DISTINCT unnest($1::text[]) AS name) src
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM ${postgresTableRef("categories")} c
+              WHERE c.name = src.name
+            )
+          `,
           [categoryNames]
         );
       }
