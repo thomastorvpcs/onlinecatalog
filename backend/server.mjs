@@ -6216,7 +6216,12 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
         processed += 1;
       }
 
-      await upsertDevicesPostgres(deviceRows);
+      const dedupDeviceMap = new Map();
+      for (const row of deviceRows) {
+        dedupDeviceMap.set(String(row.id || ""), row);
+      }
+      const dedupDeviceRows = [...dedupDeviceMap.values()];
+      await upsertDevicesPostgres(dedupDeviceRows);
       await upsertDeviceInventoryPostgres(inventoryRows);
 
       const uniqueDeviceIds = [...new Set(deviceIdsInChunk)];
