@@ -1760,7 +1760,10 @@ async function setBooleanAppSettingPostgres(key, value) {
 }
 
 async function getBooleanAppSettingRuntime(key, defaultValue = false) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getBooleanAppSettingPostgres(key, defaultValue);
     } catch (error) {
@@ -1774,7 +1777,10 @@ async function getBooleanAppSettingRuntime(key, defaultValue = false) {
 }
 
 async function setBooleanAppSettingRuntime(key, value) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       await setBooleanAppSettingPostgres(key, value);
       return;
@@ -3209,7 +3215,10 @@ async function getDevicesPostgres(url) {
 }
 
 async function getCategoriesRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getCategoriesPostgres();
     } catch (error) {
@@ -3223,7 +3232,10 @@ async function getCategoriesRuntime() {
 }
 
 async function getDevicesRuntime(url) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getDevicesPostgres(url);
     } catch (error) {
@@ -3331,8 +3343,11 @@ function parseAiFilters(promptRaw, selectedCategoryRaw = "") {
 }
 
 async function parseAiFiltersRuntime(promptRaw, selectedCategoryRaw = "") {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return parseAiFilters(promptRaw, selectedCategoryRaw);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const prompt = String(promptRaw || "").trim();
   if (!prompt) {
@@ -5224,7 +5239,10 @@ async function getAiAdminAnomaliesPostgres() {
 }
 
 async function getAiAdminAnomaliesRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getAiAdminAnomaliesPostgres();
     } catch (error) {
@@ -5307,7 +5325,10 @@ async function getAiSalesInsightsPostgres(daysRaw) {
 }
 
 async function getAiSalesInsightsRuntime(daysRaw) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getAiSalesInsightsPostgres(daysRaw);
     } catch (error) {
@@ -5406,7 +5427,10 @@ async function clearCatalogDataPostgres() {
 }
 
 async function clearCatalogDataRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       const before = await clearCatalogDataPostgres();
       if (!POSTGRES_STRICT_RUNTIME) {
@@ -5428,7 +5452,10 @@ async function clearCatalogDataRuntime() {
 }
 
 async function getCatalogDebugCountsRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     const [
       devicesRes,
       activeRes,
@@ -5484,7 +5511,10 @@ async function getCatalogDebugCountsRuntime() {
 
 async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
   const nextValue = weeklySpecial ? 1 : 0;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       const qualifiedResult = await pgClient.query(
         `UPDATE ${postgresTableRef("devices")} SET weekly_special = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
@@ -6838,7 +6868,10 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
 }
 
 async function syncBoomiInventoryRowsRuntime(rows, progressCallback = null) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await syncBoomiInventoryRowsPostgres(rows, progressCallback);
     } catch (error) {
@@ -6931,7 +6964,10 @@ async function getInventoryByDeviceIdPostgres(deviceId) {
 }
 
 async function getInventoryByDeviceIdRuntime(deviceId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getInventoryByDeviceIdPostgres(deviceId);
     } catch (error) {
@@ -6967,7 +7003,10 @@ async function upsertInventoryQuantityPostgres(deviceId, locationId, quantity) {
 }
 
 async function upsertInventoryQuantityRuntime(deviceId, locationId, quantity) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
       return;
@@ -7005,7 +7044,10 @@ async function getInventoryQuantityPostgres(deviceId, locationId) {
 }
 
 async function getInventoryQuantityRuntime(deviceId, locationId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       return await getInventoryQuantityPostgres(deviceId, locationId);
     } catch (error) {
@@ -7039,7 +7081,10 @@ async function addInventoryEventPostgres({ deviceId, locationId, changeType, pre
 }
 
 async function addInventoryEventRuntime(payload) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       await addInventoryEventPostgres(payload);
       return;
@@ -7054,7 +7099,10 @@ async function addInventoryEventRuntime(payload) {
 }
 
 async function getDeviceExistsRuntime(deviceId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       const result = await pgClient.query(
         `SELECT id, model_name FROM ${postgresTableRef("devices")} WHERE id = $1 LIMIT 1`,
@@ -7072,7 +7120,10 @@ async function getDeviceExistsRuntime(deviceId) {
 }
 
 async function getLocationExistsRuntime(locationId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) {
+      throw new Error("Postgres runtime is not initialized.");
+    }
     try {
       const result = await pgClient.query(
         `SELECT id, name FROM ${postgresTableRef("locations")} WHERE id = $1 LIMIT 1`,
