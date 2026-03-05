@@ -5523,6 +5523,35 @@ function toTitleCase(value) {
     .replace(/\b[a-z]/g, (m) => m.toUpperCase());
 }
 
+function pickFirstDefined(obj, keys) {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(obj || {}, key)) continue;
+    const value = obj[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return "";
+}
+
+function normalizeBoomiRow(rowRaw) {
+  const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
+  return {
+    sourceExternalId: String(pickFirstDefined(row, ["id", "source_external_id", "external_id", "item_id", "itemId"])).trim(),
+    sku: String(pickFirstDefined(row, ["sku", "item_sku", "itemSku", "product_sku", "productSku"])).trim(),
+    manufacturerRaw: String(pickFirstDefined(row, ["manufacturer", "manufacturer_name", "manufacturerName", "brand"])).trim(),
+    modelRaw: String(pickFirstDefined(row, ["model", "model_name", "modelName", "device_model", "deviceModel"])).trim(),
+    colorRaw: String(pickFirstDefined(row, ["color", "colour"])).trim(),
+    grade: String(pickFirstDefined(row, ["grade", "condition_grade", "conditionGrade"]) || "A").trim() || "A",
+    storage: String(pickFirstDefined(row, ["storage_capacity", "storageCapacity", "storage", "capacity"]) || "N/A").trim() || "N/A",
+    carrier: String(pickFirstDefined(row, ["carrier", "network_carrier", "networkCarrier"]) || "Unlocked").trim() || "Unlocked",
+    currencyCode: String(pickFirstDefined(row, ["currency_code", "currencyCode", "currency"]) || "USD").trim() || "USD",
+    countryCode: String(pickFirstDefined(row, ["country", "country_code", "countryCode"]) || "US").trim() || "US",
+    effectiveDate: String(pickFirstDefined(row, ["effective_date", "effectiveDate", "as_of_date", "asOfDate"])).trim() || null,
+    sourceLocationId: String(pickFirstDefined(row, ["location_id", "locationId", "source_location_id", "sourceLocationId", "internal_location_id", "internalLocationId"])).trim(),
+    price: Number(pickFirstDefined(row, ["price", "unit_price", "unitPrice", "base_price", "basePrice"]) || 0),
+    quantity: Math.max(0, Number(pickFirstDefined(row, ["quantity_on_hand", "quantityOnHand", "quantity", "qty", "on_hand", "onHand"]) || 0))
+  };
+}
+
 function inferCategoryFromBoomi(row) {
   const text = `${row.sku || ""} ${row.model || ""}`.toUpperCase();
   if (/(AIRPODS|BUDS|CHARGER|CABLE|KEYBOARD|MOUSE|SPEAKER|HEADPHONE|POWER BANK|POWERBANK|ACCESSORY)/.test(text)) return "Accessories";
@@ -5811,20 +5840,21 @@ function syncBoomiInventoryRows(rows, progressCallback = null) {
   db.exec("BEGIN TRANSACTION");
   try {
     for (const row of rows) {
-      const sourceExternalId = String(row.id || "").trim();
-      const sku = String(row.sku || "").trim();
-      const manufacturerRaw = String(row.manufacturer || "").trim();
-      const modelRaw = String(row.model || "").trim();
-      const colorRaw = String(row.color || "").trim();
-      const grade = String(row.grade || "A").trim() || "A";
-      const storage = String(row.storage_capacity || "N/A").trim() || "N/A";
-      const carrier = String(row.carrier || "Unlocked").trim() || "Unlocked";
-      const currencyCode = String(row.currency_code || "USD").trim() || "USD";
-      const countryCode = String(row.country || "US").trim() || "US";
-      const effectiveDate = String(row.effective_date || "").trim() || null;
-      const sourceLocationId = String(row.location_id || "").trim();
-      const price = Number(row.price || 0);
-      const quantity = Math.max(0, Number(row.quantity_on_hand || 0));
+      const normalized = normalizeBoomiRow(row);
+      const sourceExternalId = normalized.sourceExternalId;
+      const sku = normalized.sku;
+      const manufacturerRaw = normalized.manufacturerRaw;
+      const modelRaw = normalized.modelRaw;
+      const colorRaw = normalized.colorRaw;
+      const grade = normalized.grade;
+      const storage = normalized.storage;
+      const carrier = normalized.carrier;
+      const currencyCode = normalized.currencyCode;
+      const countryCode = normalized.countryCode;
+      const effectiveDate = normalized.effectiveDate;
+      const sourceLocationId = normalized.sourceLocationId;
+      const price = normalized.price;
+      const quantity = normalized.quantity;
 
       if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
         skipped += 1;
@@ -5843,7 +5873,7 @@ function syncBoomiInventoryRows(rows, progressCallback = null) {
         manufacturerId = Number(insertManufacturer.run(manufacturerName).lastInsertRowid);
       }
 
-      const categoryName = inferCategoryFromBoomi(row);
+      const categoryName = inferCategoryFromBoomi({ sku, model: modelRaw });
       let categoryId = getCategoryId.get(categoryName)?.id;
       if (!categoryId) {
         categoryId = Number(insertCategory.run(categoryName).lastInsertRowid);
@@ -6036,26 +6066,27 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
       const chunk = rows.slice(start, start + BOOMI_SYNC_PG_CHUNK_SIZE);
       const normalized = [];
       for (const row of chunk) {
-        const sourceExternalId = String(row?.id || "").trim();
-        const sku = String(row?.sku || "").trim();
-        const manufacturerRaw = String(row?.manufacturer || "").trim();
-        const modelRaw = String(row?.model || "").trim();
-        const colorRaw = String(row?.color || "").trim();
-        const grade = String(row?.grade || "A").trim() || "A";
-        const storage = String(row?.storage_capacity || "N/A").trim() || "N/A";
-        const carrier = String(row?.carrier || "Unlocked").trim() || "Unlocked";
-        const currencyCode = String(row?.currency_code || "USD").trim() || "USD";
-        const countryCode = String(row?.country || "US").trim() || "US";
-        const effectiveDate = String(row?.effective_date || "").trim() || null;
-        const sourceLocationId = String(row?.location_id || "").trim();
-        const price = Number(row?.price || 0);
-        const quantity = Math.max(0, Number(row?.quantity_on_hand || 0));
+        const parsed = normalizeBoomiRow(row);
+        const sourceExternalId = parsed.sourceExternalId;
+        const sku = parsed.sku;
+        const manufacturerRaw = parsed.manufacturerRaw;
+        const modelRaw = parsed.modelRaw;
+        const colorRaw = parsed.colorRaw;
+        const grade = parsed.grade;
+        const storage = parsed.storage;
+        const carrier = parsed.carrier;
+        const currencyCode = parsed.currencyCode;
+        const countryCode = parsed.countryCode;
+        const effectiveDate = parsed.effectiveDate;
+        const sourceLocationId = parsed.sourceLocationId;
+        const price = parsed.price;
+        const quantity = parsed.quantity;
         if (!sourceExternalId || !manufacturerRaw || !modelRaw || !sourceLocationId || Number.isNaN(price) || Number.isNaN(quantity)) {
           skipped += 1;
           continue;
         }
         const manufacturerName = toTitleCase(manufacturerRaw);
-        const categoryName = inferCategoryFromBoomi(row);
+        const categoryName = inferCategoryFromBoomi({ sku, model: modelRaw });
         const modelUpper = modelRaw.toUpperCase();
         const storageUpper = storage.toUpperCase();
         const hasStorageInModel = storageUpper !== "N/A" && modelUpper.includes(storageUpper);
