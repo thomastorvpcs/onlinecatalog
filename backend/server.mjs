@@ -5219,6 +5219,9 @@ async function getAiAdminAnomaliesRuntime() {
     try {
       return await getAiAdminAnomaliesPostgres();
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres anomalies query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] /api/ai/admin/anomalies fallback: ${error?.message || error}`);
     }
   }
@@ -5299,6 +5302,9 @@ async function getAiSalesInsightsRuntime(daysRaw) {
     try {
       return await getAiSalesInsightsPostgres(daysRaw);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres sales insights query failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-read] /api/ai/admin/sales-insights fallback: ${error?.message || error}`);
     }
   }
@@ -5403,6 +5409,9 @@ async function clearCatalogDataRuntime() {
       }
       return before;
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres catalog clear failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] /api/admin/catalog/clear fallback: ${error?.message || error}`);
     }
   }
@@ -5484,6 +5493,9 @@ async function updateWeeklySpecialFlagRuntime(deviceId, weeklySpecial) {
         return Number(unqualifiedResult.rowCount || 0);
       }
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres weekly special update failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] /api/admin/devices/:id/weekly-special fallback: ${error?.message || error}`);
     }
   }
