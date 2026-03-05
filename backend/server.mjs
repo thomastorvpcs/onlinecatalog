@@ -3646,23 +3646,42 @@ async function validateRequestWithAi(body) {
   return { warnings, suggestions, inventorySource: netsuiteInventory.source };
 }
 
-function validateNetsuitePayloadWithAi(body) {
+async function validateNetsuitePayloadWithAi(body) {
   const payload = body && typeof body.payload === "object" ? body.payload : {};
   const requestId = String(body?.requestId || "").trim();
   let candidate = payload;
   if (requestId) {
-    const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
-    if (!row?.id) {
-      return { valid: false, errors: ["Request not found."], fixes: ["Use a valid requestId."] };
+    if (effectiveDbEngine === "postgres" && pgClient) {
+      const rowResult = await pgClient.query(
+        `SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`,
+        [requestId]
+      );
+      const row = rowResult.rows?.[0];
+      if (!row?.id) {
+        return { valid: false, errors: ["Request not found."], fixes: ["Use a valid requestId."] };
+      }
+      candidate = {
+        requestId: row.id,
+        requestNumber: row.request_number,
+        company: row.company,
+        createdBy: row.created_by_email,
+        currencyCode: row.currency_code || "USD",
+        lines: await getRequestLinesPostgres(row.id)
+      };
+    } else {
+      const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
+      if (!row?.id) {
+        return { valid: false, errors: ["Request not found."], fixes: ["Use a valid requestId."] };
+      }
+      candidate = {
+        requestId: row.id,
+        requestNumber: row.request_number,
+        company: row.company,
+        createdBy: row.created_by_email,
+        currencyCode: row.currency_code || "USD",
+        lines: getRequestLines(row.id)
+      };
     }
-    candidate = {
-      requestId: row.id,
-      requestNumber: row.request_number,
-      company: row.company,
-      createdBy: row.created_by_email,
-      currencyCode: row.currency_code || "USD",
-      lines: getRequestLines(row.id)
-    };
   }
 
   const errors = [];
@@ -8258,7 +8277,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      json(req, res, 200, validateNetsuitePayloadWithAi(body));
+      json(req, res, 200, await validateNetsuitePayloadWithAi(body));
       return;
     }
 
