@@ -468,6 +468,9 @@ function sanitizeFilterPayload(raw) {
 }
 
 function categorySavedFilterViewKey(category) {
+  if (String(category || "").trim() === ALL_CATEGORIES_KEY) {
+    return "cat_all";
+  }
   const slug = String(category || "")
     .trim()
     .toLowerCase()
@@ -475,6 +478,25 @@ function categorySavedFilterViewKey(category) {
     .replace(/^_+|_+$/g, "")
     .slice(0, 24);
   return `cat_${slug || "general"}`;
+}
+
+function categorySavedFilterViewKeys(category) {
+  const primary = categorySavedFilterViewKey(category);
+  if (String(category || "").trim() !== ALL_CATEGORIES_KEY) return [primary];
+  return [...new Set([primary, "cat___all__", "cat__all__", "category"])];
+}
+
+function mergeSavedFiltersById(entries) {
+  const map = new Map();
+  for (const row of Array.isArray(entries) ? entries : []) {
+    if (!row || row.id === undefined || row.id === null) continue;
+    map.set(String(row.id), row);
+  }
+  return [...map.values()].sort((a, b) => {
+    const aTs = Date.parse(String(a?.updatedAt || a?.updated_at || ""));
+    const bTs = Date.parse(String(b?.updatedAt || b?.updated_at || ""));
+    return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+  });
 }
 
 function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts) {
@@ -2114,15 +2136,22 @@ export default function App() {
           setSavedFiltersLoading(true);
           setSavedFiltersError("");
         }
-        const viewKey = categorySavedFilterViewKey(selectedCategory);
-        const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
-          token: authToken,
-          refreshToken,
-          onAuthUpdate: applyAuthTokens,
-          onAuthFail: clearAuthState
-        });
+        const viewKeys = categorySavedFilterViewKeys(selectedCategory);
+        const payloads = await Promise.all(viewKeys.map(async (viewKey) => {
+          try {
+            return await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+              token: authToken,
+              refreshToken,
+              onAuthUpdate: applyAuthTokens,
+              onAuthFail: clearAuthState
+            });
+          } catch {
+            return [];
+          }
+        }));
         if (!ignore) {
-          setSavedFilters(Array.isArray(payload) ? payload : []);
+          const merged = mergeSavedFiltersById(payloads.flatMap((entry) => (Array.isArray(entry) ? entry : [])));
+          setSavedFilters(merged);
         }
       } catch (error) {
         if (!ignore) {
@@ -2573,14 +2602,20 @@ export default function App() {
     setSavedFiltersLoading(true);
     setSavedFiltersError("");
     try {
-      const viewKey = categorySavedFilterViewKey(selectedCategory);
-      const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState
-      });
-      setSavedFilters(Array.isArray(payload) ? payload : []);
+      const viewKeys = categorySavedFilterViewKeys(selectedCategory);
+      const payloads = await Promise.all(viewKeys.map(async (viewKey) => {
+        try {
+          return await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+            token: authToken,
+            refreshToken,
+            onAuthUpdate: applyAuthTokens,
+            onAuthFail: clearAuthState
+          });
+        } catch {
+          return [];
+        }
+      }));
+      setSavedFilters(mergeSavedFiltersById(payloads.flatMap((entry) => (Array.isArray(entry) ? entry : []))));
     } catch (error) {
       setSavedFilters([]);
       setSavedFiltersError(error.message || "Failed to load saved filters.");
@@ -2988,7 +3023,8 @@ export default function App() {
     setSavingFilter(true);
     setSavedFiltersError("");
     try {
-      const viewKey = categorySavedFilterViewKey(selectedCategory);
+      const defaultViewKey = categorySavedFilterViewKey(selectedCategory);
+      const activeViewKey = String(activeEditedSavedFilter?.viewKey || "").trim() || defaultViewKey;
       if (isEditingSavedFilter && editingSavedFilterId && !hasEditedFilterChanges) {
         setSavedFilterNotice("No changes to update.");
         return;
@@ -3002,7 +3038,7 @@ export default function App() {
           onAuthFail: clearAuthState,
           body: {
             name,
-            viewKey,
+            viewKey: activeViewKey,
             payload: currentFilterDraftPayload
           }
         })
@@ -3014,7 +3050,7 @@ export default function App() {
           onAuthFail: clearAuthState,
           body: {
             name,
-            viewKey,
+            viewKey: defaultViewKey,
             payload: currentFilterDraftPayload
           }
         });
@@ -3053,7 +3089,7 @@ export default function App() {
     if (!authToken || !user) return;
     setSavedFiltersError("");
     try {
-      const viewKey = categorySavedFilterViewKey(selectedCategory);
+      const viewKey = String(savedFilter?.viewKey || "").trim() || categorySavedFilterViewKey(selectedCategory);
       await apiRequest(`/api/filters/saved/${encodeURIComponent(savedFilter.id)}?view=${encodeURIComponent(viewKey)}`, {
         method: "DELETE",
         token: authToken,
