@@ -5093,6 +5093,203 @@ function seedAdminRealDevicesPerCategory(countPerCategory) {
   };
 }
 
+async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory) {
+  if (!pgClient) return seedAdminRealDevicesPerCategory(countPerCategory);
+  const categoriesResult = await pgClient.query(`SELECT id, name FROM ${postgresTableRef("categories")}`);
+  const categories = categoriesResult.rows || [];
+  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
+  const locationsResult = await pgClient.query(`SELECT id FROM ${postgresTableRef("locations")} ORDER BY id`);
+  const locations = (locationsResult.rows || []).map((l) => Number(l.id));
+  const manufacturersResult = await pgClient.query(`SELECT id, name FROM ${postgresTableRef("manufacturers")}`);
+  const manufacturerByName = new Map((manufacturersResult.rows || []).map((m) => [m.name, Number(m.id)]));
+  const config = [
+    {
+      name: "Smartphones",
+      models: [
+        { family: "iPhone 15", manufacturer: "Apple" },
+        { family: "iPhone 15 Pro", manufacturer: "Apple" },
+        { family: "iPhone 15 Pro Max", manufacturer: "Apple" },
+        { family: "Galaxy S24", manufacturer: "Samsung" },
+        { family: "Pixel 8", manufacturer: "Google" },
+        { family: "Pixel 8 Pro", manufacturer: "Google" },
+        { family: "Motorola Edge 50", manufacturer: "Motorola" }
+      ],
+      storages: ["128GB", "256GB", "512GB", "1TB"],
+      colors: ["Black", "Blue", "Gray", "Silver", "Green", "Pink"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 420
+    },
+    {
+      name: "Tablets",
+      models: [
+        { family: "iPad Pro 11", manufacturer: "Apple" },
+        { family: "iPad Air 11", manufacturer: "Apple" },
+        { family: "Galaxy Tab S9", manufacturer: "Samsung" },
+        { family: "Galaxy Tab A9+", manufacturer: "Samsung" },
+        { family: "Pixel Tablet", manufacturer: "Google" },
+        { family: "Lenovo Tab P12", manufacturer: "Lenovo" }
+      ],
+      storages: ["64GB", "128GB", "256GB", "512GB"],
+      colors: ["Gray", "Blue", "Silver", "Black", "Gold"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 260
+    },
+    {
+      name: "Laptops",
+      models: [
+        { family: "MacBook Air 13", manufacturer: "Apple" },
+        { family: "MacBook Pro 14", manufacturer: "Apple" },
+        { family: "Galaxy Book4 Pro", manufacturer: "Samsung" },
+        { family: "ThinkPad X1 Carbon", manufacturer: "Lenovo" }
+      ],
+      storages: ["256GB", "512GB", "1TB", "2TB"],
+      colors: ["Black", "Gray", "Silver", "Blue", "White"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 740
+    },
+    {
+      name: "Wearables",
+      models: [
+        { family: "Apple Watch Series 9", manufacturer: "Apple" },
+        { family: "Watch Ultra 2", manufacturer: "Apple" },
+        { family: "Galaxy Watch 6", manufacturer: "Samsung" },
+        { family: "Pixel Watch 2", manufacturer: "Google" }
+      ],
+      storages: ["32GB", "64GB"],
+      colors: ["Black", "Blue", "Silver", "Gray", "White"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 180
+    },
+    {
+      name: "Accessories",
+      models: [
+        { family: "AirPods Pro", manufacturer: "Apple" },
+        { family: "Galaxy Buds2 Pro", manufacturer: "Samsung" },
+        { family: "Apple 20W USB-C Power Adapter", manufacturer: "Apple" },
+        { family: "Sony WH-1000XM5", manufacturer: "Sony" }
+      ],
+      storages: ["N/A"],
+      colors: ["Black", "White", "Blue", "Gray", "Silver", "Green", "Pink"],
+      grades: ["A", "B", "CPO", "RT"],
+      basePrice: 45
+    }
+  ];
+
+  await pgClient.query("BEGIN");
+  try {
+    await pgClient.query(`DELETE FROM ${postgresTableRef("devices")} WHERE id LIKE 'adminreal-%'`);
+    for (const cfg of config) {
+      const categoryId = Number(categoryByName.get(cfg.name) || 0);
+      if (!categoryId) continue;
+      const variants = [];
+      for (let modelIdx = 0; modelIdx < cfg.models.length; modelIdx += 1) {
+        const model = cfg.models[modelIdx];
+        for (let storageIdx = 0; storageIdx < cfg.storages.length; storageIdx += 1) {
+          const storage = cfg.storages[storageIdx];
+          for (let colorIdx = 0; colorIdx < cfg.colors.length; colorIdx += 1) {
+            const color = cfg.colors[colorIdx];
+            for (let gradeIdx = 0; gradeIdx < cfg.grades.length; gradeIdx += 1) {
+              const grade = cfg.grades[gradeIdx];
+              variants.push({ modelFamily: model.family, manufacturerName: model.manufacturer, storage, color, grade, modelIdx, storageIdx, colorIdx, gradeIdx });
+            }
+          }
+        }
+      }
+      for (let i = 0; i < countPerCategory; i += 1) {
+        const variant = variants[i % variants.length];
+        const cycle = Math.floor(i / variants.length) + 1;
+        const manufacturerName = variant.manufacturerName;
+        let manufacturerId = manufacturerByName.get(manufacturerName);
+        if (!manufacturerId) {
+          const inserted = await pgClient.query(
+            `INSERT INTO ${postgresTableRef("manufacturers")} (name) VALUES ($1) RETURNING id`,
+            [manufacturerName]
+          );
+          manufacturerId = Number(inserted.rows?.[0]?.id || 0);
+          if (!manufacturerId) continue;
+          manufacturerByName.set(manufacturerName, manufacturerId);
+        }
+
+        const modelFamily = variant.modelFamily;
+        const storage = variant.storage;
+        const color = variant.color;
+        const grade = variant.grade;
+        const defaultLocationId = locations[i % locations.length];
+        const id = `adminreal-${cfg.name.toLowerCase()}-${String(i + 1).padStart(4, "0")}`;
+        const modelNameBase = storage === "N/A" ? `${modelFamily} - ${color}` : `${modelFamily} ${storage} - ${color}`;
+        const modelName = cycle > 1 ? `${modelNameBase} v${cycle}` : modelNameBase;
+        const price = Number((cfg.basePrice + (variant.modelIdx * 9) + (variant.storageIdx * 14) + (variant.gradeIdx * 11) + (variant.colorIdx % 7)).toFixed(2));
+        const carrier = cfg.name === "Accessories" ? "Bluetooth" : (cfg.name === "Laptops" || cfg.name === "Tablets" ? "WiFi" : "Unlocked");
+        const screenSize = cfg.name === "Wearables" ? "47 mm" : cfg.name === "Tablets" ? "11 inches" : cfg.name === "Laptops" ? "14 inches" : (cfg.name === "Accessories" ? "N/A" : "6.1 inches");
+        const kitType = cfg.name === "Accessories" ? "Retail Pack" : "Full Kit";
+        const uniqueSeed = (variant.modelIdx * 11) + (variant.storageIdx * 7) + (variant.colorIdx * 5) + (variant.gradeIdx * 3) + cycle;
+        const seedImagePool = getSeedImagePool(cfg.name, modelFamily);
+        const heroImage = seedImagePool.length ? seedImagePool[uniqueSeed % seedImagePool.length] : MODEL_IMAGE_MAP["iPhone 15"];
+        const isShortageTestTarget = cfg.name === "Smartphones"
+          && modelFamily === "iPhone 15"
+          && storage === "128GB"
+          && color === "Black"
+          && grade === "A"
+          && cycle === 1;
+
+        await pgClient.query(
+          `
+            INSERT INTO ${postgresTableRef("devices")} (
+              id, manufacturer_id, category_id, model_name, model_family, storage_capacity, grade, base_price,
+              image_url, carrier, screen_size, modular, color, kit_type, product_notes, default_location_id, is_active
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 1)
+          `,
+          [id, manufacturerId, categoryId, modelName, modelFamily, storage, grade, price, heroImage, carrier, screenSize, "No", color, kitType, `Admin realistic test device for ${cfg.name}.`, defaultLocationId]
+        );
+
+        for (let locIdx = 0; locIdx < locations.length; locIdx += 1) {
+          const qty = isShortageTestTarget && (locIdx === 0 || locIdx === 1)
+            ? 0
+            : 10 + ((i * 7 + locIdx * 11) % 120);
+          await pgClient.query(
+            `INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity) VALUES ($1, $2, $3)`,
+            [id, locations[locIdx], qty]
+          );
+        }
+        const gallery = [heroImage];
+        if (seedImagePool.length > 1) {
+          const alt1 = seedImagePool[(uniqueSeed + 1) % seedImagePool.length];
+          if (alt1 && !gallery.includes(alt1)) gallery.push(alt1);
+        }
+        if (seedImagePool.length > 2) {
+          const alt2 = seedImagePool[(uniqueSeed + 2) % seedImagePool.length];
+          if (alt2 && !gallery.includes(alt2)) gallery.push(alt2);
+        }
+        if (seedImagePool.length > 3) {
+          const alt3 = seedImagePool[(uniqueSeed + 3) % seedImagePool.length];
+          if (alt3 && !gallery.includes(alt3)) gallery.push(alt3);
+        }
+        for (let idx = 0; idx < gallery.length; idx += 1) {
+          await pgClient.query(
+            `INSERT INTO ${postgresTableRef("device_images")} (device_id, image_url, sort_order) VALUES ($1, $2, $3)`,
+            [id, gallery[idx], idx + 1]
+          );
+        }
+      }
+    }
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+  return {
+    categoriesSeeded: config.length,
+    countPerCategory
+  };
+}
+
+async function seedAdminRealDevicesPerCategoryRuntime(countPerCategory) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    return seedAdminRealDevicesPerCategoryPostgres(countPerCategory);
+  }
+  return seedAdminRealDevicesPerCategory(countPerCategory);
+}
+
 function toTitleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -7405,7 +7602,7 @@ const server = createServer(async (req, res) => {
       if (!user) return;
       const body = await parseBody(req);
       const countPerCategory = Math.max(1, Math.min(1000, Number(body.countPerCategory || 100)));
-      const result = seedAdminRealDevicesPerCategory(countPerCategory);
+      const result = await seedAdminRealDevicesPerCategoryRuntime(countPerCategory);
       json(req, res, 200, { ok: true, ...result });
       return;
     }
