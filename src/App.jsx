@@ -82,6 +82,17 @@ function formatChatTimestamp(value) {
   return chatTimeFormatter.format(parsed);
 }
 
+function formatDurationMs(value) {
+  const ms = Math.max(0, Number(value || 0));
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+  return `${mins}m ${String(seconds).padStart(2, "0")}s`;
+}
+
 function normalizeInventoryQuantity(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 0;
@@ -3577,7 +3588,8 @@ export default function App() {
           setSyncResult({
             fetched: Number(status.fetched || 0),
             processed: Number(status.processed || 0),
-            skipped: Number(status.skipped || 0)
+            skipped: Number(status.skipped || 0),
+            durationMs: Number(status.durationMs || 0)
           });
           return;
         }
@@ -4295,12 +4307,12 @@ export default function App() {
                 </button>
                 {syncLoading && syncStatus ? (
                   <p className="small" style={{ marginTop: 8 }}>
-                    Stage: {String(syncStatus.stage || "starting")}. Progress: {Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)} / {Math.max(1, Number(syncStatus.fetched || 0))} ({Math.round(((Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)) / Math.max(1, Number(syncStatus.fetched || 0))) * 100)}%). Processed: {Number(syncStatus.processed || 0)}, Skipped: {Number(syncStatus.skipped || 0)}.
+                    Stage: {String(syncStatus.stage || "starting")}. Progress: {Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)} / {Math.max(1, Number(syncStatus.fetched || 0))} ({Math.round(((Number(syncStatus.processed || 0) + Number(syncStatus.skipped || 0)) / Math.max(1, Number(syncStatus.fetched || 0))) * 100)}%). Processed: {Number(syncStatus.processed || 0)}, Skipped: {Number(syncStatus.skipped || 0)}. Elapsed: {formatDurationMs(syncStatus.durationMs || 0)}.
                   </p>
                 ) : null}
                 {syncResult ? (
                   <p className="small" style={{ marginTop: 8, color: "#166534" }}>
-                    Sync complete. Fetched: {Number(syncResult.fetched || 0)}, Processed: {Number(syncResult.processed || 0)}, Skipped: {Number(syncResult.skipped || 0)}.
+                    Sync complete. Fetched: {Number(syncResult.fetched || 0)}, Processed: {Number(syncResult.processed || 0)}, Skipped: {Number(syncResult.skipped || 0)}. Total time: {formatDurationMs(syncResult.durationMs || 0)}.
                   </p>
                 ) : null}
                 {syncError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{syncError}</p> : null}
