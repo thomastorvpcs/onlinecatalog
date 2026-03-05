@@ -529,6 +529,8 @@ if (DB_ENGINE === "postgres" && !POSTGRES_RUNTIME_EXPERIMENTAL) {
   console.warn("[startup] DB_ENGINE=postgres requested, but Postgres runtime is not enabled yet. Falling back to SQLite. Set POSTGRES_RUNTIME_EXPERIMENTAL=true only after migration verification.");
 }
 const effectiveDbEngine = (DB_ENGINE === "postgres" && POSTGRES_RUNTIME_EXPERIMENTAL) ? "postgres" : "sqlite";
+const POSTGRES_STRICT_RUNTIME = (effectiveDbEngine === "postgres")
+  && String(process.env.POSTGRES_STRICT_RUNTIME || "true").toLowerCase() === "true";
 if (effectiveDbEngine === "postgres" && !POSTGRES_URL) {
   throw new Error("Postgres runtime requested but DATABASE_URL is missing.");
 }
@@ -546,6 +548,23 @@ if (IS_RENDER_RUNTIME && !String(dbPath).startsWith("/var/data/")) {
   console.log(`[startup] Using SQLite DB path: ${dbPath}`);
 }
 console.log(`[startup] Database engine: ${effectiveDbEngine}`);
+if (POSTGRES_STRICT_RUNTIME) {
+  console.log("[startup] Postgres strict runtime: SQLite fallback is disabled.");
+}
+
+function createNoSqliteFallbackAdapter() {
+  const throwDisabled = () => {
+    throw new Error("SQLite fallback is disabled in Postgres strict runtime.");
+  };
+  return {
+    exec: throwDisabled,
+    prepare: () => ({
+      get: throwDisabled,
+      all: throwDisabled,
+      run: throwDisabled
+    })
+  };
+}
 
 function quoteIdent(name) {
   return `"${String(name || "").replace(/"/g, "\"\"")}"`;
@@ -889,13 +908,15 @@ async function initializePostgresRuntime() {
   });
   await pgClient.connect();
   await ensurePostgresRuntimeSchema();
-  await backfillPostgresTableFromSqliteIfEmpty("users");
-  await backfillPostgresTableFromSqliteIfEmpty("refresh_tokens");
-  await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
-  await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
-  await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
-  await backfillPostgresTableFromSqliteIfEmpty("user_saved_filters");
-  await backfillPostgresTableFromSqliteIfEmpty("app_settings");
+  if (!POSTGRES_STRICT_RUNTIME) {
+    await backfillPostgresTableFromSqliteIfEmpty("users");
+    await backfillPostgresTableFromSqliteIfEmpty("refresh_tokens");
+    await backfillPostgresTableFromSqliteIfEmpty("quote_requests");
+    await backfillPostgresTableFromSqliteIfEmpty("quote_request_lines");
+    await backfillPostgresTableFromSqliteIfEmpty("quote_request_events");
+    await backfillPostgresTableFromSqliteIfEmpty("user_saved_filters");
+    await backfillPostgresTableFromSqliteIfEmpty("app_settings");
+  }
   await ensurePostgresSerialSequence("quote_request_lines", "id");
   await ensurePostgresSerialSequence("quote_request_events", "id");
   await ensurePostgresSerialSequence("refresh_tokens", "id");
@@ -907,13 +928,21 @@ async function initializePostgresRuntime() {
   await ensurePostgresSerialSequence("user_saved_filters", "id");
   await ensurePostgresSerialSequence("inventory_events", "id");
   await ensurePostgresSerialSequence("boomi_inventory_raw", "id");
-  await syncSqliteFromPostgres();
-  db = createMirroredDbAdapter(sqliteDb);
-  postgresMirrorEnabled = true;
-  console.log("[startup] Postgres runtime mirroring is active.");
+  if (POSTGRES_STRICT_RUNTIME) {
+    db = createNoSqliteFallbackAdapter();
+    postgresMirrorEnabled = false;
+  } else {
+    await syncSqliteFromPostgres();
+    db = createMirroredDbAdapter(sqliteDb);
+    postgresMirrorEnabled = true;
+    console.log("[startup] Postgres runtime mirroring is active.");
+  }
 }
 
 function getStoredAndDisplayLocations() {
+  if (POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres") {
+    return [];
+  }
   const rows = db.prepare("SELECT name, external_id AS externalId FROM locations ORDER BY id").all();
   return rows.map((row) => {
     const storedName = String(row.name || "").trim();
@@ -937,6 +966,9 @@ function resolveStoredLocationNames(regionFilters) {
     .map((value) => String(value || "").trim())
     .filter(Boolean));
   if (!targets.size) return [];
+  if (POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres") {
+    return [...targets];
+  }
   const resolved = new Set();
   for (const row of getStoredAndDisplayLocations()) {
     if (targets.has(row.storedName) || targets.has(row.displayName)) {
@@ -4603,10 +4635,12 @@ async function clearCatalogDataRuntime() {
   if (effectiveDbEngine === "postgres" && pgClient) {
     try {
       const before = await clearCatalogDataPostgres();
-      try {
-        clearCatalogDataSqliteCache();
-      } catch (cacheError) {
-        console.error(`[sqlite-cache] clear fallback cache failed: ${cacheError?.message || cacheError}`);
+      if (!POSTGRES_STRICT_RUNTIME) {
+        try {
+          clearCatalogDataSqliteCache();
+        } catch (cacheError) {
+          console.error(`[sqlite-cache] clear fallback cache failed: ${cacheError?.message || cacheError}`);
+        }
       }
       return before;
     } catch (error) {
@@ -6556,7 +6590,9 @@ async function deleteSavedFilterForUser(userId, filterIdRaw) {
   }
 }
 
-initDb();
+if (!POSTGRES_STRICT_RUNTIME || effectiveDbEngine !== "postgres") {
+  initDb();
+}
 
 const server = createServer(async (req, res) => {
   try {
