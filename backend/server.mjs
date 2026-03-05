@@ -5643,6 +5643,54 @@ function getInventoryByDeviceId(deviceId) {
   };
 }
 
+async function getInventoryByDeviceIdPostgres(deviceId) {
+  if (!pgClient) return null;
+  const deviceResult = await pgClient.query(
+    `SELECT id, model_name FROM ${postgresTableRef("devices")} WHERE id = $1 LIMIT 1`,
+    [deviceId]
+  );
+  const device = deviceResult.rows?.[0];
+  if (!device?.id) return null;
+  const rowsResult = await pgClient.query(
+    `
+      SELECT
+        l.id AS "locationId",
+        l.name AS location,
+        l.external_id AS "externalId",
+        COALESCE(di.quantity, 0) AS quantity
+      FROM ${postgresTableRef("locations")} l
+      LEFT JOIN ${postgresTableRef("device_inventory")} di
+        ON di.location_id = l.id
+        AND di.device_id = $1
+      ORDER BY l.id
+    `,
+    [deviceId]
+  );
+  const rows = rowsResult.rows || [];
+  const total = rows.reduce((sum, r) => sum + Number(r.quantity || 0), 0);
+  return {
+    deviceId: device.id,
+    model: device.model_name,
+    locations: rows.map((r) => ({
+      locationId: Number(r.locationId),
+      location: getDisplayLocationName(r.location, r.externalId),
+      quantity: Number(r.quantity || 0)
+    })),
+    total
+  };
+}
+
+async function getInventoryByDeviceIdRuntime(deviceId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await getInventoryByDeviceIdPostgres(deviceId);
+    } catch (error) {
+      console.error(`[postgres-read] inventory-by-device fallback: ${error?.message || error}`);
+    }
+  }
+  return getInventoryByDeviceId(deviceId);
+}
+
 function upsertInventoryQuantity(deviceId, locationId, quantity) {
   db.prepare(`
     INSERT INTO device_inventory (device_id, location_id, quantity)
@@ -5650,6 +5698,31 @@ function upsertInventoryQuantity(deviceId, locationId, quantity) {
     ON CONFLICT(device_id, location_id)
     DO UPDATE SET quantity = excluded.quantity
   `).run(deviceId, locationId, quantity);
+}
+
+async function upsertInventoryQuantityPostgres(deviceId, locationId, quantity) {
+  if (!pgClient) return;
+  await pgClient.query(
+    `
+      INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity)
+      VALUES ($1, $2, $3)
+      ON CONFLICT(device_id, location_id)
+      DO UPDATE SET quantity = excluded.quantity
+    `,
+    [deviceId, locationId, quantity]
+  );
+}
+
+async function upsertInventoryQuantityRuntime(deviceId, locationId, quantity) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
+      return;
+    } catch (error) {
+      console.error(`[postgres-write] upsert-inventory fallback: ${error?.message || error}`);
+    }
+  }
+  upsertInventoryQuantity(deviceId, locationId, quantity);
 }
 
 function getInventoryQuantity(deviceId, locationId) {
@@ -5661,12 +5734,91 @@ function getInventoryQuantity(deviceId, locationId) {
   return Number(row?.quantity || 0);
 }
 
+async function getInventoryQuantityPostgres(deviceId, locationId) {
+  if (!pgClient) return 0;
+  const result = await pgClient.query(
+    `
+      SELECT quantity
+      FROM ${postgresTableRef("device_inventory")}
+      WHERE device_id = $1 AND location_id = $2
+      LIMIT 1
+    `,
+    [deviceId, locationId]
+  );
+  return Number(result.rows?.[0]?.quantity || 0);
+}
+
+async function getInventoryQuantityRuntime(deviceId, locationId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      return await getInventoryQuantityPostgres(deviceId, locationId);
+    } catch (error) {
+      console.error(`[postgres-read] inventory-quantity fallback: ${error?.message || error}`);
+    }
+  }
+  return getInventoryQuantity(deviceId, locationId);
+}
+
 function addInventoryEvent({ deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason, changedByUserId }) {
   db.prepare(`
     INSERT INTO inventory_events (
       device_id, location_id, change_type, previous_quantity, new_quantity, delta, reason, changed_by_user_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason || null, changedByUserId ?? null);
+}
+
+async function addInventoryEventPostgres({ deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason, changedByUserId }) {
+  if (!pgClient) return;
+  await pgClient.query(
+    `
+      INSERT INTO ${postgresTableRef("inventory_events")} (
+        device_id, location_id, change_type, previous_quantity, new_quantity, delta, reason, changed_by_user_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `,
+    [deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason || null, changedByUserId ?? null]
+  );
+}
+
+async function addInventoryEventRuntime(payload) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      await addInventoryEventPostgres(payload);
+      return;
+    } catch (error) {
+      console.error(`[postgres-write] inventory-event fallback: ${error?.message || error}`);
+    }
+  }
+  addInventoryEvent(payload);
+}
+
+async function getDeviceExistsRuntime(deviceId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      const result = await pgClient.query(
+        `SELECT id, model_name FROM ${postgresTableRef("devices")} WHERE id = $1 LIMIT 1`,
+        [deviceId]
+      );
+      return result.rows?.[0] || null;
+    } catch (error) {
+      console.error(`[postgres-read] device-exists fallback: ${error?.message || error}`);
+    }
+  }
+  return getDeviceExists(deviceId);
+}
+
+async function getLocationExistsRuntime(locationId) {
+  if (effectiveDbEngine === "postgres" && pgClient) {
+    try {
+      const result = await pgClient.query(
+        `SELECT id, name FROM ${postgresTableRef("locations")} WHERE id = $1 LIMIT 1`,
+        [locationId]
+      );
+      return result.rows?.[0] || null;
+    } catch (error) {
+      console.error(`[postgres-read] location-exists fallback: ${error?.message || error}`);
+    }
+  }
+  return getLocationExists(locationId);
 }
 
 function normalizeRequestStatus(value, fallback = "New") {
@@ -7177,7 +7329,7 @@ const server = createServer(async (req, res) => {
       const user = requireAdmin(req, res);
       if (!user) return;
       const deviceId = decodeURIComponent(inventoryByDeviceMatch[1]);
-      const inventory = getInventoryByDeviceId(deviceId);
+      const inventory = await getInventoryByDeviceIdRuntime(deviceId);
       if (!inventory) {
         json(req, res, 404, { error: "Device not found." });
         return;
@@ -7200,18 +7352,18 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "Quantity must be an integer >= 0." });
         return;
       }
-      if (!getDeviceExists(deviceId)) {
+      if (!await getDeviceExistsRuntime(deviceId)) {
         json(req, res, 404, { error: "Device not found." });
         return;
       }
-      if (!getLocationExists(locationId)) {
+      if (!await getLocationExistsRuntime(locationId)) {
         json(req, res, 404, { error: "Location not found." });
         return;
       }
 
-      const previousQuantity = getInventoryQuantity(deviceId, locationId);
-      upsertInventoryQuantity(deviceId, locationId, quantity);
-      addInventoryEvent({
+      const previousQuantity = await getInventoryQuantityRuntime(deviceId, locationId);
+      await upsertInventoryQuantityRuntime(deviceId, locationId, quantity);
+      await addInventoryEventRuntime({
         deviceId,
         locationId,
         changeType: "set",
@@ -7240,24 +7392,24 @@ const server = createServer(async (req, res) => {
         json(req, res, 400, { error: "Delta must be a non-zero integer." });
         return;
       }
-      if (!getDeviceExists(deviceId)) {
+      if (!await getDeviceExistsRuntime(deviceId)) {
         json(req, res, 404, { error: "Device not found." });
         return;
       }
-      if (!getLocationExists(locationId)) {
+      if (!await getLocationExistsRuntime(locationId)) {
         json(req, res, 404, { error: "Location not found." });
         return;
       }
 
-      const previousQuantity = getInventoryQuantity(deviceId, locationId);
+      const previousQuantity = await getInventoryQuantityRuntime(deviceId, locationId);
       const newQuantity = previousQuantity + delta;
       if (newQuantity < 0) {
         json(req, res, 400, { error: "Adjustment would result in negative quantity." });
         return;
       }
 
-      upsertInventoryQuantity(deviceId, locationId, newQuantity);
-      addInventoryEvent({
+      await upsertInventoryQuantityRuntime(deviceId, locationId, newQuantity);
+      await addInventoryEventRuntime({
         deviceId,
         locationId,
         changeType: "adjust",
@@ -7302,10 +7454,10 @@ const server = createServer(async (req, res) => {
           errors.push({ index: i, field: "locationId", message: "locationId must be a positive integer." });
           continue;
         }
-        if (!getDeviceExists(deviceId)) {
+        if (!await getDeviceExistsRuntime(deviceId)) {
           errors.push({ index: i, field: "deviceId", message: "Device not found." });
         }
-        if (!getLocationExists(locationId)) {
+        if (!await getLocationExistsRuntime(locationId)) {
           errors.push({ index: i, field: "locationId", message: "Location not found." });
         }
         if (mode === "set") {
@@ -7319,7 +7471,7 @@ const server = createServer(async (req, res) => {
             errors.push({ index: i, field: "delta", message: "Must be a non-zero integer." });
             continue;
           }
-          const current = getInventoryQuantity(deviceId, locationId);
+          const current = await getInventoryQuantityRuntime(deviceId, locationId);
           if (current + delta < 0) {
             errors.push({ index: i, field: "delta", message: "Adjustment would result in negative quantity." });
           }
@@ -7330,45 +7482,88 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      db.exec("BEGIN TRANSACTION");
-      try {
-        for (const row of updates) {
-          const deviceId = String(row.deviceId).trim();
-          const locationId = Number(row.locationId);
-          const previousQuantity = getInventoryQuantity(deviceId, locationId);
-          if (mode === "set") {
-            const quantity = Number(row.quantity);
-            upsertInventoryQuantity(deviceId, locationId, quantity);
-            addInventoryEvent({
-              deviceId,
-              locationId,
-              changeType: "set",
-              previousQuantity,
-              newQuantity: quantity,
-              delta: quantity - previousQuantity,
-              reason,
-              changedByUserId: user.id
-            });
-          } else {
-            const delta = Number(row.delta);
-            const newQuantity = previousQuantity + delta;
-            upsertInventoryQuantity(deviceId, locationId, newQuantity);
-            addInventoryEvent({
-              deviceId,
-              locationId,
-              changeType: "adjust",
-              previousQuantity,
-              newQuantity,
-              delta,
-              reason,
-              changedByUserId: user.id
-            });
+      if (effectiveDbEngine === "postgres" && pgClient) {
+        await pgClient.query("BEGIN");
+        try {
+          for (const row of updates) {
+            const deviceId = String(row.deviceId).trim();
+            const locationId = Number(row.locationId);
+            const previousQuantity = await getInventoryQuantityPostgres(deviceId, locationId);
+            if (mode === "set") {
+              const quantity = Number(row.quantity);
+              await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
+              await addInventoryEventPostgres({
+                deviceId,
+                locationId,
+                changeType: "set",
+                previousQuantity,
+                newQuantity: quantity,
+                delta: quantity - previousQuantity,
+                reason,
+                changedByUserId: user.id
+              });
+            } else {
+              const delta = Number(row.delta);
+              const newQuantity = previousQuantity + delta;
+              await upsertInventoryQuantityPostgres(deviceId, locationId, newQuantity);
+              await addInventoryEventPostgres({
+                deviceId,
+                locationId,
+                changeType: "adjust",
+                previousQuantity,
+                newQuantity,
+                delta,
+                reason,
+                changedByUserId: user.id
+              });
+            }
           }
+          await pgClient.query("COMMIT");
+        } catch (error) {
+          await pgClient.query("ROLLBACK");
+          throw error;
         }
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
+      } else {
+        db.exec("BEGIN TRANSACTION");
+        try {
+          for (const row of updates) {
+            const deviceId = String(row.deviceId).trim();
+            const locationId = Number(row.locationId);
+            const previousQuantity = getInventoryQuantity(deviceId, locationId);
+            if (mode === "set") {
+              const quantity = Number(row.quantity);
+              upsertInventoryQuantity(deviceId, locationId, quantity);
+              addInventoryEvent({
+                deviceId,
+                locationId,
+                changeType: "set",
+                previousQuantity,
+                newQuantity: quantity,
+                delta: quantity - previousQuantity,
+                reason,
+                changedByUserId: user.id
+              });
+            } else {
+              const delta = Number(row.delta);
+              const newQuantity = previousQuantity + delta;
+              upsertInventoryQuantity(deviceId, locationId, newQuantity);
+              addInventoryEvent({
+                deviceId,
+                locationId,
+                changeType: "adjust",
+                previousQuantity,
+                newQuantity,
+                delta,
+                reason,
+                changedByUserId: user.id
+              });
+            }
+          }
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
       }
 
       json(req, res, 200, { ok: true, processed: updates.length, failed: 0 });
