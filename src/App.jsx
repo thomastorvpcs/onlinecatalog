@@ -1977,9 +1977,10 @@ export default function App() {
         if (!ignore) {
           setProducts(payload.map(normalizeDevice));
         }
-      } catch {
+      } catch (error) {
         if (!ignore) {
-          setProductsError("Using local demo data because the backend API is unavailable.");
+          const message = String(error?.message || "").trim();
+          setProductsError(message ? `Failed to load devices: ${message}` : "Failed to load devices from backend API.");
         }
       } finally {
         if (!ignore) {
