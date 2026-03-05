@@ -1888,7 +1888,7 @@ function issueRefreshToken(userId) {
 }
 
 async function issueRefreshTokenPostgres(userId) {
-  if (!pgClient) return issueRefreshToken(userId);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const refreshToken = randomBytes(48).toString("hex");
   const tokenHash = hashRefreshToken(refreshToken);
   const expiresAt = new Date(Date.now() + (REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)).toISOString();
@@ -1969,7 +1969,7 @@ function rotateRefreshToken(refreshToken) {
 }
 
 async function rotateRefreshTokenPostgres(refreshToken) {
-  if (!pgClient) return rotateRefreshToken(refreshToken);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const tokenHash = hashRefreshToken(refreshToken);
   const rowRes = await pgClient.query(`
     SELECT id, user_id, expires_at, revoked_at
@@ -2217,63 +2217,6 @@ function normalizeCompanyName(value) {
 
 function normalizePersonName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
-}
-
-function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany = "") {
-  const auth0Sub = String(claims?.sub || "").trim();
-  const email = normalizeEmail(claims?.email || fallbackEmail || "");
-  if (!auth0Sub) {
-    throw new Error("Auth0 token missing subject (sub).");
-  }
-  if (!email) {
-    throw new Error("Auth0 token missing email claim.");
-  }
-
-  let user = db.prepare(`
-    SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
-    FROM users
-    WHERE auth0_sub = ?
-    LIMIT 1
-  `).get(auth0Sub);
-
-  if (!user) {
-    user = db.prepare(`
-      SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
-      FROM users
-      WHERE email = ?
-      LIMIT 1
-    `).get(email);
-  }
-
-  if (user?.id) {
-    const normalizedPreferredCompany = normalizeCompanyName(preferredCompany);
-    if (!String(user.auth0_sub || "").trim()) {
-      db.prepare("UPDATE users SET auth0_sub = ? WHERE id = ?").run(auth0Sub, user.id);
-    }
-    if (normalizedPreferredCompany && normalizedPreferredCompany !== String(user.company || "").trim()) {
-      db.prepare("UPDATE users SET company = ? WHERE id = ?").run(normalizedPreferredCompany, user.id);
-    }
-    return db.prepare(`
-      SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
-      FROM users
-      WHERE id = ?
-      LIMIT 1
-    `).get(user.id);
-  }
-
-  const company = normalizeCompanyName(preferredCompany) || inferCompanyFromEmail(email);
-  const randomPasswordHash = hashPassword(randomBytes(24).toString("hex"));
-  db.prepare(`
-    INSERT INTO users (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
-    VALUES (?, ?, 'buyer', ?, 0, ?, '', '', 0)
-  `).run(email, company, randomPasswordHash, auth0Sub);
-
-  return db.prepare(`
-    SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
-    FROM users
-    WHERE email = ?
-    LIMIT 1
-  `).get(email);
 }
 
 async function getUserByEmailRuntime(email, includePassword = false) {
@@ -2710,7 +2653,7 @@ async function getCategoriesPostgres() {
 }
 
 async function getDevicesPostgres(url) {
-  if (!pgClient) return getDevices(url);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const search = (url.searchParams.get("search") || "").trim();
   const categories = splitCsv(url.searchParams.get("category"));
   const manufacturers = splitCsv(url.searchParams.get("manufacturer"));
@@ -4886,7 +4829,7 @@ function getAiAdminAnomalies() {
 }
 
 async function getAiAdminAnomaliesPostgres() {
-  if (!pgClient) return getAiAdminAnomalies();
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const anomalies = [];
   const largeAdjustmentsResult = await pgClient.query(`
     SELECT ie.created_at AS "createdAt", ie.device_id AS "deviceId", ie.delta, ie.change_type AS "changeType",
@@ -4986,7 +4929,7 @@ function getAiSalesInsights(daysRaw) {
 }
 
 async function getAiSalesInsightsPostgres(daysRaw) {
-  if (!pgClient) return getAiSalesInsights(daysRaw);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const days = Math.max(1, Math.min(365, Number(daysRaw || 30)));
   const fromIso = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
   const totalsResult = await pgClient.query(`
@@ -5053,7 +4996,7 @@ function clearCatalogData() {
 }
 
 async function clearCatalogDataPostgres() {
-  if (!pgClient) return clearCatalogData();
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const targetTables = ["devices", "boomi_inventory_raw", "inventory_events", "device_inventory", "device_images"];
   const tableRows = await pgClient.query(
     `
@@ -5410,7 +5353,7 @@ function seedAdminRealDevicesPerCategory(countPerCategory) {
 }
 
 async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory, progressCallback = null) {
-  if (!pgClient) return seedAdminRealDevicesPerCategory(countPerCategory);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const categoriesResult = await pgClient.query(`SELECT id, name FROM ${postgresTableRef("categories")}`);
   const categories = categoriesResult.rows || [];
   const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
@@ -6294,7 +6237,7 @@ async function upsertDeviceInventoryPostgres(rows) {
 }
 
 async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
-  if (!pgClient) return syncBoomiInventoryRows(rows, progressCallback);
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const total = Array.isArray(rows) ? rows.length : 0;
   let processed = 0;
   let skipped = 0;
@@ -6552,46 +6495,8 @@ function isInteger(value) {
   return Number.isInteger(value);
 }
 
-function getDeviceExists(deviceId) {
-  const row = db.prepare("SELECT id, model_name FROM devices WHERE id = ?").get(deviceId);
-  return row || null;
-}
-
-function getLocationExists(locationId) {
-  const row = db.prepare("SELECT id, name FROM locations WHERE id = ?").get(locationId);
-  return row || null;
-}
-
-function getInventoryByDeviceId(deviceId) {
-  const device = db.prepare("SELECT id, model_name FROM devices WHERE id = ?").get(deviceId);
-  if (!device?.id) return null;
-  const rows = db.prepare(`
-    SELECT
-      l.id AS locationId,
-      l.name AS location,
-      l.external_id AS externalId,
-      COALESCE(di.quantity, 0) AS quantity
-    FROM locations l
-    LEFT JOIN device_inventory di
-      ON di.location_id = l.id
-      AND di.device_id = ?
-    ORDER BY l.id
-  `).all(deviceId);
-  const total = rows.reduce((sum, r) => sum + Number(r.quantity || 0), 0);
-  return {
-    deviceId: device.id,
-    model: device.model_name,
-    locations: rows.map((r) => ({
-      locationId: Number(r.locationId),
-      location: getDisplayLocationName(r.location, r.externalId),
-      quantity: Number(r.quantity || 0)
-    })),
-    total
-  };
-}
-
 async function getInventoryByDeviceIdPostgres(deviceId) {
-  if (!pgClient) return null;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const deviceResult = await pgClient.query(
     `SELECT id, model_name FROM ${postgresTableRef("devices")} WHERE id = $1 LIMIT 1`,
     [deviceId]
@@ -6636,17 +6541,8 @@ async function getInventoryByDeviceIdRuntime(deviceId) {
   }
 }
 
-function upsertInventoryQuantity(deviceId, locationId, quantity) {
-  db.prepare(`
-    INSERT INTO device_inventory (device_id, location_id, quantity)
-    VALUES (?, ?, ?)
-    ON CONFLICT(device_id, location_id)
-    DO UPDATE SET quantity = excluded.quantity
-  `).run(deviceId, locationId, quantity);
-}
-
 async function upsertInventoryQuantityPostgres(deviceId, locationId, quantity) {
-  if (!pgClient) return;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   await pgClient.query(
     `
       INSERT INTO ${postgresTableRef("device_inventory")} (device_id, location_id, quantity)
@@ -6667,17 +6563,8 @@ async function upsertInventoryQuantityRuntime(deviceId, locationId, quantity) {
   }
 }
 
-function getInventoryQuantity(deviceId, locationId) {
-  const row = db.prepare(`
-    SELECT quantity
-    FROM device_inventory
-    WHERE device_id = ? AND location_id = ?
-  `).get(deviceId, locationId);
-  return Number(row?.quantity || 0);
-}
-
 async function getInventoryQuantityPostgres(deviceId, locationId) {
-  if (!pgClient) return 0;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(
     `
       SELECT quantity
@@ -6699,16 +6586,8 @@ async function getInventoryQuantityRuntime(deviceId, locationId) {
   }
 }
 
-function addInventoryEvent({ deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason, changedByUserId }) {
-  db.prepare(`
-    INSERT INTO inventory_events (
-      device_id, location_id, change_type, previous_quantity, new_quantity, delta, reason, changed_by_user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason || null, changedByUserId ?? null);
-}
-
 async function addInventoryEventPostgres({ deviceId, locationId, changeType, previousQuantity, newQuantity, delta, reason, changedByUserId }) {
-  if (!pgClient) return;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   await pgClient.query(
     `
       INSERT INTO ${postgresTableRef("inventory_events")} (
@@ -6787,168 +6666,8 @@ function validateRequestLines(linesRaw) {
   });
 }
 
-function getNextRequestNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `REQ-${year}-`;
-  const row = db.prepare("SELECT COUNT(*) AS count FROM quote_requests WHERE request_number LIKE ?").get(`${prefix}%`);
-  const next = Number(row?.count || 0) + 1;
-  return `${prefix}${String(next).padStart(4, "0")}`;
-}
-
-function getNextDummyEstimateNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `EST-${year}-`;
-  const row = db.prepare("SELECT COUNT(*) AS count FROM quote_requests WHERE netsuite_estimate_number LIKE ?").get(`${prefix}%`);
-  const next = Number(row?.count || 0) + 1;
-  return `${prefix}${String(next).padStart(4, "0")}`;
-}
-
-function getRequestLines(requestId) {
-  return db.prepare(`
-    SELECT device_id, model, grade, quantity, offer_price, note
-    FROM quote_request_lines
-    WHERE request_id = ?
-    ORDER BY id
-  `).all(requestId).map((line) => ({
-    productId: line.device_id || "",
-    model: line.model,
-    grade: line.grade,
-    quantity: Number(line.quantity || 0),
-    offerPrice: Number(line.offer_price || 0),
-    note: line.note || ""
-  }));
-}
-
-function mapRequestRow(row) {
-  return {
-    id: row.id,
-    requestNumber: row.request_number,
-    company: row.company,
-    createdBy: row.created_by_email,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    status: row.status,
-    total: Number(row.total_amount || 0),
-    currencyCode: row.currency_code || "USD",
-    netsuiteEstimateId: row.netsuite_estimate_id || null,
-    netsuiteEstimateNumber: row.netsuite_estimate_number || null,
-    netsuiteStatus: row.netsuite_status || null,
-    netsuiteUpdatedAt: row.netsuite_last_sync_at || null,
-    lines: getRequestLines(row.id)
-  };
-}
-
-function getRequestsForUser(user) {
-  const sql = user.role === "admin"
-    ? "SELECT * FROM quote_requests ORDER BY created_at DESC"
-    : "SELECT * FROM quote_requests WHERE company = ? ORDER BY created_at DESC";
-  const rows = user.role === "admin" ? db.prepare(sql).all() : db.prepare(sql).all(user.company);
-  return rows.map(mapRequestRow);
-}
-
-function getRequestByIdForUser(user, requestId) {
-  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
-  if (!row?.id) return null;
-  if (user.role !== "admin" && row.company !== user.company) return null;
-  return mapRequestRow(row);
-}
-
-function createRequestForUser(user, body) {
-  const lines = validateRequestLines(body.lines);
-  const requestId = randomBytes(16).toString("hex");
-  const requestNumber = getNextRequestNumber();
-  const total = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
-
-  db.exec("BEGIN TRANSACTION");
-  try {
-    db.prepare(`
-      INSERT INTO quote_requests (
-        id, request_number, company, created_by_user_id, created_by_email, status, total_amount, currency_code, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'New', ?, 'USD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(requestId, requestNumber, user.company, user.id, user.email, total);
-
-    const insertLine = db.prepare(`
-      INSERT INTO quote_request_lines (
-        request_id, device_id, model, grade, quantity, offer_price, note
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const line of lines) {
-      insertLine.run(requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null);
-    }
-
-    db.prepare(`
-      INSERT INTO quote_request_events (request_id, event_type, payload_json)
-      VALUES (?, 'request_created', ?)
-    `).run(requestId, JSON.stringify({ lineCount: lines.length, total }));
-
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  return getRequestByIdForUser(user, requestId);
-}
-
-function createDummyEstimateForRequest(user, requestId) {
-  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
-  if (!row?.id) {
-    throw new Error("Request not found.");
-  }
-  if (user.role !== "admin" && row.company !== user.company) {
-    throw new Error("Forbidden");
-  }
-  if (row.netsuite_estimate_id) {
-    return mapRequestRow(row);
-  }
-
-  const estimateId = `dummy-est-${randomBytes(6).toString("hex")}`;
-  const estimateNumber = getNextDummyEstimateNumber();
-  const syncAt = new Date().toISOString();
-  db.prepare(`
-    UPDATE quote_requests
-    SET status = 'Estimate Created',
-        netsuite_estimate_id = ?,
-        netsuite_estimate_number = ?,
-        netsuite_status = 'Estimate Created',
-        netsuite_last_sync_at = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(estimateId, estimateNumber, syncAt, requestId);
-  db.prepare(`
-    INSERT INTO quote_request_events (request_id, event_type, payload_json)
-    VALUES (?, 'dummy_estimate_created', ?)
-  `).run(requestId, JSON.stringify({ estimateId, estimateNumber, syncedAt: syncAt }));
-  return getRequestByIdForUser(user, requestId);
-}
-
-function updateDummyEstimateStatus(user, requestId, nextStatus) {
-  const row = db.prepare("SELECT * FROM quote_requests WHERE id = ?").get(requestId);
-  if (!row?.id) {
-    throw new Error("Request not found.");
-  }
-  if (user.role !== "admin" && row.company !== user.company) {
-    throw new Error("Forbidden");
-  }
-  const status = normalizeRequestStatus(nextStatus, row.status || "New");
-  const syncAt = new Date().toISOString();
-  db.prepare(`
-    UPDATE quote_requests
-    SET status = ?,
-        netsuite_status = ?,
-        netsuite_last_sync_at = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(status, status, syncAt, requestId);
-  db.prepare(`
-    INSERT INTO quote_request_events (request_id, event_type, payload_json)
-    VALUES (?, 'dummy_status_update', ?)
-  `).run(requestId, JSON.stringify({ status, syncedAt: syncAt }));
-  return getRequestByIdForUser(user, requestId);
-}
-
 async function getRequestLinesPostgres(requestId) {
-  if (!pgClient) return [];
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(`
     SELECT device_id, model, grade, quantity, offer_price, note
     FROM ${postgresTableRef("quote_request_lines")}
@@ -6990,7 +6709,7 @@ async function mapRequestRowPostgres(row) {
 }
 
 async function getRequestsForUserPostgres(user) {
-  if (!pgClient) return [];
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = user.role === "admin"
     ? await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} ORDER BY created_at DESC`)
     : await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = $1 ORDER BY created_at DESC`, [user.company]);
@@ -7003,7 +6722,7 @@ async function getRequestsForUserPostgres(user) {
 }
 
 async function getRequestByIdForUserPostgres(user, requestId) {
-  if (!pgClient) return null;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`, [requestId]);
   const row = result.rows?.[0];
   if (!row?.id) return null;
@@ -7012,7 +6731,7 @@ async function getRequestByIdForUserPostgres(user, requestId) {
 }
 
 async function getNextRequestNumberPostgres() {
-  if (!pgClient) return getNextRequestNumber();
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const year = new Date().getFullYear();
   const prefix = `REQ-${year}-`;
   const result = await pgClient.query(
@@ -7026,7 +6745,7 @@ async function getNextRequestNumberPostgres() {
 }
 
 async function getNextDummyEstimateNumberPostgres() {
-  if (!pgClient) return getNextDummyEstimateNumber();
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const year = new Date().getFullYear();
   const prefix = `EST-${year}-`;
   const result = await pgClient.query(
@@ -8346,91 +8065,48 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      if (effectiveDbEngine === "postgres") {
-        if (!pgClient) {
-          throw new Error("Postgres runtime is not initialized.");
-        }
-        await pgClient.query("BEGIN");
-        try {
-          for (const row of updates) {
-            const deviceId = String(row.deviceId).trim();
-            const locationId = Number(row.locationId);
-            const previousQuantity = await getInventoryQuantityPostgres(deviceId, locationId);
-            if (mode === "set") {
-              const quantity = Number(row.quantity);
-              await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
-              await addInventoryEventPostgres({
-                deviceId,
-                locationId,
-                changeType: "set",
-                previousQuantity,
-                newQuantity: quantity,
-                delta: quantity - previousQuantity,
-                reason,
-                changedByUserId: user.id
-              });
-            } else {
-              const delta = Number(row.delta);
-              const newQuantity = previousQuantity + delta;
-              await upsertInventoryQuantityPostgres(deviceId, locationId, newQuantity);
-              await addInventoryEventPostgres({
-                deviceId,
-                locationId,
-                changeType: "adjust",
-                previousQuantity,
-                newQuantity,
-                delta,
-                reason,
-                changedByUserId: user.id
-              });
-            }
+      if (!pgClient) {
+        throw new Error("Postgres runtime is not initialized.");
+      }
+      await pgClient.query("BEGIN");
+      try {
+        for (const row of updates) {
+          const deviceId = String(row.deviceId).trim();
+          const locationId = Number(row.locationId);
+          const previousQuantity = await getInventoryQuantityPostgres(deviceId, locationId);
+          if (mode === "set") {
+            const quantity = Number(row.quantity);
+            await upsertInventoryQuantityPostgres(deviceId, locationId, quantity);
+            await addInventoryEventPostgres({
+              deviceId,
+              locationId,
+              changeType: "set",
+              previousQuantity,
+              newQuantity: quantity,
+              delta: quantity - previousQuantity,
+              reason,
+              changedByUserId: user.id
+            });
+          } else {
+            const delta = Number(row.delta);
+            const newQuantity = previousQuantity + delta;
+            await upsertInventoryQuantityPostgres(deviceId, locationId, newQuantity);
+            await addInventoryEventPostgres({
+              deviceId,
+              locationId,
+              changeType: "adjust",
+              previousQuantity,
+              newQuantity,
+              delta,
+              reason,
+              changedByUserId: user.id
+            });
           }
-          await pgClient.query("COMMIT");
-        } catch (error) {
-          await pgClient.query("ROLLBACK");
-          throw error;
         }
-      } else {
-        db.exec("BEGIN TRANSACTION");
-        try {
-          for (const row of updates) {
-            const deviceId = String(row.deviceId).trim();
-            const locationId = Number(row.locationId);
-            const previousQuantity = getInventoryQuantity(deviceId, locationId);
-            if (mode === "set") {
-              const quantity = Number(row.quantity);
-              upsertInventoryQuantity(deviceId, locationId, quantity);
-              addInventoryEvent({
-                deviceId,
-                locationId,
-                changeType: "set",
-                previousQuantity,
-                newQuantity: quantity,
-                delta: quantity - previousQuantity,
-                reason,
-                changedByUserId: user.id
-              });
-            } else {
-              const delta = Number(row.delta);
-              const newQuantity = previousQuantity + delta;
-              upsertInventoryQuantity(deviceId, locationId, newQuantity);
-              addInventoryEvent({
-                deviceId,
-                locationId,
-                changeType: "adjust",
-                previousQuantity,
-                newQuantity,
-                delta,
-                reason,
-                changedByUserId: user.id
-              });
-            }
-          }
-          db.exec("COMMIT");
-        } catch (error) {
-          db.exec("ROLLBACK");
-          throw error;
-        }
+        await pgClient.query("COMMIT");
+      } catch (error) {
+        await pgClient.query("ROLLBACK");
+        throw error;
       }
 
       json(req, res, 200, { ok: true, processed: updates.length, failed: 0 });
