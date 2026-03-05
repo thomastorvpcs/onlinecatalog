@@ -1380,11 +1380,6 @@ async function demoApiRequest(path, options = {}) {
     };
   }
 
-  if (method === "POST" && pathname === "/api/admin/catalog/apply-image-mapping") {
-    requireAdmin();
-    return { ok: true, mappedFamilies: 0, updatedFamilies: 0, updatedDeviceRows: 0, unmatchedFamilies: [] };
-  }
-
   const userMatch = pathname.match(/^\/api\/users\/(\d+)$/);
   if (userMatch && method === "PATCH") {
     const actingUser = requireAdmin();
@@ -1594,7 +1589,6 @@ export default function App() {
   const [adminCatalogResult, setAdminCatalogResult] = useState("");
   const [adminCatalogError, setAdminCatalogError] = useState("");
   const [adminRealSeedStatus, setAdminRealSeedStatus] = useState(null);
-  const [adminImageMapLoading, setAdminImageMapLoading] = useState(false);
   const [expandedFilters, setExpandedFilters] = useState({});
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoading, setSavedFiltersLoading] = useState(false);
@@ -3591,27 +3585,6 @@ export default function App() {
     }
   };
 
-  const seedTestDevicesForAdmin = async () => {
-    try {
-      setAdminCatalogLoading(true);
-      setAdminCatalogError("");
-      setAdminCatalogResult("");
-      const payload = await apiRequest("/api/admin/catalog/seed-test", {
-        method: "POST",
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState,
-        body: { countPerCategory: 500 }
-      });
-      setAdminCatalogResult(`Seed complete. Added ${Number(payload.countPerCategory || 0)} test devices per category (${Number(payload.categoriesSeeded || 0)} categories).`);
-    } catch (error) {
-      setAdminCatalogError(error.message || "Failed to seed test devices.");
-    } finally {
-      setAdminCatalogLoading(false);
-    }
-  };
-
   const seedRealDevicesForAdmin = async () => {
     try {
       setAdminCatalogLoading(true);
@@ -3656,36 +3629,6 @@ export default function App() {
       setAdminCatalogError(error.message || "Failed to seed realistic devices.");
     } finally {
       setAdminCatalogLoading(false);
-    }
-  };
-  const applyImageMappingForAdmin = async () => {
-    try {
-      setAdminImageMapLoading(true);
-      setAdminCatalogError("");
-      setAdminCatalogResult("");
-      const payload = await apiRequest("/api/admin/catalog/apply-image-mapping", {
-        method: "POST",
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState
-      });
-      setAdminCatalogResult(
-        `Image mapping applied. Updated ${Number(payload.updatedDeviceRows || 0)} devices across ${Number(payload.updatedFamilies || 0)} families.`
-      );
-      const refreshed = await apiRequest("/api/devices", {
-        token: authToken,
-        refreshToken,
-        onAuthUpdate: applyAuthTokens,
-        onAuthFail: clearAuthState
-      });
-      if (Array.isArray(refreshed)) {
-        setProducts(refreshed.map(normalizeDevice));
-      }
-    } catch (error) {
-      setAdminCatalogError(error.message || "Failed to apply image mapping.");
-    } finally {
-      setAdminImageMapLoading(false);
     }
   };
   const updateWeeklyBannerForAdmin = async (enabled) => {
@@ -4331,19 +4274,13 @@ export default function App() {
               </div>
               <div className="admin-user-form" style={{ marginBottom: 10 }}>
                 <h3 style={{ margin: "0 0 8px" }}>Catalog Admin Tools</h3>
-                <p className="small" style={{ marginTop: 0 }}>Clear current catalog data or seed 500 test devices per category.</p>
+                <p className="small" style={{ marginTop: 0 }}>Clear current catalog data or seed realistic devices per category.</p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" className="delete-btn" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={clearCatalogForAdmin}>
                     {adminCatalogLoading ? "Working..." : "Clear Catalog DB"}
                   </button>
-                  <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedTestDevicesForAdmin}>
-                    {adminCatalogLoading ? "Working..." : "Add 500 Test Devices/Category"}
-                  </button>
                   <button type="button" style={{ width: "auto" }} disabled={adminCatalogLoading} onClick={seedRealDevicesForAdmin}>
                     {adminCatalogLoading ? `Seeding... ${Number(adminRealSeedStatus?.processed || 0)}/${Number(adminRealSeedStatus?.totalPlanned || 0)}` : "Add 100 Real Devices/Category"}
-                  </button>
-                  <button type="button" style={{ width: "auto" }} disabled={adminImageMapLoading} onClick={applyImageMappingForAdmin}>
-                    {adminImageMapLoading ? "Working..." : "Apply Product Image Mapping"}
                   </button>
                 </div>
                 {adminCatalogResult ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{adminCatalogResult}</p> : null}

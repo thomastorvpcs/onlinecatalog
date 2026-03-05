@@ -7717,16 +7717,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/api/admin/catalog/seed-test") {
-      const user = requireAdmin(req, res);
-      if (!user) return;
-      const body = await parseBody(req);
-      const countPerCategory = Math.max(1, Math.min(5000, Number(body.countPerCategory || 500)));
-      const result = seedAdminTestDevicesPerCategory(countPerCategory);
-      json(req, res, 200, { ok: true, ...result });
-      return;
-    }
-
     if (req.method === "POST" && url.pathname === "/api/admin/catalog/seed-real") {
       const user = requireAdmin(req, res);
       if (!user) return;
@@ -7741,14 +7731,6 @@ const server = createServer(async (req, res) => {
       const user = requireAdmin(req, res);
       if (!user) return;
       json(req, res, 200, { ok: true, status: getAdminSeedRealJobStatus() });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/admin/catalog/apply-image-mapping") {
-      const user = requireAdmin(req, res);
-      if (!user) return;
-      const result = await applyCatalogImageMappingsRuntime();
-      json(req, res, 200, { ok: true, ...result });
       return;
     }
 
