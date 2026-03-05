@@ -6214,6 +6214,9 @@ async function syncBoomiInventoryRowsRuntime(rows, progressCallback = null) {
     try {
       return await syncBoomiInventoryRowsPostgres(rows, progressCallback);
     } catch (error) {
+      if (POSTGRES_STRICT_RUNTIME) {
+        throw new Error(`Postgres boomi sync failed: ${error?.message || error}`);
+      }
       console.error(`[postgres-write] boomi sync fallback: ${error?.message || error}`);
     }
   }
