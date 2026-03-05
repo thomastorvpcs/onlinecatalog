@@ -2173,22 +2173,29 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
     async function loadShortcutFilters() {
-      if (!user || !authToken || !categoryNames.length) {
+      if (!user || !authToken) {
         if (!ignore) {
           setShortcutFiltersByCategory({});
         }
         return;
       }
-      const entries = await Promise.all(categoryNames.map(async (categoryName) => {
+      const shortcutCategoryKeys = [...new Set([...categoryNames, ALL_CATEGORIES_KEY])];
+      const entries = await Promise.all(shortcutCategoryKeys.map(async (categoryName) => {
         try {
-          const viewKey = categorySavedFilterViewKey(categoryName);
-          const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
-            token: authToken,
-            refreshToken,
-            onAuthUpdate: applyAuthTokens,
-            onAuthFail: clearAuthState
-          });
-          return [categoryName, Array.isArray(payload) ? payload : []];
+          const viewKeys = categorySavedFilterViewKeys(categoryName);
+          const payloads = await Promise.all(viewKeys.map(async (viewKey) => {
+            try {
+              return await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+                token: authToken,
+                refreshToken,
+                onAuthUpdate: applyAuthTokens,
+                onAuthFail: clearAuthState
+              });
+            } catch {
+              return [];
+            }
+          }));
+          return [categoryName, mergeSavedFiltersById(payloads.flatMap((entry) => (Array.isArray(entry) ? entry : [])))];
         } catch {
           return [categoryName, []];
         }
@@ -2625,20 +2632,27 @@ export default function App() {
   };
 
   const refreshShortcutFilters = async () => {
-    if (!user || !authToken || !categoryNames.length) {
+    if (!user || !authToken) {
       setShortcutFiltersByCategory({});
       return;
     }
-    const entries = await Promise.all(categoryNames.map(async (categoryName) => {
+    const shortcutCategoryKeys = [...new Set([...categoryNames, ALL_CATEGORIES_KEY])];
+    const entries = await Promise.all(shortcutCategoryKeys.map(async (categoryName) => {
       try {
-        const viewKey = categorySavedFilterViewKey(categoryName);
-        const payload = await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
-          token: authToken,
-          refreshToken,
-          onAuthUpdate: applyAuthTokens,
-          onAuthFail: clearAuthState
-        });
-        return [categoryName, Array.isArray(payload) ? payload : []];
+        const viewKeys = categorySavedFilterViewKeys(categoryName);
+        const payloads = await Promise.all(viewKeys.map(async (viewKey) => {
+          try {
+            return await apiRequest(`/api/filters/saved?view=${encodeURIComponent(viewKey)}`, {
+              token: authToken,
+              refreshToken,
+              onAuthUpdate: applyAuthTokens,
+              onAuthFail: clearAuthState
+            });
+          } catch {
+            return [];
+          }
+        }));
+        return [categoryName, mergeSavedFiltersById(payloads.flatMap((entry) => (Array.isArray(entry) ? entry : [])))];
       } catch {
         return [categoryName, []];
       }
@@ -3845,7 +3859,7 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
-  const shortcutEntries = categories.flatMap((categoryName) =>
+  const shortcutEntries = [...new Set([...categories, ALL_CATEGORIES_KEY])].flatMap((categoryName) =>
     (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
       categoryName,
       savedFilter
@@ -3911,10 +3925,10 @@ export default function App() {
                         key={`shortcut-${categoryName}-${savedFilter.id}`}
                         type="button"
                         className="shortcut-chip"
-                        title={`${categoryName} | ${savedFilter.name}`}
+                        title={`${categoryName === ALL_CATEGORIES_KEY ? ALL_CATEGORIES_LABEL : categoryName} | ${savedFilter.name}`}
                         onClick={() => openSavedFilterShortcut(categoryName, savedFilter)}
                       >
-                        {categoryName} | {savedFilter.name}
+                        {categoryName === ALL_CATEGORIES_KEY ? ALL_CATEGORIES_LABEL : categoryName} | {savedFilter.name}
                       </button>
                     ))}
                   </div>
