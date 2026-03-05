@@ -1029,8 +1029,11 @@ async function resolveStoredLocationNamesPostgres(regionFilters) {
     .map((value) => String(value || "").trim())
     .filter(Boolean));
   if (!targets.size) return [];
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return resolveStoredLocationNames(regionFilters);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const rowsRes = await pgClient.query(
     `SELECT name, external_id AS "externalId" FROM ${postgresTableRef("locations")} ORDER BY id`
@@ -1469,8 +1472,11 @@ function seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw = 20)
 }
 
 async function seedHistoricalCompletedEstimatesForUserRuntime(targetUserIdRaw, countRaw = 20) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return seedHistoricalCompletedEstimatesForUser(targetUserIdRaw, countRaw);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const targetUserId = Number(targetUserIdRaw);
   if (!Number.isInteger(targetUserId) || targetUserId < 1) {
@@ -2236,14 +2242,16 @@ async function rotateRefreshTokenPostgres(refreshToken) {
 }
 
 async function issueRefreshTokenRuntime(userId) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     return issueRefreshTokenPostgres(userId);
   }
   return issueRefreshToken(userId);
 }
 
 async function revokeRefreshTokenRuntime(refreshToken, replacedByToken) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     await revokeRefreshTokenPostgres(refreshToken, replacedByToken);
     return;
   }
@@ -2251,7 +2259,8 @@ async function revokeRefreshTokenRuntime(refreshToken, replacedByToken) {
 }
 
 async function rotateRefreshTokenRuntime(refreshToken) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     return rotateRefreshTokenPostgres(refreshToken);
   }
   return rotateRefreshToken(refreshToken);
@@ -2511,7 +2520,8 @@ function upsertUserFromAuth0Claims(claims, fallbackEmail = "", preferredCompany 
 async function getUserByEmailRuntime(email, includePassword = false) {
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
@@ -2529,7 +2539,8 @@ async function getUserByEmailRuntime(email, includePassword = false) {
 async function getUserByIdRuntime(userId, includePassword = false) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
@@ -2547,7 +2558,8 @@ async function getUserByIdRuntime(userId, includePassword = false) {
 async function getUserByAuth0SubRuntime(auth0Sub, includePassword = false) {
   const sub = String(auth0Sub || "").trim();
   if (!sub) return null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const fields = includePassword
       ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
       : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
@@ -2577,7 +2589,8 @@ async function createUserRuntime({
   const safeCompany = String(company || "").trim();
   const safeRole = String(role || "").trim() === "admin" ? "admin" : "buyer";
   if (!normalizedEmail || !safeCompany || !passwordHash) throw new Error("Invalid user payload.");
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const result = await pgClient.query(`
       INSERT INTO ${postgresTableRef("users")} (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -2595,7 +2608,8 @@ async function createUserRuntime({
 async function setUserResetCodeRuntime(userId, resetCode, expiresAt) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     await pgClient.query(`UPDATE ${postgresTableRef("users")} SET reset_code = $1, reset_code_expires_at = $2 WHERE id = $3`, [resetCode, expiresAt, id]);
     return;
   }
@@ -2606,7 +2620,8 @@ async function setUserAuth0SubRuntime(userId, auth0Sub) {
   const id = Number(userId);
   const sub = String(auth0Sub || "").trim();
   if (!Number.isInteger(id) || id < 1 || !sub) return;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     await pgClient.query(`UPDATE ${postgresTableRef("users")} SET auth0_sub = $1 WHERE id = $2`, [sub, id]);
     return;
   }
@@ -2616,7 +2631,8 @@ async function setUserAuth0SubRuntime(userId, auth0Sub) {
 async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     await pgClient.query(`UPDATE ${postgresTableRef("users")} SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL WHERE id = $2`, [passwordHash, id]);
     return;
   }
@@ -2632,7 +2648,8 @@ async function completeUserRegistrationRuntime(userId, firstName, lastName, comp
   if (!normalizedFirstName || !normalizedLastName || !normalizedCompany) {
     throw new Error("First name, last name and company are required.");
   }
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const result = await pgClient.query(`
       UPDATE ${postgresTableRef("users")}
       SET first_name = $1,
@@ -2654,7 +2671,8 @@ async function completeUserRegistrationRuntime(userId, firstName, lastName, comp
 }
 
 async function listUsersForAdminRuntime() {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const result = await pgClient.query(
       `SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM ${postgresTableRef("users")} ORDER BY created_at DESC`
     );
@@ -2668,7 +2686,8 @@ async function listUsersForAdminRuntime() {
 async function getUserForAdminByIdRuntime(userId) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) return null;
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const result = await pgClient.query(
       `SELECT id, email, auth0_sub, role, is_active, registration_completed, company, first_name, last_name, created_at FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`,
       [id]
@@ -2699,7 +2718,8 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
   }
   if (!setParts.length) throw new Error("No valid fields to update.");
 
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const pgSet = [];
     const pgParams = [];
     if (typeof updates?.isActive === "boolean") {
@@ -2731,7 +2751,8 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
 async function deleteUserRuntime(userId) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id < 1) throw new Error("User not found.");
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     await pgClient.query("BEGIN");
     try {
       await pgClient.query(`UPDATE ${postgresTableRef("quote_requests")} SET created_by_user_id = NULL WHERE created_by_user_id = $1`, [id]);
@@ -2765,8 +2786,11 @@ async function deleteUserRuntime(userId) {
 }
 
 async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", preferredCompany = "") {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return upsertUserFromAuth0Claims(claims, fallbackEmail, preferredCompany);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const auth0Sub = String(claims?.sub || "").trim();
   const email = normalizeEmail(claims?.email || fallbackEmail || "");
@@ -3592,7 +3616,8 @@ async function getDeviceQuantityByDisplayLocationRuntime(deviceId, displayLocati
   const normalizedDisplay = String(displayLocationName || "").trim();
   if (!normalizedDeviceId || !normalizedDisplay) return 0;
 
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     const storedNames = await resolveStoredLocationNamesPostgres([normalizedDisplay]);
     if (!storedNames.length) return 0;
     const rowRes = await pgClient.query(
@@ -3675,7 +3700,8 @@ async function validateNetsuitePayloadWithAi(body) {
   const requestId = String(body?.requestId || "").trim();
   let candidate = payload;
   if (requestId) {
-    if (effectiveDbEngine === "postgres" && pgClient) {
+    if (effectiveDbEngine === "postgres") {
+      if (!pgClient) throw new Error("Postgres runtime is not initialized.");
       const rowResult = await pgClient.query(
         `SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`,
         [requestId]
@@ -3905,8 +3931,11 @@ function buildCopilotHistoricalSalesContext() {
 }
 
 async function buildCopilotHistoricalSalesContextRuntime() {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return buildCopilotHistoricalSalesContext();
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const totalsRes = await pgClient.query(`
     SELECT
@@ -4089,8 +4118,11 @@ function queryOrderHistoryLineRows(user, message, selectedCategory, limit = 150)
 }
 
 async function queryOrderHistoryLineRowsRuntime(user, message, selectedCategory, limit = 150) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return queryOrderHistoryLineRows(user, message, selectedCategory, limit);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const filters = await buildOrderHistoryFiltersFromMessageRuntime(message, selectedCategory);
   const clauses = [];
@@ -4246,8 +4278,11 @@ function buildCopilotUserOrderHistoryContext(user) {
 }
 
 async function buildCopilotUserOrderHistoryContextRuntime(user) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return buildCopilotUserOrderHistoryContext(user);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const lines = await queryOrderHistoryLineRowsRuntime(user, "", "Smartphones", 300);
   const byModel = new Map();
@@ -4361,8 +4396,11 @@ function queryOrdersForCopilot(user, limit = 8) {
 }
 
 async function queryOrdersForCopilotRuntime(user, limit = 8) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return queryOrdersForCopilot(user, limit);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const safeLimit = Math.max(1, Math.min(40, Number(limit || 8)));
   if (user?.role === "admin") {
@@ -4412,8 +4450,11 @@ function answerOrderDetailsQuestion(user, message) {
 }
 
 async function answerOrderDetailsQuestionRuntime(user, message) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return answerOrderDetailsQuestion(user, message);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const orderRef = extractOrderReference(message);
   const rows = await queryOrdersForCopilotRuntime(user, 15);
@@ -4532,8 +4573,11 @@ function buildAddFromHistoricalOrderAction(user, message, allDevicesInput = null
 }
 
 async function buildAddFromHistoricalOrderActionRuntime(user, message, allDevicesInput = null) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return buildAddFromHistoricalOrderAction(user, message, allDevicesInput);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const rows = await queryOrdersForCopilotRuntime(user, 25);
   if (!rows.length) return null;
@@ -4649,8 +4693,11 @@ function answerOrderHistoryQuestion(user, message, selectedCategory) {
 }
 
 async function answerOrderHistoryQuestionRuntime(user, message, selectedCategory) {
-  if (!(effectiveDbEngine === "postgres" && pgClient)) {
+  if (effectiveDbEngine !== "postgres") {
     return answerOrderHistoryQuestion(user, message, selectedCategory);
+  }
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
   }
   const rows = await queryOrderHistoryLineRowsRuntime(user, message, selectedCategory, 250);
   if (!rows.length) return null;
@@ -5983,7 +6030,8 @@ async function seedAdminRealDevicesPerCategoryPostgres(countPerCategory, progres
 }
 
 async function seedAdminRealDevicesPerCategoryRuntime(countPerCategory, progressCallback = null) {
-  if (effectiveDbEngine === "postgres" && pgClient) {
+  if (effectiveDbEngine === "postgres") {
+    if (!pgClient) throw new Error("Postgres runtime is not initialized.");
     return seedAdminRealDevicesPerCategoryPostgres(countPerCategory, progressCallback);
   }
   return seedAdminRealDevicesPerCategory(countPerCategory);
