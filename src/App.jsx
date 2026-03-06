@@ -1732,6 +1732,7 @@ export default function App() {
   const [aiCopilotGreetingTyping, setAiCopilotGreetingTyping] = useState(false);
   const [aiCopilotError, setAiCopilotError] = useState("");
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
+  const [aiCopilotUnreadCount, setAiCopilotUnreadCount] = useState(0);
   const [aiCopilotWelcomePending, setAiCopilotWelcomePending] = useState(false);
   const [aiCopilotPanelHeight, setAiCopilotPanelHeight] = useState(0);
   const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
@@ -1752,6 +1753,7 @@ export default function App() {
   const gradeGuideItemRefs = useRef(new Map());
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
+  const aiCopilotLastSeenMessageCountRef = useRef(0);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -2408,8 +2410,10 @@ export default function App() {
   useEffect(() => {
     if (!aiCopilotStateKey) {
       aiCopilotStateLoadedRef.current = false;
+      aiCopilotLastSeenMessageCountRef.current = 0;
       setAiCopilotMessages([]);
       setAiCopilotOpen(false);
+      setAiCopilotUnreadCount(0);
       return;
     }
     const state = readJson(localStorage, aiCopilotStateKey, {});
@@ -2426,6 +2430,8 @@ export default function App() {
       : [];
     setAiCopilotMessages(messages);
     setAiCopilotOpen(false);
+    aiCopilotLastSeenMessageCountRef.current = messages.length;
+    setAiCopilotUnreadCount(0);
     setAiCopilotPanelHeight(Number.isFinite(Number(state?.panelHeight)) ? Math.max(0, Math.round(Number(state.panelHeight))) : 0);
     setAiCopilotMinPanelHeight(0);
     setAiCopilotGreetingTyping(false);
@@ -2459,6 +2465,22 @@ export default function App() {
       setAiCopilotGreetingTyping(false);
     };
   }, [aiCopilotOpen, aiCopilotWelcomePending]);
+
+  useEffect(() => {
+    if (aiCopilotOpen) {
+      aiCopilotLastSeenMessageCountRef.current = aiCopilotMessages.length;
+      if (aiCopilotUnreadCount !== 0) {
+        setAiCopilotUnreadCount(0);
+      }
+      return;
+    }
+    const startIndex = Math.max(0, Number(aiCopilotLastSeenMessageCountRef.current || 0));
+    const nextUnread = aiCopilotMessages
+      .slice(startIndex)
+      .filter((msg) => msg?.role === "assistant")
+      .length;
+    setAiCopilotUnreadCount(nextUnread);
+  }, [aiCopilotMessages, aiCopilotOpen, aiCopilotUnreadCount]);
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
@@ -4848,12 +4870,22 @@ export default function App() {
             {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
           </div>
         ) : (
-          <button type="button" className="ai-chatbot-toggle" onClick={() => setAiCopilotOpen(true)} aria-label="Open AI chatbot">
+          <button
+            type="button"
+            className={`ai-chatbot-toggle ${aiCopilotUnreadCount > 0 ? "has-unread" : ""}`}
+            onClick={() => setAiCopilotOpen(true)}
+            aria-label={aiCopilotUnreadCount > 0 ? `Open AI chatbot (${aiCopilotUnreadCount} unread)` : "Open AI chatbot"}
+          >
             <span className="ai-chatbot-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" role="img" focusable="false">
                 <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
               </svg>
             </span>
+            {aiCopilotUnreadCount > 0 ? (
+              <span className="ai-chatbot-unread-badge" aria-hidden="true">
+                {aiCopilotUnreadCount > 99 ? "99+" : aiCopilotUnreadCount}
+              </span>
+            ) : null}
           </button>
         )}
       </div>
