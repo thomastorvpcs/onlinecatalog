@@ -2514,11 +2514,11 @@ function getDevices(url) {
       price: Number(d.price),
       image,
       images: images.length ? images : (fallbackImage ? [fallbackImage] : []),
-      carrier: d.carrier || "Unlocked",
+      carrier: d.carrier || "N/A",
       screenSize: d.screenSize || "N/A",
-      modular: d.modular || "No",
+      modular: d.modular || "N/A",
       color: d.color || "N/A",
-      kitType: d.kitType || "Full Kit",
+      kitType: d.kitType || "N/A",
       productNotes: d.productNotes || "",
       weeklySpecial: Number(d.weeklySpecial || 0) === 1,
       available: Number(d.available || 0),
@@ -2713,11 +2713,11 @@ async function getDevicesPostgres(url) {
       price: Number(row.price || 0),
       image: imageList[0] || fallbackImage,
       images: imageList.length ? imageList : (fallbackImage ? [fallbackImage] : []),
-      carrier: row.carrier || "Unlocked",
+      carrier: row.carrier || "N/A",
       screenSize: row.screenSize || "N/A",
-      modular: row.modular || "No",
+      modular: row.modular || "N/A",
       color: row.color || "N/A",
-      kitType: row.kitType || "Full Kit",
+      kitType: row.kitType || "N/A",
       productNotes: row.productNotes || "",
       weeklySpecial: Number(row.weeklySpecial || 0) === 1,
       available: Number(row.available || 0),
@@ -5474,7 +5474,7 @@ function normalizeBoomiRow(rowRaw) {
     colorRaw: String(pickFirstDefined(row, ["color", "colour"])).trim(),
     grade: String(pickFirstDefined(row, ["grade", "condition_grade", "conditionGrade"]) || "A").trim() || "A",
     storage: String(pickFirstDefined(row, ["storage_capacity", "storageCapacity", "storage", "capacity"]) || "N/A").trim() || "N/A",
-    carrier: String(pickFirstDefined(row, ["carrier", "network_carrier", "networkCarrier"]) || "Unlocked").trim() || "Unlocked",
+    carrier: String(pickFirstDefined(row, ["carrier", "network_carrier", "networkCarrier"]) || "N/A").trim() || "N/A",
     currencyCode: String(pickFirstDefined(row, ["currency_code", "currencyCode", "currency"]) || "USD").trim() || "USD",
     countryCode: String(pickFirstDefined(row, ["country", "country_code", "countryCode"]) || "US").trim() || "US",
     effectiveDate: String(pickFirstDefined(row, ["effective_date", "effectiveDate", "as_of_date", "asOfDate"])).trim() || null,
@@ -5835,11 +5835,11 @@ function syncBoomiInventoryRows(rows, progressCallback = null) {
         storage,
         grade,
         price,
-        carrier,
-        categoryName === "Wearables" ? "47 mm" : categoryName === "Tablets" ? "11 inches" : categoryName === "Laptops" ? "14 inches" : "6.1 inches",
-        "No",
+        carrier || "N/A",
+        "N/A",
+        "N/A",
         colorRaw ? toTitleCase(colorRaw) : "N/A",
-        categoryName === "Accessories" ? "Retail Pack" : "Full Kit",
+        "N/A",
         `Imported from Boomi inventory feed. SKU: ${sku || "N/A"}`,
         locationId,
         sourceExternalId,
@@ -6147,13 +6147,6 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
           continue;
         }
         const deviceId = String(existingDeviceMap.get(item.sourceExternalId) || `boomi-${item.sourceExternalId}`);
-        const screenSize = item.categoryName === "Wearables"
-          ? "47 mm"
-          : item.categoryName === "Tablets"
-            ? "11 inches"
-            : item.categoryName === "Laptops"
-              ? "14 inches"
-              : "6.1 inches";
         deviceRows.push({
           id: deviceId,
           manufacturer_id: manufacturerId,
@@ -6163,11 +6156,11 @@ async function syncBoomiInventoryRowsPostgres(rows, progressCallback = null) {
           storage_capacity: item.storage,
           grade: item.grade,
           base_price: item.price,
-          carrier: item.carrier,
-          screen_size: screenSize,
-          modular: "No",
+          carrier: item.carrier || "N/A",
+          screen_size: "N/A",
+          modular: "N/A",
           color: item.colorRaw ? toTitleCase(item.colorRaw) : "N/A",
-          kit_type: item.categoryName === "Accessories" ? "Retail Pack" : "Full Kit",
+          kit_type: "N/A",
           product_notes: `Imported from Boomi inventory feed. SKU: ${item.sku || "N/A"}`,
           default_location_id: locationId,
           source_external_id: item.sourceExternalId,
