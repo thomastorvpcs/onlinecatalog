@@ -1300,6 +1300,94 @@ async function seedHistoricalCompletedEstimatesForUserRuntime(targetUserIdRaw, c
   };
 }
 
+async function seedCartActivityForUserRuntime(targetUserIdRaw, countRaw = 20) {
+  if (!pgClient) {
+    throw new Error("Postgres runtime is not initialized.");
+  }
+  const targetUserId = Number(targetUserIdRaw);
+  if (!Number.isInteger(targetUserId) || targetUserId < 1) {
+    throw new Error("Valid targetUserId is required.");
+  }
+  const count = Math.max(1, Math.min(200, Math.floor(Number(countRaw || 20))));
+  const userRes = await pgClient.query(
+    `SELECT id, email, company FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`,
+    [targetUserId]
+  );
+  const targetUser = userRes.rows?.[0];
+  if (!targetUser?.id) {
+    throw new Error("User not found.");
+  }
+
+  const devicesRes = await pgClient.query(`
+    SELECT
+      d.id,
+      d.model_name AS model,
+      d.grade,
+      d.base_price AS price,
+      c.name AS category
+    FROM ${postgresTableRef("devices")} d
+    JOIN ${postgresTableRef("categories")} c ON c.id = d.category_id
+    WHERE d.is_active = 1
+    ORDER BY c.name ASC, d.model_name ASC
+  `);
+  const deviceRows = devicesRes.rows || [];
+  if (!deviceRows.length) {
+    throw new Error("No active devices available for seeding.");
+  }
+  const byCategory = new Map();
+  for (const row of deviceRows) {
+    const key = String(row.category || "Other");
+    const list = byCategory.get(key) || [];
+    list.push(row);
+    byCategory.set(key, list);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) => a.localeCompare(b));
+  if (!categories.length) {
+    throw new Error("No categories available for seeding.");
+  }
+
+  await pgClient.query("BEGIN");
+  try {
+    for (let i = 0; i < count; i += 1) {
+      const categoryName = categories[i % categories.length];
+      const list = byCategory.get(categoryName) || deviceRows;
+      const device = list[(i * 17 + Number(targetUser.id)) % list.length];
+      const quantity = 1 + ((i * 7 + Number(targetUser.id)) % 25);
+      const multiplier = 0.58 + (((i + Number(targetUser.id)) % 9) * 0.06);
+      const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+      const addedAt = new Date(Date.now() - ((count - i) * 6 * 60 * 60 * 1000)).toISOString();
+      await pgClient.query(`
+        INSERT INTO ${postgresTableRef("cart_item_activity")} (
+          user_id, device_id, model, grade, quantity, offer_price, note, ever_requested, added_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8)
+      `, [
+        Number(targetUser.id),
+        String(device.id || "").trim() || null,
+        String(device.model || "").trim(),
+        String(device.grade || "A").trim(),
+        quantity,
+        offerPrice,
+        `Admin seeded cart activity (${categoryName}).`,
+        addedAt
+      ]);
+    }
+    await pgClient.query("COMMIT");
+  } catch (error) {
+    await pgClient.query("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    ok: true,
+    created: count,
+    targetUser: {
+      id: Number(targetUser.id),
+      email: targetUser.email,
+      company: targetUser.company
+    }
+  };
+}
+
 function splitCsv(value) {
   if (!value) return [];
   return value
@@ -7748,6 +7836,24 @@ const server = createServer(async (req, res) => {
         json(req, res, 200, result);
       } catch (error) {
         const message = String(error?.message || "Failed to seed historical estimates.");
+        const statusCode = message === "User not found." ? 404 : 400;
+        json(req, res, statusCode, { error: message });
+      }
+      return;
+    }
+
+    const userSeedCartActivityMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/seed-cart-activity$/);
+    if (req.method === "POST" && userSeedCartActivityMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const targetUserId = Number(userSeedCartActivityMatch[1]);
+      const body = await parseBody(req);
+      const count = Number(body?.count || 20);
+      try {
+        const result = await seedCartActivityForUserRuntime(targetUserId, count);
+        json(req, res, 200, result);
+      } catch (error) {
+        const message = String(error?.message || "Failed to seed cart activity.");
         const statusCode = message === "User not found." ? 404 : 400;
         json(req, res, statusCode, { error: message });
       }

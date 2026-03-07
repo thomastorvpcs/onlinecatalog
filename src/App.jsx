@@ -1707,6 +1707,48 @@ async function demoApiRequest(path, options = {}) {
     };
   }
 
+  const demoSeedCartActivityMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/seed-cart-activity$/);
+  if (demoSeedCartActivityMatch && method === "POST") {
+    requireAdmin();
+    const targetId = Number(demoSeedCartActivityMatch[1]);
+    const targetUser = users.find((u) => Number(u.id) === targetId);
+    if (!targetUser) throwApiError("User not found.", 404);
+    const count = Math.max(1, Math.min(200, Math.floor(Number(body.count || 20))));
+    const all = productsSeed.map((p) => normalizeDevice(p));
+    if (!all.length) throwApiError("No devices available for seeding.", 400);
+    const activity = getDemoCartActivity(targetId);
+    const next = [...activity];
+    for (let i = 0; i < count; i += 1) {
+      const device = all[(i * 11 + targetId) % all.length];
+      const quantity = 1 + ((i * 5 + targetId) % 25);
+      const multiplier = 0.58 + (((i + targetId) % 9) * 0.06);
+      const offerPrice = Number((Number(device.price || 100) * multiplier).toFixed(2));
+      const addedAt = new Date(Date.now() - ((count - i) * 6 * 60 * 60 * 1000)).toISOString();
+      next.push({
+        id: crypto.randomUUID(),
+        productId: String(device.id || "").trim(),
+        model: String(device.model || "").trim(),
+        grade: String(device.grade || "A").trim(),
+        quantity,
+        offerPrice,
+        note: "Admin seeded cart activity.",
+        addedAt,
+        everRequested: false
+      });
+    }
+    next.sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime());
+    setDemoCartActivity(targetId, next);
+    return {
+      ok: true,
+      created: count,
+      targetUser: {
+        id: targetUser.id,
+        email: targetUser.email,
+        company: targetUser.company
+      }
+    };
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/(\d+)$/);
   if (userMatch && method === "PATCH") {
     const actingUser = requireAdmin();
@@ -1902,6 +1944,8 @@ export default function App() {
   const [historySeedUserId, setHistorySeedUserId] = useState("");
   const [historySeedLoading, setHistorySeedLoading] = useState(false);
   const [historySeedNotice, setHistorySeedNotice] = useState("");
+  const [cartActivitySeedLoading, setCartActivitySeedLoading] = useState(false);
+  const [cartActivitySeedNotice, setCartActivitySeedNotice] = useState("");
   const [historyChatResetLoading, setHistoryChatResetLoading] = useState(false);
   const [historyChatResetNotice, setHistoryChatResetNotice] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
@@ -4031,6 +4075,34 @@ export default function App() {
     }
   };
 
+  const seedCartActivityForUserAsAdmin = async () => {
+    if (!historySeedUserId) {
+      setUsersError("Select a user first.");
+      return;
+    }
+    try {
+      setCartActivitySeedLoading(true);
+      setUsersError("");
+      setCartActivitySeedNotice("");
+      const payload = await apiRequest(`/api/admin/users/${encodeURIComponent(historySeedUserId)}/seed-cart-activity`, {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { count: 20 }
+      });
+      const created = Number(payload?.created || 0);
+      const email = String(payload?.targetUser?.email || "");
+      setCartActivitySeedNotice(`Added ${created} not-requested cart items for ${email || "selected user"}.`);
+      await loadAdminUserCartActivity(historySeedUserId);
+    } catch (error) {
+      setUsersError(error.message || "Failed to seed cart activity.");
+    } finally {
+      setCartActivitySeedLoading(false);
+    }
+  };
+
   const resetAiChatHistoryForUserAsAdmin = () => {
     if (!historySeedUserId) {
       setUsersError("Select a user first.");
@@ -4907,11 +4979,15 @@ export default function App() {
                   <button type="button" style={{ width: "auto" }} onClick={seedHistoryForUserAsAdmin} disabled={historySeedLoading || historyChatResetLoading || !historySeedUserId}>
                     {historySeedLoading ? "Creating..." : "Create 20 Completed Estimates"}
                   </button>
+                  <button type="button" style={{ width: "auto" }} onClick={seedCartActivityForUserAsAdmin} disabled={historySeedLoading || historyChatResetLoading || cartActivitySeedLoading || !historySeedUserId}>
+                    {cartActivitySeedLoading ? "Adding..." : "Add 20 Not-Requested Cart Items"}
+                  </button>
                   <button type="button" className="delete-btn" style={{ width: "auto" }} onClick={resetAiChatHistoryForUserAsAdmin} disabled={historySeedLoading || historyChatResetLoading || !historySeedUserId}>
                     {historyChatResetLoading ? "Clearing..." : "Clear AI Chat History"}
                   </button>
                 </div>
                 {historySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historySeedNotice}</p> : null}
+                {cartActivitySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{cartActivitySeedNotice}</p> : null}
                 {historyChatResetNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historyChatResetNotice}</p> : null}
               </div>
               <div className="admin-user-form" style={{ marginBottom: 10 }}>
