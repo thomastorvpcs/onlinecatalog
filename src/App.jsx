@@ -474,6 +474,8 @@ function initDemoState() {
         role: "admin",
         password: "AdminPassword123!",
         isActive: true,
+        loginCount: 0,
+        lastLoginAt: null,
         createdAt: new Date().toISOString(),
         resetCode: null,
         resetCodeExpiresAt: null
@@ -489,11 +491,18 @@ function initDemoState() {
       role: "buyer",
       password: DEFAULT_DEMO_BUYER_PASSWORD,
       isActive: true,
+      loginCount: 0,
+      lastLoginAt: null,
       createdAt: new Date().toISOString(),
       resetCode: null,
       resetCodeExpiresAt: null
     });
   }
+  users = users.map((u) => ({
+    ...u,
+    loginCount: Math.max(0, Number(u.loginCount || 0)),
+    lastLoginAt: u.lastLoginAt || null
+  }));
   writeJson(localStorage, DEMO_USERS_KEY, users);
   const sessions = readJson(localStorage, DEMO_SESSIONS_KEY, null);
   if (!sessions) {
@@ -895,6 +904,8 @@ function makeDemoPublicUser(user) {
     company: user.company,
     role: user.role,
     isActive: !!user.isActive,
+    loginCount: Math.max(0, Number(user.loginCount || 0)),
+    lastLoginAt: user.lastLoginAt || null,
     createdAt: user.createdAt
   };
 }
@@ -953,6 +964,8 @@ async function demoApiRequest(path, options = {}) {
       role: "buyer",
       password,
       isActive: false,
+      loginCount: 0,
+      lastLoginAt: null,
       createdAt: new Date().toISOString(),
       resetCode: null,
       resetCodeExpiresAt: null
@@ -967,11 +980,14 @@ async function demoApiRequest(path, options = {}) {
     const user = users.find((u) => u.email === email && u.password === password);
     if (!user) throwApiError("Invalid email or password.", 401);
     if (!user.isActive) return { pendingApproval: true, email: user.email, company: user.company };
+    user.loginCount = Math.max(0, Number(user.loginCount || 0)) + 1;
+    user.lastLoginAt = new Date().toISOString();
     const nextToken = crypto.randomUUID();
     const nextRefreshToken = crypto.randomUUID();
     const accessExpiresAt = Date.now() + DEMO_ACCESS_TTL_MS;
     sessions[nextToken] = { userId: user.id, expiresAt: accessExpiresAt };
     refreshTokens[nextRefreshToken] = { userId: user.id, expiresAt: Date.now() + DEMO_REFRESH_TTL_MS };
+    setDemoUsers(users);
     setDemoSessions(sessions);
     setDemoRefreshTokens(refreshTokens);
     return { token: nextToken, refreshToken: nextRefreshToken, accessTokenExpiresAt: new Date(accessExpiresAt).toISOString(), user: makeDemoPublicUser(user) };
@@ -1519,6 +1535,8 @@ async function demoApiRequest(path, options = {}) {
       role: isAdmin ? "admin" : "buyer",
       password,
       isActive,
+      loginCount: 0,
+      lastLoginAt: null,
       createdAt: new Date().toISOString(),
       resetCode: null,
       resetCodeExpiresAt: null
@@ -4832,7 +4850,7 @@ export default function App() {
                 <UsersTableSkeleton />
               ) : (
                 <table className="table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Registered</th><th>Active</th><th>Admin</th><th>Created</th><th /></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Registered</th><th>Active</th><th>Admin</th><th>Logins</th><th>Created</th><th /></tr></thead>
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id}>
@@ -4842,6 +4860,7 @@ export default function App() {
                         <td><input type="checkbox" checked={u.registrationCompleted === true} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "registrationCompleted", e.target.checked)} /></td>
                         <td><input type="checkbox" checked={u.isActive} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isActive", e.target.checked)} /></td>
                         <td><input type="checkbox" checked={u.role === "admin"} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isAdmin", e.target.checked)} /></td>
+                        <td>{Math.max(0, Number(u.loginCount || 0))}</td>
                         <td>{new Date(u.createdAt).toLocaleString()}</td>
                         <td>{u.email === user.email ? <span className="small">Current</span> : <button className="delete-btn" style={{ width: "auto" }} disabled={userActionLoading} onClick={() => deleteUser(u)}>Delete</button>}</td>
                       </tr>

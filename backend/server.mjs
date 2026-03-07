@@ -635,6 +635,8 @@ async function ensurePostgresRuntimeSchema() {
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS first_name TEXT`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS last_name TEXT`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS registration_completed BIGINT NOT NULL DEFAULT 0`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS login_count BIGINT NOT NULL DEFAULT 0`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS last_login_at TEXT`);
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("refresh_tokens")} (
       id BIGSERIAL PRIMARY KEY,
@@ -898,6 +900,12 @@ function ensureUsersColumns() {
   }
   if (!cols.includes("registration_completed")) {
     db.exec("ALTER TABLE users ADD COLUMN registration_completed INTEGER NOT NULL DEFAULT 0 CHECK (registration_completed IN (0, 1))");
+  }
+  if (!cols.includes("login_count")) {
+    db.exec("ALTER TABLE users ADD COLUMN login_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!cols.includes("last_login_at")) {
+    db.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -1748,6 +1756,8 @@ function makePublicUser(row) {
     role: row.role,
     isActive: Number(row.is_active) === 1,
     registrationCompleted: Number(row.registration_completed || row.registrationCompleted || 0) === 1,
+    loginCount: Math.max(0, Number(row.login_count || row.loginCount || 0)),
+    lastLoginAt: row.last_login_at || row.lastLoginAt || null,
     createdAt: row.created_at
   };
 }
@@ -2114,8 +2124,8 @@ async function getUserByEmailRuntime(email, includePassword = false) {
   if (!normalized) return null;
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const fields = includePassword
-    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
-    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
+    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at"
+    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at";
   const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE email = $1 LIMIT 1`;
   const result = await pgClient.query(sql, [normalized]);
   return result.rows?.[0] || null;
@@ -2126,8 +2136,8 @@ async function getUserByIdRuntime(userId, includePassword = false) {
   if (!Number.isInteger(id) || id < 1) return null;
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const fields = includePassword
-    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
-    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
+    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at"
+    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at";
   const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`;
   const result = await pgClient.query(sql, [id]);
   return result.rows?.[0] || null;
@@ -2138,8 +2148,8 @@ async function getUserByAuth0SubRuntime(auth0Sub, includePassword = false) {
   if (!sub) return null;
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const fields = includePassword
-    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed"
-    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed";
+    ? "id, email, company, role, password_hash, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at"
+    : "id, email, company, role, is_active, created_at, auth0_sub, reset_code, reset_code_expires_at, first_name, last_name, registration_completed, login_count, last_login_at";
   const sql = `SELECT ${fields} FROM ${postgresTableRef("users")} WHERE auth0_sub = $1 LIMIT 1`;
   const result = await pgClient.query(sql, [sub]);
   return result.rows?.[0] || null;
@@ -2164,7 +2174,7 @@ async function createUserRuntime({
   const result = await pgClient.query(`
     INSERT INTO ${postgresTableRef("users")} (email, company, role, password_hash, is_active, auth0_sub, first_name, last_name, registration_completed)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    RETURNING id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
+    RETURNING id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed, login_count, last_login_at
   `, [normalizedEmail, safeCompany, safeRole, passwordHash, isActive ? 1 : 0, auth0Sub ? String(auth0Sub).trim() : null, String(firstName || "").trim(), String(lastName || "").trim(), registrationCompleted ? 1 : 0]);
   return result.rows?.[0] || null;
 }
@@ -2189,6 +2199,18 @@ async function updateUserPasswordAndClearResetRuntime(userId, passwordHash) {
   if (!Number.isInteger(id) || id < 1) return;
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   await pgClient.query(`UPDATE ${postgresTableRef("users")} SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL WHERE id = $2`, [passwordHash, id]);
+}
+
+async function recordUserLoginRuntime(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  await pgClient.query(`
+    UPDATE ${postgresTableRef("users")}
+    SET login_count = COALESCE(login_count, 0) + 1,
+        last_login_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+  `, [id]);
 }
 
 async function completeUserRegistrationRuntime(userId, firstName, lastName, company) {
@@ -2216,7 +2238,7 @@ async function completeUserRegistrationRuntime(userId, firstName, lastName, comp
 async function listUsersForAdminRuntime() {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(
-    `SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, created_at FROM ${postgresTableRef("users")} ORDER BY created_at DESC`
+    `SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, login_count, last_login_at, created_at FROM ${postgresTableRef("users")} ORDER BY created_at DESC`
   );
   return (result.rows || []).map(makePublicUser);
 }
@@ -2289,7 +2311,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   if (!email) throw new Error("Auth0 token missing email claim.");
 
   let result = await pgClient.query(`
-    SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
+    SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed, login_count, last_login_at
     FROM ${postgresTableRef("users")}
     WHERE auth0_sub = $1
     LIMIT 1
@@ -2297,7 +2319,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
   let user = result.rows?.[0] || null;
   if (!user) {
     result = await pgClient.query(`
-      SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed
+      SELECT id, email, company, role, is_active, created_at, auth0_sub, first_name, last_name, registration_completed, login_count, last_login_at
       FROM ${postgresTableRef("users")}
       WHERE email = $1
       LIMIT 1
@@ -2313,7 +2335,7 @@ async function upsertUserFromAuth0ClaimsRuntime(claims, fallbackEmail = "", pref
       await pgClient.query(`UPDATE ${postgresTableRef("users")} SET company = $1 WHERE id = $2`, [normalizedPreferredCompany, user.id]);
     }
     const finalRes = await pgClient.query(`
-      SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed
+      SELECT id, email, company, role, is_active, created_at, first_name, last_name, registration_completed, login_count, last_login_at
       FROM ${postgresTableRef("users")}
       WHERE id = $1
       LIMIT 1
@@ -7093,6 +7115,9 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      await recordUserLoginRuntime(row.id);
+      row.login_count = Number(row.login_count || 0) + 1;
+      row.last_login_at = new Date().toISOString();
       const issued = createSession(row);
       const refreshToken = await issueRefreshTokenRuntime(row.id);
       json(req, res, 200, { token: issued.token, refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
@@ -7125,6 +7150,9 @@ const server = createServer(async (req, res) => {
           json(req, res, 200, { pendingApproval: true, email: row.email, company: row.company });
           return;
         }
+        await recordUserLoginRuntime(row.id);
+        row.login_count = Number(row.login_count || 0) + 1;
+        row.last_login_at = new Date().toISOString();
         const issued = createSession(row);
         const refreshToken = await issueRefreshTokenRuntime(row.id);
         json(req, res, 200, {
