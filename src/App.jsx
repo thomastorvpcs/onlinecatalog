@@ -1553,7 +1553,7 @@ async function apiRequest(path, options = {}) {
       });
     } catch (refreshErr) {
       if (typeof onAuthFail === "function") {
-        onAuthFail();
+        onAuthFail({ reason: "expired" });
       }
       throw refreshErr;
     }
@@ -1647,6 +1647,7 @@ export default function App() {
   const [refreshingSession, setRefreshingSession] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [loggedOutReason, setLoggedOutReason] = useState("");
   const [products, setProducts] = useState(productsSeed.map(normalizeDevice));
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState("");
@@ -1827,6 +1828,7 @@ export default function App() {
     }
     setAuthToken(data.token);
     setRefreshToken(data.refreshToken);
+    setLoggedOutReason("");
     setAuthProfileRequired(false);
     setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
     if (data.user) {
@@ -1848,7 +1850,11 @@ export default function App() {
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
-  const clearAuthState = () => {
+  const clearAuthState = (options = {}) => {
+    const reason = typeof options === "string" ? options : String(options?.reason || "");
+    const expiresAtMs = new Date(accessTokenExpiresAt).getTime();
+    const tokenExpiredByClock = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+    const nextLoggedOutReason = (reason === "expired" || tokenExpiredByClock) ? "expired" : "";
     localStorage.removeItem("pcs.authToken");
     localStorage.removeItem("pcs.refreshToken");
     localStorage.removeItem("pcs.accessTokenExpiresAt");
@@ -1857,10 +1863,13 @@ export default function App() {
     setAccessTokenExpiresAt("");
     setAuthBootstrapError("");
     setAuthPendingApprovalEmail("");
+    clearAuth0InteractiveLoginPending();
     setAuthProfileRequired(false);
     setAuthProfilePrefill({ firstName: "", lastName: "", company: "", email: "" });
     setSessionTimeLeftMs(null);
     setUser(null);
+    setAuthLoading(false);
+    setLoggedOutReason(nextLoggedOutReason);
     setCart([]);
     setSelectedRequestLocation("");
     setAllowPartialRequestLocation(false);
@@ -1876,8 +1885,6 @@ export default function App() {
     setSavedFilterNotice("");
     setEditingSavedFilterId(null);
     setIsEditingSavedFilter(false);
-    setAiFilterPrompt("");
-    setAiFilterError("");
     setAiRequestReview(null);
     setAiRequestReviewError("");
     setAiCopilotMessages([]);
@@ -1906,7 +1913,7 @@ export default function App() {
       });
       applyAuthTokens(refreshed);
     } catch {
-      clearAuthState();
+      clearAuthState({ reason: "expired" });
     } finally {
       setRefreshingSession(false);
     }
@@ -2018,13 +2025,13 @@ export default function App() {
           token: authToken,
           refreshToken,
           onAuthUpdate: applyAuthTokens,
-          onAuthFail: clearAuthState
+          onAuthFail: () => clearAuthState({ reason: "expired" })
         });
         if (!ignore) {
           setUser(data.user);
         }
       } catch {
-        clearAuthState();
+        clearAuthState({ reason: "expired" });
         if (!ignore) {
           setUser(null);
         }
@@ -2070,7 +2077,7 @@ export default function App() {
     if (!user) return;
     if (sessionTimeLeftMs === null) return;
     if (sessionTimeLeftMs <= 0) {
-      clearAuthState();
+      clearAuthState({ reason: "expired" });
     }
   }, [sessionTimeLeftMs, user]);
 
@@ -3693,6 +3700,11 @@ export default function App() {
   }
 
   if (!user) {
+    if (loggedOutReason === "expired") {
+      return (
+        <LoggedOutScreen onBackToSignIn={() => setLoggedOutReason("")} />
+      );
+    }
     return (
       <Login
         onAuth0Login={handleAuth0Login}
@@ -5629,13 +5641,17 @@ function UsersTableSkeleton() {
   );
 }
 
+const failedImageSources = new Set();
+
 function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) {
   const fallback = `${import.meta.env.BASE_URL}device-fallback.png`;
-  const [resolvedSrc, setResolvedSrc] = useState(src || fallback);
+  const incomingSrc = String(src || "").trim();
+  const [resolvedSrc, setResolvedSrc] = useState(incomingSrc && !failedImageSources.has(incomingSrc) ? incomingSrc : fallback);
 
   useEffect(() => {
-    setResolvedSrc(src || fallback);
-  }, [src, fallback]);
+    const nextSrc = incomingSrc && !failedImageSources.has(incomingSrc) ? incomingSrc : fallback;
+    setResolvedSrc(nextSrc);
+  }, [incomingSrc, fallback]);
 
   return (
     <img
@@ -5643,10 +5659,37 @@ function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) 
       alt={alt}
       className={className}
       loading={loading}
-      onError={() => {
+      onError={(event) => {
+        const failedSrc = String(event?.currentTarget?.src || resolvedSrc || "").trim();
+        if (incomingSrc) failedImageSources.add(incomingSrc);
+        if (failedSrc) failedImageSources.add(failedSrc);
         if (resolvedSrc !== fallback) setResolvedSrc(fallback);
       }}
     />
+  );
+}
+
+function LoggedOutScreen({ onBackToSignIn }) {
+  const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
+  return (
+    <div className="auth-shell">
+      <div className="auth-layout">
+        <aside className="auth-hero">
+          <div className="auth-hero-logo-wrap">
+            <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
+          </div>
+          <h2 className="auth-hero-title">You are logged out</h2>
+          <p className="auth-hero-text">Your session expired for security reasons.</p>
+        </aside>
+        <div className="auth-card auth0-card">
+          <h1 className="auth-title auth0-title">Session Ended</h1>
+          <p className="auth0-subtitle">Please sign in again to continue using the catalog.</p>
+          <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onBackToSignIn}>
+            Go to sign in
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

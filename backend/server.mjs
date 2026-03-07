@@ -95,7 +95,7 @@ const MODEL_IMAGE_MAP = {
   "Sony WH-1000XM5": "https://fdn2.gsmarena.com/vv/bigpic/sony-wh-1000xm5.jpg",
   "MacBook Air 13": "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
   "MacBook Pro 14": "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526",
-  "Galaxy Book4 Pro": "https://images.samsung.com/is/image/samsung/p6pim/uk/np940xgk-kg1uk/gallery/uk-galaxy-book4-pro-np940xgk-kg1uk-thumb-539526715?$216_216_PNG$",
+  "Galaxy Book4 Pro": "/device-fallback.png",
   "ThinkPad X1 Carbon": "https://p3-ofp.static.pub/fes/cms/2023/10/31/0k4ad9zpyhgh4hywj0v1wflsl58xq8157018.png"
 };
 const MODEL_VARIANT_IMAGE_POOLS = {
@@ -226,7 +226,7 @@ const CATEGORY_SEED_IMAGE_POOLS = {
   Laptops: [
     "https://www.apple.com/v/macbook-air/x/images/meta/macbook_air_mx__ez5y0k5yy7au_og.png?202602101114",
     "https://www.apple.com/v/macbook-pro/av/images/meta/macbook-pro__bmu4mp5lxjiq_og.png?202601201526",
-    "https://images.samsung.com/is/image/samsung/p6pim/uk/np940xgk-kg1uk/gallery/uk-galaxy-book4-pro-np940xgk-kg1uk-thumb-539526715?$216_216_PNG$",
+    "/device-fallback.png",
     "https://p3-ofp.static.pub/fes/cms/2023/10/31/0k4ad9zpyhgh4hywj0v1wflsl58xq8157018.png",
     "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=1200&q=80",
     "https://images.unsplash.com/photo-1517336714739-489689fd1ca8?auto=format&fit=crop&w=1200&q=80",
