@@ -292,6 +292,7 @@ const DEFAULT_DEMO_BUYER_PASSWORD = "TestPassword123!";
 const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
 const DEMO_SAVED_FILTERS_PREFIX = "pcs.demo.savedFilters.";
 const DEMO_CART_DRAFTS_PREFIX = "pcs.demo.cartDrafts.";
+const DEMO_CART_ACTIVITY_PREFIX = "pcs.demo.cartActivity.";
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
 const GRADE_DEFINITIONS = [
   {
@@ -563,6 +564,54 @@ function getDemoCartDraft(userId) {
 
 function setDemoCartDraft(userId, draft) {
   writeJson(localStorage, demoCartDraftsKey(userId), draft);
+}
+
+function demoCartActivityKey(userId) {
+  return `${DEMO_CART_ACTIVITY_PREFIX}${Number(userId || 0)}`;
+}
+
+function getDemoCartActivity(userId) {
+  return readJson(localStorage, demoCartActivityKey(userId), []);
+}
+
+function setDemoCartActivity(userId, rows) {
+  writeJson(localStorage, demoCartActivityKey(userId), Array.isArray(rows) ? rows : []);
+}
+
+function demoCartLineKey(line) {
+  return [
+    String(line?.productId || line?.deviceId || "").trim().toLowerCase(),
+    String(line?.model || "").trim().toLowerCase(),
+    String(line?.grade || "").trim().toLowerCase(),
+    String(line?.note || "").trim().toLowerCase()
+  ].join("|");
+}
+
+function computeDemoCartAddedEvents(previousLines, nextLines) {
+  const previous = Array.isArray(previousLines) ? previousLines : [];
+  const next = Array.isArray(nextLines) ? nextLines : [];
+  const prevMap = new Map();
+  for (const line of previous) prevMap.set(demoCartLineKey(line), line);
+  const events = [];
+  for (const line of next) {
+    const prev = prevMap.get(demoCartLineKey(line));
+    const nextQty = Math.max(0, Math.floor(Number(line.quantity || 0)));
+    const prevQty = prev ? Math.max(0, Math.floor(Number(prev.quantity || 0))) : 0;
+    const deltaQty = !prev ? nextQty : Math.max(0, nextQty - prevQty);
+    if (deltaQty < 1) continue;
+    events.push({
+      id: crypto.randomUUID(),
+      productId: String(line.productId || line.deviceId || "").trim(),
+      model: String(line.model || "").trim(),
+      grade: String(line.grade || "").trim(),
+      quantity: deltaQty,
+      offerPrice: Number(line.offerPrice || 0),
+      note: String(line.note || "").trim(),
+      addedAt: new Date().toISOString(),
+      everRequested: false
+    });
+  }
+  return events;
 }
 
 function demoSavedFiltersKey(userId, viewKey = "category") {
@@ -1127,6 +1176,7 @@ async function demoApiRequest(path, options = {}) {
   if (method === "POST" && pathname === "/api/ai/copilot") {
     const auth = requireAuth();
     const all = productsSeed.map((p) => normalizeDevice(p));
+    const cartActivity = getDemoCartActivity(auth.id);
     const msgText = String(body.message || "").trim();
     const lowered = msgText.toLowerCase();
     if (isGradeDefinitionQuestion(msgText)) {
@@ -1177,6 +1227,22 @@ async function demoApiRequest(path, options = {}) {
           }
         }
       };
+    }
+    if (/(cart|added|promotion|promotions|upsell|follow up|follow-up)/.test(lowered) && cartActivity.length) {
+      const topByModel = new Map();
+      for (const row of cartActivity) {
+        const key = String(row.model || "").trim();
+        if (!key) continue;
+        const entry = topByModel.get(key) || { model: key, qty: 0, pending: 0 };
+        entry.qty += Number(row.quantity || 0);
+        if (!row.everRequested) entry.pending += Number(row.quantity || 0);
+        topByModel.set(key, entry);
+      }
+      const top = [...topByModel.values()].sort((a, b) => b.qty - a.qty).slice(0, 3);
+      if (top.length) {
+        const preview = top.map((row) => `${row.model} (${row.qty} added, ${row.pending} not yet requested)`).join("; ");
+        return { reply: `From cart activity, top items are: ${preview}. These are good promotion/follow-up candidates.`, action: null };
+      }
     }
     const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
@@ -1374,6 +1440,8 @@ async function demoApiRequest(path, options = {}) {
       .filter((line) => line.model && line.grade && Number.isFinite(line.quantity) && line.quantity >= 1 && Number.isFinite(line.offerPrice) && line.offerPrice >= 0);
     const totalAmount = Number(lines.reduce((sum, line) => sum + (line.quantity * line.offerPrice), 0).toFixed(2));
     const existing = getDemoCartDraft(auth.id);
+    const activity = getDemoCartActivity(auth.id);
+    const addedEvents = computeDemoCartAddedEvents(existing?.lines || [], lines);
     const now = new Date().toISOString();
     const next = {
       id: Number(existing?.id || auth.id),
@@ -1391,6 +1459,9 @@ async function demoApiRequest(path, options = {}) {
       submittedRequestId: null
     };
     setDemoCartDraft(auth.id, next);
+    if (addedEvents.length) {
+      setDemoCartActivity(auth.id, [...addedEvents, ...activity]);
+    }
     return next;
   }
 
@@ -1437,6 +1508,15 @@ async function demoApiRequest(path, options = {}) {
       lines
     };
     setDemoRequests(auth.company, [...requests, request]);
+    const existingActivity = getDemoCartActivity(auth.id);
+    const markedActivity = existingActivity.map((entry) => {
+      const matched = lines.some((line) => (
+        String(line.model || "").trim().toLowerCase() === String(entry.model || "").trim().toLowerCase()
+        && String(line.grade || "").trim().toLowerCase() === String(entry.grade || "").trim().toLowerCase()
+      ));
+      return matched ? { ...entry, everRequested: true } : entry;
+    });
+    setDemoCartActivity(auth.id, markedActivity);
     const existingDraft = getDemoCartDraft(auth.id);
     if (existingDraft) {
       setDemoCartDraft(auth.id, {
@@ -1449,6 +1529,14 @@ async function demoApiRequest(path, options = {}) {
       });
     }
     return request;
+  }
+
+  const demoUserCartActivityMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/cart-activity$/);
+  if (method === "GET" && demoUserCartActivityMatch) {
+    requireAdmin();
+    const targetUserId = Number(demoUserCartActivityMatch[1]);
+    if (!Number.isInteger(targetUserId) || targetUserId < 1) throwApiError("Invalid user id.", 400);
+    return getDemoCartActivity(targetUserId);
   }
 
   if (method === "GET" && pathname === "/api/admin/cart-drafts") {
@@ -1868,6 +1956,9 @@ export default function App() {
   const [adminCartDraftsLoading, setAdminCartDraftsLoading] = useState(false);
   const [adminCartDraftsError, setAdminCartDraftsError] = useState("");
   const [adminCartDrafts, setAdminCartDrafts] = useState([]);
+  const [adminUserCartActivityLoading, setAdminUserCartActivityLoading] = useState(false);
+  const [adminUserCartActivityError, setAdminUserCartActivityError] = useState("");
+  const [adminUserCartActivity, setAdminUserCartActivity] = useState([]);
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
@@ -2909,6 +3000,25 @@ export default function App() {
     }
   };
 
+  const loadAdminUserCartActivity = async (targetUserId = historySeedUserId) => {
+    if (!user || user.role !== "admin" || !authToken || !targetUserId) return;
+    setAdminUserCartActivityLoading(true);
+    setAdminUserCartActivityError("");
+    try {
+      const payload = await apiRequest(`/api/admin/users/${encodeURIComponent(targetUserId)}/cart-activity?limit=400`, {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setAdminUserCartActivity(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setAdminUserCartActivityError(error.message || "Failed to load user cart activity.");
+    } finally {
+      setAdminUserCartActivityLoading(false);
+    }
+  };
+
   const updateCart = (next) => {
     setCart(next);
     if (cartKey) {
@@ -2926,6 +3036,11 @@ export default function App() {
       setHistorySeedUserId(String(users[0].id));
     }
   }, [users, historySeedUserId]);
+
+  useEffect(() => {
+    if (route !== "users" || user?.role !== "admin" || !authToken || !historySeedUserId) return;
+    loadAdminUserCartActivity(historySeedUserId);
+  }, [route, user, authToken, historySeedUserId]);
 
   const refreshRequests = async () => {
     if (!user || !authToken) return;
@@ -4798,6 +4913,53 @@ export default function App() {
                 </div>
                 {historySeedNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historySeedNotice}</p> : null}
                 {historyChatResetNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{historyChatResetNotice}</p> : null}
+              </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>User Cart Item Activity</h3>
+                <p className="small" style={{ marginTop: 0 }}>
+                  Tracks each quantity added to cart with date, offer price, and whether it was ever submitted in a request.
+                </p>
+                <button
+                  type="button"
+                  style={{ width: "auto" }}
+                  onClick={() => loadAdminUserCartActivity(historySeedUserId)}
+                  disabled={adminUserCartActivityLoading || !historySeedUserId}
+                >
+                  {adminUserCartActivityLoading ? "Refreshing..." : "Refresh User Cart Activity"}
+                </button>
+                {adminUserCartActivityError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{adminUserCartActivityError}</p> : null}
+                {adminUserCartActivity.length ? (
+                  <div style={{ overflowX: "auto", marginTop: 8 }}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Added At</th>
+                          <th>Model</th>
+                          <th>Grade</th>
+                          <th>Qty</th>
+                          <th>Offer Price</th>
+                          <th>Ever Requested</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminUserCartActivity.map((row) => (
+                          <tr key={`cart-activity-${row.id}`}>
+                            <td>{row.addedAt ? new Date(row.addedAt).toLocaleString() : "-"}</td>
+                            <td>{row.model || "-"}</td>
+                            <td>{row.grade || "-"}</td>
+                            <td>{Number(row.quantity || 0)}</td>
+                            <td>{formatUsd(Number(row.offerPrice || 0))}</td>
+                            <td>{row.everRequested ? "Yes" : "No"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="small" style={{ marginTop: 8 }}>
+                    {adminUserCartActivityLoading ? "Loading activity..." : "No cart activity tracked for this user yet."}
+                  </p>
+                )}
               </div>
               <div className="admin-user-form" style={{ marginBottom: 10 }}>
                 <h3 style={{ margin: "0 0 8px" }}>Cart Tracking</h3>

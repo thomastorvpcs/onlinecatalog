@@ -719,6 +719,20 @@ async function ensurePostgresRuntimeSchema() {
     )
   `);
   await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("cart_item_activity")} (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      device_id TEXT,
+      model TEXT NOT NULL,
+      grade TEXT NOT NULL,
+      quantity BIGINT NOT NULL CHECK (quantity >= 1),
+      offer_price DOUBLE PRECISION NOT NULL CHECK (offer_price >= 0),
+      note TEXT,
+      ever_requested BIGINT NOT NULL DEFAULT 0 CHECK (ever_requested IN (0, 1)),
+      added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("app_settings")} (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -732,6 +746,8 @@ async function ensurePostgresRuntimeSchema() {
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_user_saved_filters_user ON ${postgresTableRef("user_saved_filters")} (user_id)`);
   await pgClient.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_saved_filters_unique_name ON ${postgresTableRef("user_saved_filters")} (user_id, view_key, name)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_cart_drafts_status_activity ON ${postgresTableRef("cart_drafts")} (status, last_activity_at DESC)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_cart_item_activity_user_added ON ${postgresTableRef("cart_item_activity")} (user_id, added_at DESC)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_cart_item_activity_user_requested ON ${postgresTableRef("cart_item_activity")} (user_id, ever_requested)`);
 }
 
 async function ensurePostgresSerialSequence(tableName, columnName = "id") {
@@ -776,6 +792,7 @@ async function initializePostgresRuntime() {
   await ensurePostgresSerialSequence("categories", "id");
   await ensurePostgresSerialSequence("user_saved_filters", "id");
   await ensurePostgresSerialSequence("cart_drafts", "id");
+  await ensurePostgresSerialSequence("cart_item_activity", "id");
   await ensurePostgresSerialSequence("inventory_events", "id");
   await ensurePostgresSerialSequence("boomi_inventory_raw", "id");
   db = createNoSqliteFallbackAdapter();
@@ -3780,7 +3797,78 @@ function buildCopilotUserOrderHistoryContext(user) {
     scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`,
     totalLineItems: lines.length,
     topModelPriceStats,
-    recentOrders
+    recentOrders,
+    cartActivity: {
+      scope: user?.role === "admin" ? "all users (admin view)" : "current user",
+      totalEvents: 0,
+      pendingEvents: 0,
+      topModels: [],
+      recentAdds: []
+    }
+  };
+}
+
+async function buildCopilotCartItemActivityContextRuntime(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const params = [];
+  let whereSql = "";
+  if (user?.role !== "admin") {
+    params.push(Number(user?.id || 0));
+    whereSql = `WHERE cia.user_id = $${params.length}`;
+  }
+  const totalsRes = await pgClient.query(`
+    SELECT
+      COUNT(*)::bigint AS "totalEvents",
+      COALESCE(SUM(CASE WHEN cia.ever_requested = 0 THEN 1 ELSE 0 END), 0)::bigint AS "pendingEvents"
+    FROM ${postgresTableRef("cart_item_activity")} cia
+    ${whereSql}
+  `, params);
+  const topModelsRes = await pgClient.query(`
+    SELECT
+      cia.model AS model,
+      COALESCE(SUM(cia.quantity), 0)::bigint AS units,
+      COALESCE(AVG(cia.offer_price), 0) AS "avgOfferPrice",
+      MAX(cia.added_at) AS "lastAddedAt",
+      COALESCE(SUM(CASE WHEN cia.ever_requested = 1 THEN cia.quantity ELSE 0 END), 0)::bigint AS "requestedUnits"
+    FROM ${postgresTableRef("cart_item_activity")} cia
+    ${whereSql}
+    GROUP BY cia.model
+    ORDER BY units DESC, model ASC
+    LIMIT 12
+  `, params);
+  const recentAddsRes = await pgClient.query(`
+    SELECT
+      cia.model AS model,
+      cia.grade AS grade,
+      cia.quantity AS quantity,
+      cia.offer_price AS "offerPrice",
+      cia.ever_requested AS "everRequested",
+      cia.added_at AS "addedAt"
+    FROM ${postgresTableRef("cart_item_activity")} cia
+    ${whereSql}
+    ORDER BY cia.added_at DESC, cia.id DESC
+    LIMIT 20
+  `, params);
+  const totals = totalsRes.rows?.[0] || {};
+  return {
+    scope: user?.role === "admin" ? "all users (admin view)" : "current user",
+    totalEvents: Number(totals.totalEvents || 0),
+    pendingEvents: Number(totals.pendingEvents || 0),
+    topModels: (topModelsRes.rows || []).map((row) => ({
+      model: String(row.model || "").trim(),
+      units: Number(row.units || 0),
+      avgOfferPrice: Number(Number(row.avgOfferPrice || 0).toFixed(2)),
+      requestedUnits: Number(row.requestedUnits || 0),
+      lastAddedAt: String(row.lastAddedAt || "").trim()
+    })),
+    recentAdds: (recentAddsRes.rows || []).map((row) => ({
+      model: String(row.model || "").trim(),
+      grade: String(row.grade || "").trim(),
+      quantity: Number(row.quantity || 0),
+      offerPrice: Number(row.offerPrice || 0),
+      everRequested: Number(row.everRequested || 0) === 1,
+      addedAt: String(row.addedAt || "").trim()
+    }))
   };
 }
 
@@ -3860,11 +3948,13 @@ async function buildCopilotUserOrderHistoryContextRuntime(user) {
     createdAt: String(row.createdAt || "").trim(),
     lineCount: Number(row.lineCount || 0)
   }));
+  const cartActivity = await buildCopilotCartItemActivityContextRuntime(user);
   return {
     scope: user?.role === "admin" ? "all companies (admin view)" : `company ${String(user?.company || "").trim()}`,
     totalLineItems: lines.length,
     topModelPriceStats,
-    recentOrders
+    recentOrders,
+    cartActivity
   };
 }
 
@@ -4383,6 +4473,7 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Only return valid values from the allowed lists; if unknown, omit that filter.",
     "When user asks about historical/completed sales, trends, or suggestions, base your answer on the provided historical context.",
     "When user asks about previous order prices or averages, base your answer on user order-history context.",
+    "Use user cart activity context for cart-add trends, unconverted items, and promotion suggestions.",
     "When user asks for order details, summarize full order-level details from user order-history context.",
     "When user asks for promotions, deals, or weekly specials, use the weekly specials context in your reply.",
     "When user asks for recommendations, mention relevant weekly specials when appropriate.",
@@ -6433,6 +6524,41 @@ function sanitizeCartDraftLines(linesRaw) {
   return validateRequestLines(lines);
 }
 
+function cartTrackingLineKey(line) {
+  const productId = String(line?.productId || line?.deviceId || "").trim().toLowerCase();
+  const model = String(line?.model || "").trim().toLowerCase();
+  const grade = String(line?.grade || "").trim().toLowerCase();
+  const note = String(line?.note || "").trim().toLowerCase();
+  return `${productId}|${model}|${grade}|${note}`;
+}
+
+function computeCartTrackingEvents(previousLines, nextLines) {
+  const previous = Array.isArray(previousLines) ? previousLines : [];
+  const next = Array.isArray(nextLines) ? nextLines : [];
+  const prevMap = new Map();
+  for (const line of previous) {
+    prevMap.set(cartTrackingLineKey(line), line);
+  }
+  const events = [];
+  for (const line of next) {
+    const key = cartTrackingLineKey(line);
+    const prev = prevMap.get(key);
+    const nextQty = Math.max(0, Math.floor(Number(line.quantity || 0)));
+    const prevQty = prev ? Math.max(0, Math.floor(Number(prev.quantity || 0))) : 0;
+    const deltaQty = !prev ? nextQty : Math.max(0, nextQty - prevQty);
+    if (deltaQty < 1) continue;
+    events.push({
+      deviceId: String(line.productId || line.deviceId || "").trim() || null,
+      model: String(line.model || "").trim(),
+      grade: String(line.grade || "").trim(),
+      quantity: deltaQty,
+      offerPrice: Number(line.offerPrice || 0),
+      note: String(line.note || "").trim()
+    });
+  }
+  return events;
+}
+
 function mapCartDraftRow(row) {
   if (!row) return null;
   let payload = {};
@@ -6479,11 +6605,88 @@ async function getCartDraftForUserPostgres(user) {
   return mapCartDraftRow(result.rows?.[0] || null);
 }
 
+async function recordCartItemActivityForUserPostgres(userId, events) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return;
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  for (const event of list) {
+    const model = String(event?.model || "").trim();
+    const grade = String(event?.grade || "").trim();
+    const quantity = Math.max(0, Math.floor(Number(event?.quantity || 0)));
+    const offerPrice = Number(event?.offerPrice || 0);
+    if (!model || !grade || quantity < 1 || !Number.isFinite(offerPrice) || offerPrice < 0) continue;
+    await pgClient.query(`
+      INSERT INTO ${postgresTableRef("cart_item_activity")} (
+        user_id, device_id, model, grade, quantity, offer_price, note, ever_requested, added_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, CURRENT_TIMESTAMP)
+    `, [id, String(event?.deviceId || "").trim() || null, model, grade, quantity, Number(offerPrice.toFixed(2)), String(event?.note || "").trim() || null]);
+  }
+}
+
+async function markCartItemActivityRequestedForUserPostgres(userId, linesRaw) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) return;
+  const lines = Array.isArray(linesRaw) ? linesRaw : [];
+  if (!lines.length) return;
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  for (const line of lines) {
+    const model = String(line?.model || "").trim();
+    const grade = String(line?.grade || "").trim();
+    const deviceId = String(line?.deviceId || line?.productId || "").trim() || null;
+    if (!model || !grade) continue;
+    const params = [id, model.toLowerCase(), grade.toLowerCase()];
+    let sql = `
+      UPDATE ${postgresTableRef("cart_item_activity")}
+      SET ever_requested = 1
+      WHERE user_id = $1
+        AND ever_requested = 0
+        AND LOWER(model) = $2
+        AND LOWER(grade) = $3
+    `;
+    if (deviceId) {
+      params.push(deviceId);
+      sql += ` AND (device_id = $4 OR device_id IS NULL)`;
+    }
+    await pgClient.query(sql, params);
+  }
+}
+
+async function listCartItemActivityForUserPostgres(userId, limitRaw = 200) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id < 1) throw new Error("User not found.");
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const safeLimit = Math.max(1, Math.min(1000, Number(limitRaw || 200)));
+  const result = await pgClient.query(`
+    SELECT id, user_id, device_id, model, grade, quantity, offer_price, note, ever_requested, added_at
+    FROM ${postgresTableRef("cart_item_activity")}
+    WHERE user_id = $1
+    ORDER BY added_at DESC, id DESC
+    LIMIT ${safeLimit}
+  `, [id]);
+  return (result.rows || []).map((row) => ({
+    id: Number(row.id || 0),
+    userId: Number(row.user_id || 0),
+    productId: String(row.device_id || "").trim(),
+    model: String(row.model || "").trim(),
+    grade: String(row.grade || "").trim(),
+    quantity: Number(row.quantity || 0),
+    offerPrice: Number(row.offer_price || 0),
+    note: String(row.note || "").trim(),
+    everRequested: Number(row.ever_requested || 0) === 1,
+    addedAt: row.added_at || null
+  }));
+}
+
 async function upsertCartDraftForUserPostgres(user, body) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const userId = await ensurePostgresUserForRuntime(user);
   if (!userId) throw new Error("Failed to resolve user for cart draft.");
+  const existing = await getCartDraftForUserPostgres(user);
   const lines = sanitizeCartDraftLines(body?.lines);
+  const events = computeCartTrackingEvents(existing?.lines || [], lines);
+  await recordCartItemActivityForUserPostgres(userId, events);
   const totalAmount = Number(lines.reduce((sum, line) => sum + (Number(line.quantity || 0) * Number(line.offerPrice || 0)), 0).toFixed(2));
   const lineCount = lines.length;
   const payload = JSON.stringify({ lines });
@@ -6711,6 +6914,9 @@ async function createRequestForUserPostgres(user, body) {
           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         `, [requestId, line.deviceId, line.model, line.grade, line.quantity, line.offerPrice, line.note || null]);
       }
+      if (createdByUserId) {
+        await markCartItemActivityRequestedForUserPostgres(createdByUserId, lines);
+      }
 
       await pgClient.query(`
         INSERT INTO ${postgresTableRef("quote_request_events")} (request_id, event_type, payload_json)
@@ -6838,6 +7044,11 @@ async function upsertCartDraftForUserRuntime(user, body) {
 async function listCartDraftsForAdminRuntime(limitRaw = 100) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   return listCartDraftsForAdminPostgres(limitRaw);
+}
+
+async function listCartItemActivityForUserRuntime(userId, limitRaw = 200) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  return listCartItemActivityForUserPostgres(userId, limitRaw);
 }
 
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
@@ -7390,6 +7601,21 @@ const server = createServer(async (req, res) => {
       const limit = Number(url.searchParams.get("limit") || 100);
       const drafts = await listCartDraftsForAdminRuntime(limit);
       json(req, res, 200, drafts);
+      return;
+    }
+
+    const userCartActivityMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/cart-activity$/);
+    if (req.method === "GET" && userCartActivityMatch) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const targetUserId = Number(userCartActivityMatch[1]);
+      if (!Number.isInteger(targetUserId) || targetUserId < 1) {
+        json(req, res, 400, { error: "Invalid user id." });
+        return;
+      }
+      const limit = Number(url.searchParams.get("limit") || 300);
+      const activity = await listCartItemActivityForUserRuntime(targetUserId, limit);
+      json(req, res, 200, activity);
       return;
     }
 
