@@ -3812,6 +3812,15 @@ export default function App() {
     }
   };
 
+  const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
+  const closeGradeGuide = useCallback(() => setGradeGuideOpen(false), []);
+  const closeActiveProduct = useCallback(() => setActiveProduct(null), []);
+  const closeCartDialog = useCallback(() => setCartOpen(false), []);
+  useDialogA11y({ isOpen: showSessionWarning, dialogRef: sessionExpiryModalRef, closeOnEscape: false });
+  useDialogA11y({ isOpen: gradeGuideOpen, dialogRef: gradeGuideModalRef, onClose: closeGradeGuide });
+  useDialogA11y({ isOpen: Boolean(activeProduct), dialogRef: productModalRef, onClose: closeActiveProduct });
+  useDialogA11y({ isOpen: cartOpen, dialogRef: cartModalRef, onClose: closeCartDialog });
+
   if (authLoading) {
     return (
       <div className="auth-shell">
@@ -4202,18 +4211,10 @@ export default function App() {
     : [];
   const modalOfferPriceInvalid = productOfferPrice === "" || Number(productOfferPrice) < 0;
   const modalQtyInvalid = productQty === "" || !Number.isFinite(Number(productQty)) || Number(productQty) < 1;
-  const showSessionWarning = Boolean(user && sessionTimeLeftMs !== null && sessionTimeLeftMs > 0 && sessionTimeLeftMs <= SESSION_WARNING_MS);
   const sessionSecondsLeft = showSessionWarning ? Math.max(0, Math.ceil(sessionTimeLeftMs / 1000)) : 0;
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
-  const closeGradeGuide = useCallback(() => setGradeGuideOpen(false), []);
-  const closeActiveProduct = useCallback(() => setActiveProduct(null), []);
-  const closeCartDialog = useCallback(() => setCartOpen(false), []);
-  useDialogA11y({ isOpen: showSessionWarning, dialogRef: sessionExpiryModalRef, closeOnEscape: false });
-  useDialogA11y({ isOpen: gradeGuideOpen, dialogRef: gradeGuideModalRef, onClose: closeGradeGuide });
-  useDialogA11y({ isOpen: Boolean(activeProduct), dialogRef: productModalRef, onClose: closeActiveProduct });
-  useDialogA11y({ isOpen: cartOpen, dialogRef: cartModalRef, onClose: closeCartDialog });
   const shortcutEntries = [...new Set([...categories, ALL_CATEGORIES_KEY])].flatMap((categoryName) =>
     (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
       categoryName,
