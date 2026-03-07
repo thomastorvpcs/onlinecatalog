@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 
 const productsSeed = [
@@ -32,6 +32,22 @@ const CATEGORY_PAGE_SIZE = 40;
 const INVENTORY_DISPLAY_CAP = 100;
 const ALL_CATEGORIES_KEY = "__ALL__";
 const ALL_CATEGORIES_LABEL = "All Categories";
+const KNOWN_BROKEN_IMAGE_URL_PATTERNS = [
+  /p3-ofp\.static\.pub\/fes\/cms\/\d{4}\/\d{2}\/\d{2}\//i,
+  /images\.samsung\.com\/is\/image\/samsung\/.+\?\$216_216_PNG\$/i
+];
+const DIALOG_FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "area[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "iframe",
+  "[tabindex]:not([tabindex='-1'])",
+  "[contenteditable='true']"
+].join(",");
+const dialogA11yStack = [];
 
 function readJson(area, key, fallback) {
   try {
@@ -121,9 +137,98 @@ function totalInventoryDisplayFromLocations(rawLocations) {
   return { available: rawTotal, availableDisplay: String(rawTotal) };
 }
 
+function sanitizeDeviceImageUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (KNOWN_BROKEN_IMAGE_URL_PATTERNS.some((pattern) => pattern.test(raw))) return "";
+  return raw;
+}
+
+function registerDialogLayer(layerId) {
+  dialogA11yStack.push(layerId);
+  return () => {
+    const idx = dialogA11yStack.lastIndexOf(layerId);
+    if (idx >= 0) dialogA11yStack.splice(idx, 1);
+  };
+}
+
+function isTopDialogLayer(layerId) {
+  return dialogA11yStack.length > 0 && dialogA11yStack[dialogA11yStack.length - 1] === layerId;
+}
+
+function getFocusableDialogElements(dialogEl) {
+  if (!dialogEl) return [];
+  return Array.from(dialogEl.querySelectorAll(DIALOG_FOCUSABLE_SELECTOR))
+    .filter((node) => node instanceof HTMLElement)
+    .filter((node) => !node.hasAttribute("disabled") && node.getAttribute("aria-hidden") !== "true");
+}
+
+function useDialogA11y({ isOpen, dialogRef, onClose, closeOnEscape = true }) {
+  const layerIdRef = useRef(null);
+  if (layerIdRef.current === null) layerIdRef.current = Symbol("dialog-layer");
+
+  useEffect(() => {
+    if (!isOpen || typeof document === "undefined") return undefined;
+    const dialogEl = dialogRef?.current;
+    if (!dialogEl) return undefined;
+
+    const unregisterLayer = registerDialogLayer(layerIdRef.current);
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = getFocusableDialogElements(dialogEl);
+    if (focusables.length > 0) {
+      focusables[0].focus();
+    } else {
+      if (!dialogEl.hasAttribute("tabindex")) dialogEl.setAttribute("tabindex", "-1");
+      dialogEl.focus();
+    }
+
+    const handleKeyDown = (event) => {
+      if (!isTopDialogLayer(layerIdRef.current)) return;
+      if (event.key === "Escape") {
+        if (closeOnEscape && typeof onClose === "function") {
+          event.preventDefault();
+          onClose();
+        }
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialogFocusables = getFocusableDialogElements(dialogEl);
+      if (!dialogFocusables.length) {
+        event.preventDefault();
+        dialogEl.focus();
+        return;
+      }
+      const first = dialogFocusables[0];
+      const last = dialogFocusables[dialogFocusables.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active === first || !dialogEl.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+        return;
+      }
+      if (active === last || !dialogEl.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      unregisterLayer();
+      if (previouslyFocused && typeof previouslyFocused.focus === "function" && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [isOpen, dialogRef, onClose, closeOnEscape]);
+}
+
 function normalizeDevice(p) {
-  const images = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
-  const fallbackImage = p.image || (images.length ? images[0] : "");
+  const images = Array.isArray(p.images) ? p.images.map((image) => sanitizeDeviceImageUrl(image)).filter(Boolean) : [];
+  const primaryImage = sanitizeDeviceImageUrl(p.image);
+  const fallbackImage = primaryImage || (images.length ? images[0] : "");
   const rawLocations = p.locations && typeof p.locations === "object" ? p.locations : {};
   const locations = {};
   const locationDisplay = {};
@@ -1752,6 +1857,11 @@ export default function App() {
   const aiCopilotPanelRef = useRef(null);
   const aiCopilotResizeRef = useRef({ active: false, startY: 0, startHeight: 0 });
   const gradeGuideItemRefs = useRef(new Map());
+  const sessionExpiryModalRef = useRef(null);
+  const gradeGuideModalRef = useRef(null);
+  const productModalRef = useRef(null);
+  const cartModalRef = useRef(null);
+  const auth0CancelModalRef = useRef(null);
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
   const aiCopilotLastSeenMessageCountRef = useRef(0);
@@ -4929,8 +5039,14 @@ export default function App() {
 
       {showSessionWarning ? (
         <div className="app-overlay session-expiry-overlay">
-          <article className="modal session-expiry-modal">
-            <h3 style={{ margin: "0 0 8px", fontSize: "1.6rem" }}>Session expiring soon</h3>
+          <article
+            ref={sessionExpiryModalRef}
+            className="modal session-expiry-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-expiry-title"
+          >
+            <h3 id="session-expiry-title" style={{ margin: "0 0 8px", fontSize: "1.6rem" }}>Session expiring soon</h3>
             <p className="muted" style={{ margin: "0 0 6px" }}>
               Your session will expire in:
             </p>
@@ -4947,13 +5063,21 @@ export default function App() {
       ) : null}
 
       {gradeGuideOpen ? (
-        <div className="app-overlay grade-guide-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setGradeGuideOpen(false); }}>
-          <article className="modal grade-guide-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <button className="close-btn grade-guide-close-btn" onClick={() => setGradeGuideOpen(false)} aria-label="Close grade definitions">X</button>
+        <div className="app-overlay grade-guide-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeGradeGuide(); }}>
+          <article
+            ref={gradeGuideModalRef}
+            className="modal grade-guide-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="grade-guide-title"
+            aria-describedby="grade-guide-description"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button className="close-btn grade-guide-close-btn" onClick={closeGradeGuide} aria-label="Close grade definitions">X</button>
             <div className="modal-head">
               <div>
-                <h3 style={{ margin: 0, fontSize: "1.5rem" }}>Grade Definitions</h3>
-                <p className="small" style={{ margin: "4px 0 0" }}>
+                <h3 id="grade-guide-title" style={{ margin: 0, fontSize: "1.5rem" }}>Grade Definitions</h3>
+                <p id="grade-guide-description" className="small" style={{ margin: "4px 0 0" }}>
                   Industry-based references are included where available. Placeholder entries should be replaced with your internal SOP definitions.
                 </p>
                 {gradeGuideSelectedCode ? (
@@ -4993,9 +5117,16 @@ export default function App() {
       ) : null}
 
       {activeProduct && (
-        <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveProduct(null); }}>
-          <article className="modal product-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>{formatUsd(activeProduct.price)}</div></div><button className="close-btn" onClick={() => setActiveProduct(null)}>X</button></div>
+        <div className="app-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeActiveProduct(); }}>
+          <article
+            ref={productModalRef}
+            className="modal product-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="product-modal-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head"><div><p className="small" style={{ margin: 0 }}>{activeProduct.manufacturer.toUpperCase()}</p><h3 id="product-modal-title" style={{ margin: "2px 0", fontSize: "2rem" }}>{activeProduct.model}</h3><div style={{ fontSize: "2rem", fontWeight: 700 }}>{formatUsd(activeProduct.price)}</div></div><button className="close-btn" onClick={closeActiveProduct}>X</button></div>
             <div className="modal-grid">
               <div>
                 <div className="modal-box">
@@ -5045,9 +5176,16 @@ export default function App() {
       )}
 
       {cartOpen && (
-        <div className="app-overlay cart-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setCartOpen(false); }}>
-          <article className="modal cart-dialog" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-head"><h3 style={{ margin: 0, fontSize: "2rem", fontWeight: 500 }}>Requested items</h3><button className="close-btn" onClick={() => setCartOpen(false)}>X</button></div>
+        <div className="app-overlay cart-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeCartDialog(); }}>
+          <article
+            ref={cartModalRef}
+            className="modal cart-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="requested-items-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head"><h3 id="requested-items-title" style={{ margin: 0, fontSize: "2rem", fontWeight: 500 }}>Requested items</h3><button className="close-btn" onClick={closeCartDialog}>X</button></div>
             <div className="cart-scroll">
               <table className="table cart-table">
                 <colgroup><col className="cart-col-name-col" /><col className="cart-col-grade-col" /><col className="cart-col-offer-col" /><col className="cart-col-qty-col" /><col className="cart-col-total-col" /><col className="cart-col-action-col" /></colgroup>
@@ -5294,6 +5432,19 @@ function Login({
     }
   };
 
+  const closeGradeGuide = useCallback(() => setGradeGuideOpen(false), []);
+  const closeActiveProduct = useCallback(() => setActiveProduct(null), []);
+  const closeCartDialog = useCallback(() => setCartOpen(false), []);
+  const closeAuth0CancelDialog = useCallback(() => {
+    if (!auth0CancelSubmitting) setAuth0CancelConfirmOpen(false);
+  }, [auth0CancelSubmitting]);
+
+  useDialogA11y({ isOpen: showSessionWarning, dialogRef: sessionExpiryModalRef, closeOnEscape: false });
+  useDialogA11y({ isOpen: gradeGuideOpen, dialogRef: gradeGuideModalRef, onClose: closeGradeGuide });
+  useDialogA11y({ isOpen: Boolean(activeProduct), dialogRef: productModalRef, onClose: closeActiveProduct });
+  useDialogA11y({ isOpen: cartOpen, dialogRef: cartModalRef, onClose: closeCartDialog });
+  useDialogA11y({ isOpen: auth0CancelConfirmOpen, dialogRef: auth0CancelModalRef, onClose: closeAuth0CancelDialog });
+
   if (auth0Only && auth0ProfileRequired) {
     return (
       <div className="auth-shell">
@@ -5328,10 +5479,18 @@ function Login({
             </div>
             {auth0ProfileError ? <p className="auth-error auth0-error">{auth0ProfileError}</p> : null}
             {auth0CancelConfirmOpen ? (
-              <div className="auth0-cancel-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !auth0CancelSubmitting) setAuth0CancelConfirmOpen(false); }}>
-                <div className="auth0-cancel-modal" role="dialog" aria-modal="true" aria-label="Cancel registration" onMouseDown={(e) => e.stopPropagation()}>
-                  <h3>Finish Registration?</h3>
-                  <p>You can continue now, continue later, or cancel registration completely.</p>
+              <div className="auth0-cancel-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !auth0CancelSubmitting) closeAuth0CancelDialog(); }}>
+                <div
+                  ref={auth0CancelModalRef}
+                  className="auth0-cancel-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="auth0-cancel-title"
+                  aria-describedby="auth0-cancel-description"
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <h3 id="auth0-cancel-title">Finish Registration?</h3>
+                  <p id="auth0-cancel-description">You can continue now, continue later, or cancel registration completely.</p>
                   <div className="auth0-cancel-modal-actions">
                     <button
                       type="button"
@@ -5344,7 +5503,7 @@ function Login({
                     <button
                       type="button"
                       className="auth-submit-btn auth0-primary-btn"
-                      onClick={() => setAuth0CancelConfirmOpen(false)}
+                      onClick={closeAuth0CancelDialog}
                       disabled={auth0CancelSubmitting}
                     >
                       Continue Now
@@ -5645,7 +5804,7 @@ const failedImageSources = new Set();
 
 function ImageWithFallback({ src, alt = "", className = "", loading = "lazy" }) {
   const fallback = `${import.meta.env.BASE_URL}device-fallback.png`;
-  const incomingSrc = String(src || "").trim();
+  const incomingSrc = sanitizeDeviceImageUrl(src);
   const [resolvedSrc, setResolvedSrc] = useState(incomingSrc && !failedImageSources.has(incomingSrc) ? incomingSrc : fallback);
 
   useEffect(() => {
