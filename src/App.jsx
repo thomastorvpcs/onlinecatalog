@@ -2453,7 +2453,7 @@ export default function App() {
     const timer = window.setTimeout(() => {
       setAiCopilotMessages((prev) => [...prev, {
         role: "assistant",
-        text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request.",
+        text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request. Try asking things like: \"Show me iPhone 15 Pro devices in Grade A\", \"What weekly specials are available right now?\", or \"Add 5 Samsung Galaxy S23 devices to my request.\"",
         action: null,
         timestamp: new Date().toISOString()
       }]);
