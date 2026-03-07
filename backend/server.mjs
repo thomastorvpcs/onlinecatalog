@@ -3605,6 +3605,18 @@ function formatUsdValue(value) {
   return `$${numeric.toFixed(2)}`;
 }
 
+function formatBulletList(items, maxItems = 8) {
+  const values = (Array.isArray(items) ? items : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (!values.length) return "";
+  const slice = values.slice(0, maxItems);
+  const moreCount = Math.max(0, values.length - slice.length);
+  const lines = slice.map((item) => `- ${item}`);
+  if (moreCount > 0) lines.push(`- +${moreCount} more`);
+  return lines.join("\n");
+}
+
 function normalizeGradeCode(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toUpperCase();
 }
@@ -4104,7 +4116,9 @@ async function answerOrderDetailsQuestionRuntime(user, message) {
   });
   const moreCount = Math.max(0, lineDetails.length - linePreview.length);
   const header = `Order ${mapped.requestNumber} is ${mapped.status}. Created ${new Date(mapped.createdAt).toLocaleDateString("en-US")}. Total ${formatUsdValue(mapped.total)} (${lineDetails.length} lines).`;
-  const linesText = linePreview.length ? ` Lines: ${linePreview.join("; ")}${moreCount ? `; +${moreCount} more line(s).` : "."}` : " This order has no line items.";
+  const linesText = linePreview.length
+    ? `\nLines:\n${formatBulletList(linePreview)}${moreCount ? `\n- +${moreCount} more line(s)` : ""}`
+    : "\nThis order has no line items.";
   return { reply: `${header}${linesText}`, action: null };
 }
 
@@ -4166,13 +4180,13 @@ async function buildAddFromHistoricalOrderActionRuntime(user, message, allDevice
     });
   }
   if (!addLines.length) {
-    const unavailableText = unavailableModels.length ? ` Unavailable: ${unavailableModels.slice(0, 5).join(", ")}.` : "";
+    const unavailableText = unavailableModels.length ? `\nUnavailable:\n${formatBulletList(unavailableModels, 5)}` : "";
     return { reply: `I found ${request.requestNumber}, but none of its items are currently available in inventory.${unavailableText}`, action: null };
   }
   const addedCount = addLines.length;
   const skippedCount = unavailableModels.length;
-  const adjustmentsText = adjustedModels.length ? ` Quantities adjusted due to inventory limits: ${adjustedModels.slice(0, 4).join("; ")}.` : "";
-  const skippedText = skippedCount ? ` I skipped ${skippedCount} unavailable item${skippedCount === 1 ? "" : "s"}: ${unavailableModels.slice(0, 5).join(", ")}.` : "";
+  const adjustmentsText = adjustedModels.length ? `\nAdjusted quantities:\n${formatBulletList(adjustedModels, 4)}` : "";
+  const skippedText = skippedCount ? `\nSkipped unavailable items (${skippedCount}):\n${formatBulletList(unavailableModels, 5)}` : "";
   return {
     reply: `I prepared ${addedCount} item${addedCount === 1 ? "" : "s"} from ${request.requestNumber} and will add only what is currently in inventory.${skippedText}${adjustmentsText}`,
     action: { type: "add_lines_to_request", payload: { sourceOrder: request.requestNumber, lines: addLines } }
@@ -4191,7 +4205,7 @@ function answerOrderHistoryQuestion(user, message, selectedCategory) {
   if (distinctModels.length > 3 && !/\biphone|galaxy|pixel|ipad|watch|airpods|macbook|thinkpad|model\b/.test(text)) {
     const sample = distinctModels.slice(0, 3).join(", ");
     return {
-      reply: `I found order history for multiple models. Please specify the model (for example: ${sample}).`,
+      reply: `I found order history for multiple models. Please specify one model.\nExamples:\n${formatBulletList(distinctModels.slice(0, 3))}`,
       action: null
     };
   }
@@ -4247,8 +4261,7 @@ async function answerOrderHistoryQuestionRuntime(user, message, selectedCategory
   const wantsLast = /\b(last|latest|previous|last time)\b/.test(text) || !wantsAverage;
   const distinctModels = [...new Set(rows.map((r) => r.model).filter(Boolean))];
   if (distinctModels.length > 3 && !/\biphone|galaxy|pixel|ipad|watch|airpods|macbook|thinkpad|model\b/.test(text)) {
-    const sample = distinctModels.slice(0, 3).join(", ");
-    return { reply: `I found order history for multiple models. Please specify the model (for example: ${sample}).`, action: null };
+    return { reply: `I found order history for multiple models. Please specify one model.\nExamples:\n${formatBulletList(distinctModels.slice(0, 3))}`, action: null };
   }
   const byModel = new Map();
   for (const row of rows) {
@@ -4443,13 +4456,13 @@ function buildWeeklySpecialResponse(message, selectedCategory, allDevicesInput =
 
   if (isAddIntent) {
     return {
-      reply: `I found multiple weekly specials (${preview}). Choose one below and I'll add ${quantity} unit${quantity === 1 ? "" : "s"} to Requested items.`,
+      reply: `I found multiple weekly specials.\nTop matches:\n${formatBulletList(candidates.slice(0, 3).map((d) => `${d.manufacturer} ${d.model}`))}\nChoose one below and I'll add ${quantity} unit${quantity === 1 ? "" : "s"} to Requested items.`,
       action: { type: "choose_devices", options }
     };
   }
 
   return {
-    reply: `Current weekly specials include ${preview}${candidates.length > 3 ? ", and more" : ""}. Tap one below to add it to Requested items.`,
+    reply: `Current weekly specials:\n${formatBulletList(candidates.slice(0, 5).map((d) => `${d.manufacturer} ${d.model}`))}${candidates.length > 5 ? "\n- +more available" : ""}\nTap one below to add it to Requested items.`,
     action: { type: "choose_devices", options }
   };
 }

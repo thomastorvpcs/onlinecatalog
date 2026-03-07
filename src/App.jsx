@@ -5176,7 +5176,7 @@ export default function App() {
                     </span>
                   ) : null}
                   <div className={`ai-copilot-msg ${message.role}`}>
-                    <div>{message.text}</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{message.text}</div>
                     {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
                     {message.role === "assistant" && message.action?.type === "apply_filters" ? (
                       <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
