@@ -1879,7 +1879,6 @@ export default function App() {
   const gradeGuideModalRef = useRef(null);
   const productModalRef = useRef(null);
   const cartModalRef = useRef(null);
-  const auth0CancelModalRef = useRef(null);
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
   const aiCopilotLastSeenMessageCountRef = useRef(0);
@@ -4208,6 +4207,13 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
+  const closeGradeGuide = useCallback(() => setGradeGuideOpen(false), []);
+  const closeActiveProduct = useCallback(() => setActiveProduct(null), []);
+  const closeCartDialog = useCallback(() => setCartOpen(false), []);
+  useDialogA11y({ isOpen: showSessionWarning, dialogRef: sessionExpiryModalRef, closeOnEscape: false });
+  useDialogA11y({ isOpen: gradeGuideOpen, dialogRef: gradeGuideModalRef, onClose: closeGradeGuide });
+  useDialogA11y({ isOpen: Boolean(activeProduct), dialogRef: productModalRef, onClose: closeActiveProduct });
+  useDialogA11y({ isOpen: cartOpen, dialogRef: cartModalRef, onClose: closeCartDialog });
   const shortcutEntries = [...new Set([...categories, ALL_CATEGORIES_KEY])].flatMap((categoryName) =>
     (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
       categoryName,
@@ -5355,6 +5361,7 @@ function Login({
   const [auth0CancelConfirmOpen, setAuth0CancelConfirmOpen] = useState(false);
   const [auth0CancelSubmitting, setAuth0CancelSubmitting] = useState(false);
   const [auth0CancelError, setAuth0CancelError] = useState("");
+  const auth0CancelModalRef = useRef(null);
   const activePendingEmail = pendingEmail || auth0PendingApprovalEmail;
 
   useEffect(() => {
@@ -5451,17 +5458,10 @@ function Login({
     }
   };
 
-  const closeGradeGuide = useCallback(() => setGradeGuideOpen(false), []);
-  const closeActiveProduct = useCallback(() => setActiveProduct(null), []);
-  const closeCartDialog = useCallback(() => setCartOpen(false), []);
   const closeAuth0CancelDialog = useCallback(() => {
     if (!auth0CancelSubmitting) setAuth0CancelConfirmOpen(false);
   }, [auth0CancelSubmitting]);
 
-  useDialogA11y({ isOpen: showSessionWarning, dialogRef: sessionExpiryModalRef, closeOnEscape: false });
-  useDialogA11y({ isOpen: gradeGuideOpen, dialogRef: gradeGuideModalRef, onClose: closeGradeGuide });
-  useDialogA11y({ isOpen: Boolean(activeProduct), dialogRef: productModalRef, onClose: closeActiveProduct });
-  useDialogA11y({ isOpen: cartOpen, dialogRef: cartModalRef, onClose: closeCartDialog });
   useDialogA11y({ isOpen: auth0CancelConfirmOpen, dialogRef: auth0CancelModalRef, onClose: closeAuth0CancelDialog });
 
   if (auth0Only && auth0ProfileRequired) {
