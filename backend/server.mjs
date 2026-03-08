@@ -3074,10 +3074,6 @@ async function parseAiFiltersRuntime(promptRaw, selectedCategoryRaw = "") {
 
 function resolveCopilotSelectedCategoryContext(messageRaw, selectedCategoryRaw) {
   const selectedCategory = String(selectedCategoryRaw || "").trim() || "__ALL__";
-  const message = String(messageRaw || "").trim();
-  if (selectedCategory === "Smartphones" && !hasExplicitCategoryIntent(message)) {
-    return "__ALL__";
-  }
   return selectedCategory;
 }
 
@@ -7322,7 +7318,7 @@ function normalizeSavedFilterViewKey(raw) {
 
 function sanitizeSavedFilterPayload(raw) {
   const input = raw && typeof raw === "object" ? raw : {};
-  const selectedCategory = String(input.selectedCategory || "").trim().slice(0, 80) || "Smartphones";
+  const selectedCategory = String(input.selectedCategory || "").trim().slice(0, 80) || "__ALL__";
   const search = String(input.search || "").slice(0, 200);
   const sourceFilters = input.filters && typeof input.filters === "object" ? input.filters : {};
   const filters = {};

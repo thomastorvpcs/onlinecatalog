@@ -629,7 +629,7 @@ function setDemoSavedFilters(userId, viewKey, savedFilters) {
 
 function sanitizeFilterPayload(raw) {
   const input = raw && typeof raw === "object" ? raw : {};
-  const selectedCategory = String(input.selectedCategory || "").trim() || "Smartphones";
+  const selectedCategory = String(input.selectedCategory || "").trim() || ALL_CATEGORIES_KEY;
   const search = String(input.search || "").slice(0, 200);
   const sourceFilters = input.filters && typeof input.filters === "object" ? input.filters : {};
   const filters = {};
@@ -1921,7 +1921,7 @@ export default function App() {
   const [categoryLoading, setCategoryLoading] = useState(false);
   const [route, setRoute] = useState(() => persistedViewState.route || "products");
   const [productsView, setProductsView] = useState(() => persistedViewState.productsView || "home");
-  const [selectedCategory, setSelectedCategory] = useState(() => persistedViewState.selectedCategory || "Smartphones");
+  const [selectedCategory, setSelectedCategory] = useState(() => persistedViewState.selectedCategory || ALL_CATEGORIES_KEY);
   const [search, setSearch] = useState(() => persistedViewState.search || "");
   const [filters, setFilters] = useState(() => (persistedViewState.filters && typeof persistedViewState.filters === "object" ? persistedViewState.filters : {}));
   const [weeklySearch, setWeeklySearch] = useState(() => persistedViewState.weeklySearch || "");
@@ -2115,7 +2115,7 @@ export default function App() {
   const resetViewStateToHome = () => {
     setRoute("products");
     setProductsView("home");
-    setSelectedCategory("Smartphones");
+    setSelectedCategory(ALL_CATEGORIES_KEY);
     setSearch("");
     setFilters({});
     setWeeklySearch("");
