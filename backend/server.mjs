@@ -3104,6 +3104,20 @@ function hasExplicitCategoryIntent(promptRaw) {
     || /\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b|\bipad\b|\bgalaxy tab\b|\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b|\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\biphone\b|\bpixel\b/.test(text);
 }
 
+function inferExplicitCopilotCategory(messageRaw, categoriesInput = []) {
+  const text = String(messageRaw || "").toLowerCase();
+  const categories = Array.isArray(categoriesInput) ? categoriesInput : [];
+  const byLower = new Map(categories.map((name) => [String(name || "").toLowerCase(), String(name || "")]));
+  const fromCatalog = categories.find((name) => text.includes(String(name || "").toLowerCase()));
+  if (fromCatalog) return String(fromCatalog);
+  if (/\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b|\bwatch(es)?\b|\bwearable(s)?\b/.test(text)) return byLower.get("wearables") || "Wearables";
+  if (/\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b|\blaptop(s)?\b|\bnotebook(s)?\b/.test(text)) return byLower.get("laptops") || "Laptops";
+  if (/\bipad\b|\bgalaxy tab\b|\btablet(s)?\b/.test(text)) return byLower.get("tablets") || "Tablets";
+  if (/\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\baccessor(y|ies)\b/.test(text)) return byLower.get("accessories") || "Accessories";
+  if (/\biphone\b|\bpixel\b|\bgalaxy\b|\bsmart\s?phones?\b|\bphones?\b/.test(text)) return byLower.get("smartphones") || "Smartphones";
+  return "";
+}
+
 function deviceMatchesCopilotPayload(device, payload) {
   const selectedCategory = String(payload?.selectedCategory || "").trim();
   const search = String(payload?.search || "").trim().toLowerCase();
@@ -4790,12 +4804,14 @@ async function runAiCopilot(user, body) {
     const catalog = (POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres")
       ? buildCopilotCatalogContextFromDevices(allDevices)
       : buildCopilotCatalogContext();
+    const explicitCategory = inferExplicitCopilotCategory(message, catalog?.categories || []);
+    const selectedCategoryForPlan = explicitCategory || selectedCategory;
     const history = await buildCopilotHistoricalSalesContextRuntime();
     const userHistory = await buildCopilotUserOrderHistoryContextRuntime(user);
     const weeklySpecials = buildCopilotWeeklySpecialContext(10, allDevices);
     const plan = await requestOpenAiCopilotPlan(
       message,
-      selectedCategory,
+      selectedCategoryForPlan,
       catalog,
       history,
       userHistory,
@@ -4803,6 +4819,9 @@ async function runAiCopilot(user, body) {
       chatHistory
     );
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
+    if (explicitCategory) {
+      normalizedPayload.selectedCategory = explicitCategory;
+    }
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
     const heuristicPayload = await parseAiFiltersRuntime(message, selectedCategory);
     const heuristicHasFilters = Object.keys(heuristicPayload.filters || {}).length > 0 || String(heuristicPayload.search || "").trim().length > 0;
@@ -4847,7 +4866,20 @@ async function runAiCopilot(user, body) {
       }, "product_discovery");
     }
 
-    const reply = String(plan?.reply || "").trim() || "I can help with product discovery, filter setup, and fulfillment guidance.";
+    if (explicitCategory && action?.type === "choose_filters") {
+      action = {
+        type: "apply_filters",
+        payload: {
+          ...normalizedPayload,
+          suggestedName: suggestedName || "AI Suggested Filter"
+        }
+      };
+    }
+
+    let reply = String(plan?.reply || "").trim() || "I can help with product discovery, filter setup, and fulfillment guidance.";
+    if (explicitCategory && /\bselected category is smartphones\b|\bswitch to the\b.+\bcategory\b/i.test(reply)) {
+      reply = `Showing ${explicitCategory} options based on your request.`;
+    }
     const resultTopic = action?.type === "add_to_request" || action?.type === "choose_devices"
       ? "requested_items"
       : (action?.type === "apply_filters" || action?.type === "choose_filters" ? "product_discovery" : inferredTopic);
