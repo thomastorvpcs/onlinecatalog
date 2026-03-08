@@ -293,6 +293,7 @@ const DEMO_REQUESTS_PREFIX = "pcs.demo.requests.";
 const DEMO_SAVED_FILTERS_PREFIX = "pcs.demo.savedFilters.";
 const DEMO_CART_DRAFTS_PREFIX = "pcs.demo.cartDrafts.";
 const DEMO_CART_ACTIVITY_PREFIX = "pcs.demo.cartActivity.";
+const AI_COPILOT_TOPICS = new Set(["general", "product_discovery", "weekly_specials", "order_history", "requested_items", "fulfillment", "pricing"]);
 const FILTER_FIELD_KEYS = ["manufacturer", "modelFamily", "grade", "region", "storage"];
 const GRADE_DEFINITIONS = [
   {
@@ -2004,6 +2005,7 @@ export default function App() {
   const [aiCopilotPanelHeight, setAiCopilotPanelHeight] = useState(0);
   const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
   const [aiCopilotOptionVisibleCountByMessage, setAiCopilotOptionVisibleCountByMessage] = useState({});
+  const [aiCopilotCurrentTopic, setAiCopilotCurrentTopic] = useState("general");
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -2167,6 +2169,7 @@ export default function App() {
     setAiCopilotError("");
     setAiCopilotOpen(false);
     setAiCopilotWelcomePending(false);
+    setAiCopilotCurrentTopic("general");
     setAiCopilotPanelHeight(0);
     setAiCopilotMinPanelHeight(0);
     aiCopilotPendingResultCheckRef.current = null;
@@ -2695,6 +2698,7 @@ export default function App() {
       setAiCopilotMessages([]);
       setAiCopilotOpen(false);
       setAiCopilotUnreadCount(0);
+      setAiCopilotCurrentTopic("general");
       return;
     }
     const state = readJson(localStorage, aiCopilotStateKey, {});
@@ -2705,6 +2709,7 @@ export default function App() {
           role: msg.role,
           text: String(msg.text || ""),
           action: msg.action && typeof msg.action === "object" ? msg.action : null,
+          topic: AI_COPILOT_TOPICS.has(String(msg.topic || "").trim().toLowerCase()) ? String(msg.topic || "").trim().toLowerCase() : "general",
           timestamp: normalizeChatTimestamp(msg.timestamp)
         }))
         .slice(-30)
@@ -2713,6 +2718,8 @@ export default function App() {
     setAiCopilotOpen(false);
     aiCopilotLastSeenMessageCountRef.current = messages.length;
     setAiCopilotUnreadCount(0);
+    const persistedTopic = String(state?.currentTopic || "").trim().toLowerCase();
+    setAiCopilotCurrentTopic(AI_COPILOT_TOPICS.has(persistedTopic) ? persistedTopic : "general");
     setAiCopilotPanelHeight(Number.isFinite(Number(state?.panelHeight)) ? Math.max(0, Math.round(Number(state.panelHeight))) : 0);
     setAiCopilotMinPanelHeight(0);
     setAiCopilotGreetingTyping(false);
@@ -2724,9 +2731,10 @@ export default function App() {
     writeJson(localStorage, aiCopilotStateKey, {
       open: aiCopilotOpen,
       messages: aiCopilotMessages.slice(-30),
+      currentTopic: aiCopilotCurrentTopic,
       panelHeight: Number.isFinite(Number(aiCopilotPanelHeight)) ? Math.max(0, Math.round(Number(aiCopilotPanelHeight))) : 0
     });
-  }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages, aiCopilotPanelHeight]);
+  }, [aiCopilotStateKey, aiCopilotOpen, aiCopilotMessages, aiCopilotCurrentTopic, aiCopilotPanelHeight]);
 
   useEffect(() => {
     if (!aiCopilotOpen || !aiCopilotWelcomePending) return;
@@ -2736,6 +2744,7 @@ export default function App() {
         role: "assistant",
         text: "Hi! Great to see you. I can help you find products, check promotions and weekly specials, and add matching items to your request. Try asking things like: \"Show me iPhone 15 Pro devices in Grade A\", \"What weekly specials are available right now?\", or \"Add 5 Samsung Galaxy S23 devices to my request.\"",
         action: null,
+        topic: "general",
         timestamp: new Date().toISOString()
       }]);
       setAiCopilotGreetingTyping(false);
@@ -3248,6 +3257,7 @@ export default function App() {
           role: "assistant",
           text: "I couldn't find any available items to add from that historical order.",
           action: null,
+          topic: "requested_items",
           timestamp: new Date().toISOString()
         }]);
         return;
@@ -3284,10 +3294,12 @@ export default function App() {
           role: "assistant",
           text: "I couldn't add those historical items because none were found in the current catalog.",
           action: null,
+          topic: "requested_items",
           timestamp: new Date().toISOString()
         }]);
         return;
       }
+      setAiCopilotCurrentTopic("requested_items");
       updateCart(next);
       setCartNotice(`Added ${applied} historical item${applied === 1 ? "" : "s"} to Requested items.`);
       if (cartNoticeTimerRef.current) {
@@ -3307,10 +3319,12 @@ export default function App() {
           role: "assistant",
           text: "I couldn't find that device in the current catalog, so I could not add it.",
           action: null,
+          topic: "requested_items",
           timestamp: new Date().toISOString()
         }]);
         return;
       }
+      setAiCopilotCurrentTopic("requested_items");
       const quantity = Math.max(1, Math.min(9999, Math.floor(Number(payload.quantity || 1))));
       const offerPrice = Number.isFinite(Number(payload.offerPrice)) ? Number(payload.offerPrice) : Number(product.price || 0);
       const note = String(payload.note || "Added by AI copilot").slice(0, 200);
@@ -3318,6 +3332,7 @@ export default function App() {
       return;
     }
     if (action.type !== "apply_filters") return;
+    setAiCopilotCurrentTopic("product_discovery");
     const payload = sanitizeFilterPayload(action.payload);
     const matchingCount = products.filter((p) => deviceMatchesFilterPayload(p, payload)).length;
     if (matchingCount <= 0) {
@@ -3326,6 +3341,7 @@ export default function App() {
         role: "assistant",
         text: "These suggested filters would return no devices, so I did not apply them. Try broader filters or another category.",
         action: null,
+        topic: "product_discovery",
         timestamp: new Date().toISOString()
       }]);
       return;
@@ -3360,6 +3376,7 @@ export default function App() {
       role: "assistant",
       text: "I applied the suggested filters, but no devices matched. Try broadening the filters or selecting another category.",
       action: null,
+      topic: "product_discovery",
       timestamp: new Date().toISOString()
     }]);
   }, [productsView, categoryLoading, categoryTotal, productsError]);
@@ -3475,11 +3492,13 @@ export default function App() {
         setAiCopilotMessages((prev) => [...prev, {
           role: "user",
           text: message,
+          topic: aiCopilotCurrentTopic,
           timestamp: now
         }, {
           role: "assistant",
           text: `Showing more options (${expandable.nextVisibleCount}/${expandable.total}).`,
           action: null,
+          topic: aiCopilotCurrentTopic,
           timestamp: now
         }]);
         setAiCopilotOptionVisibleCountByMessage((prev) => ({
@@ -3495,6 +3514,7 @@ export default function App() {
     setAiCopilotMessages((prev) => [...prev, {
       role: "user",
       text: message,
+      topic: aiCopilotCurrentTopic,
       timestamp: new Date().toISOString()
     }]);
     setAiCopilotInput("");
@@ -3508,11 +3528,13 @@ export default function App() {
         body: {
           message,
           selectedCategory,
+          topicHint: aiCopilotCurrentTopic,
           chatHistory: aiCopilotMessages
             .slice(-12)
             .map((entry) => ({
               role: entry?.role === "assistant" ? "assistant" : "user",
               text: String(entry?.text || "").trim(),
+              topic: AI_COPILOT_TOPICS.has(String(entry?.topic || "").trim().toLowerCase()) ? String(entry.topic).trim().toLowerCase() : "general",
               timestamp: entry?.timestamp || null
             }))
             .filter((entry) => entry.text)
@@ -3521,6 +3543,10 @@ export default function App() {
       await new Promise((resolve) => {
         window.setTimeout(resolve, 650);
       });
+      const nextTopic = String(payload?.topic || "").trim().toLowerCase();
+      if (AI_COPILOT_TOPICS.has(nextTopic)) {
+        setAiCopilotCurrentTopic(nextTopic);
+      }
       const suggestedAction = payload.action && typeof payload.action === "object" ? payload.action : null;
       if (suggestedAction?.type === "apply_filters") {
         const suggestedPayload = sanitizeFilterPayload(suggestedAction.payload);
@@ -3530,6 +3556,7 @@ export default function App() {
             role: "assistant",
             text: buildCopilotNoMatchReply(suggestedPayload, products),
             action: null,
+            topic: AI_COPILOT_TOPICS.has(nextTopic) ? nextTopic : aiCopilotCurrentTopic,
             timestamp: new Date().toISOString()
           }]);
           return;
@@ -3539,6 +3566,7 @@ export default function App() {
         role: "assistant",
         text: payload.reply || "I could not generate a response.",
         action: suggestedAction,
+        topic: AI_COPILOT_TOPICS.has(nextTopic) ? nextTopic : aiCopilotCurrentTopic,
         timestamp: new Date().toISOString()
       }]);
     } catch (error) {
@@ -4199,6 +4227,7 @@ export default function App() {
         setAiCopilotError("");
         setAiCopilotOpen(false);
         setAiCopilotWelcomePending(false);
+        setAiCopilotCurrentTopic("general");
         setAiCopilotPanelHeight(0);
         setAiCopilotMinPanelHeight(0);
       }

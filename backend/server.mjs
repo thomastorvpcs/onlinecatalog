@@ -4646,10 +4646,34 @@ function sanitizeCopilotChatHistory(historyInput, maxTurns = 12) {
     if (!text) continue;
     sanitized.push({
       role,
-      text: text.slice(0, 600)
+      text: text.slice(0, 600),
+      topic: normalizeCopilotTopic(turn?.topic || "")
     });
   }
   return sanitized;
+}
+
+function normalizeCopilotTopic(topicRaw) {
+  const topic = String(topicRaw || "").trim().toLowerCase();
+  if ([
+    "general",
+    "product_discovery",
+    "weekly_specials",
+    "order_history",
+    "requested_items",
+    "fulfillment",
+    "pricing"
+  ].includes(topic)) return topic;
+  return "general";
+}
+
+function getCopilotHistoryTopic(chatHistory) {
+  const turns = Array.isArray(chatHistory) ? chatHistory : [];
+  for (let idx = turns.length - 1; idx >= 0; idx -= 1) {
+    const normalized = normalizeCopilotTopic(turns[idx]?.topic || "");
+    if (normalized !== "general") return normalized;
+  }
+  return "general";
 }
 
 function findLastAssistantCopilotTurn(chatHistory) {
@@ -4672,6 +4696,11 @@ function applyCopilotConversationContext(messageRaw, chatHistory) {
   if (!message) return message;
   if (!isLikelyFollowUpPrompt(message)) return message;
   const lastAssistant = findLastAssistantCopilotTurn(chatHistory);
+  const historyTopic = getCopilotHistoryTopic(chatHistory);
+  if (historyTopic === "weekly_specials") return `Regarding weekly specials, ${message}`;
+  if (historyTopic === "order_history") return `Regarding order history, ${message}`;
+  if (historyTopic === "requested_items") return `Regarding the previously suggested items, ${message}`;
+  if (historyTopic === "product_discovery") return `Using the same filter/search context, ${message}`;
   const lastAssistantText = String(lastAssistant?.text || "");
   if (!lastAssistantText) return message;
   if (/weekly specials?/i.test(lastAssistantText)) {
@@ -4689,22 +4718,47 @@ function applyCopilotConversationContext(messageRaw, chatHistory) {
   return message;
 }
 
+function inferCopilotTopic(messageRaw, chatHistory, topicHintRaw = "") {
+  const message = String(messageRaw || "").trim().toLowerCase();
+  const topicHint = normalizeCopilotTopic(topicHintRaw);
+  const historyTopic = getCopilotHistoryTopic(chatHistory);
+  if (isCopilotWeeklySpecialIntent(message)) return "weekly_specials";
+  if (isAddFromHistoryIntent(message) || isOrderDetailsQuestion(message) || isOrderHistoryQuestion(message)) return "order_history";
+  if (isCopilotAddToRequestIntent(message) || /\brequested items?\b|\badd to requested\b/.test(message)) return "requested_items";
+  if (/\b(fulfill|fulfillment|shortage|location)\b/.test(message)) return "fulfillment";
+  if (/\b(price|pricing|discount|margin|offer)\b/.test(message)) return "pricing";
+  if (/\b(find|show|search|filter|looking|need|want)\b/.test(message)) return "product_discovery";
+  if (isLikelyFollowUpPrompt(message) && historyTopic !== "general") return historyTopic;
+  if (topicHint !== "general") return topicHint;
+  return historyTopic;
+}
+
+function withCopilotTopic(result, topicRaw) {
+  const normalizedTopic = normalizeCopilotTopic(topicRaw);
+  return {
+    ...(result && typeof result === "object" ? result : {}),
+    topic: normalizedTopic
+  };
+}
+
 async function runAiCopilot(user, body) {
   const rawMessage = String(body?.message || "").trim();
   const chatHistory = sanitizeCopilotChatHistory(body?.chatHistory, 12);
+  const topicHint = normalizeCopilotTopic(body?.topicHint || "");
   const message = applyCopilotConversationContext(rawMessage, chatHistory);
+  const inferredTopic = inferCopilotTopic(message, chatHistory, topicHint);
   const selectedCategory = resolveCopilotSelectedCategoryContext(message, body?.selectedCategory);
   if (!message) {
-    return { reply: "Please enter a message.", action: null };
+    return withCopilotTopic({ reply: "Please enter a message.", action: null }, inferredTopic);
   }
   if (isGradeDefinitionQuestion(message)) {
-    return { reply: buildGradeDefinitionReply(message), action: null };
+    return withCopilotTopic({ reply: buildGradeDefinitionReply(message), action: null }, inferredTopic);
   }
   if (!AI_COPILOT_REAL_MODEL_ENABLED || !OPENAI_API_KEY) {
-    return {
+    return withCopilotTopic({
       reply: "AI copilot is not configured. Set OPENAI_API_KEY (and enable AI_COPILOT_REAL_MODEL_ENABLED) to use the real model.",
       action: null
-    };
+    }, inferredTopic);
   }
 
   try {
@@ -4716,22 +4770,22 @@ async function runAiCopilot(user, body) {
     const deterministicWeeklySpecial = isCopilotWeeklySpecialIntent(message)
       ? buildWeeklySpecialResponse(message, selectedCategory, allDevices)
       : null;
-    if (deterministicWeeklySpecial) return deterministicWeeklySpecial;
+    if (deterministicWeeklySpecial) return withCopilotTopic(deterministicWeeklySpecial, "weekly_specials");
 
     const deterministicAddFromHistory = isAddFromHistoryIntent(message)
       ? await buildAddFromHistoricalOrderActionRuntime(user, message, allDevices)
       : null;
-    if (deterministicAddFromHistory) return deterministicAddFromHistory;
+    if (deterministicAddFromHistory) return withCopilotTopic(deterministicAddFromHistory, "order_history");
 
     const deterministicOrderDetailsAnswer = isOrderDetailsQuestion(message)
       ? await answerOrderDetailsQuestionRuntime(user, message)
       : null;
-    if (deterministicOrderDetailsAnswer) return deterministicOrderDetailsAnswer;
+    if (deterministicOrderDetailsAnswer) return withCopilotTopic(deterministicOrderDetailsAnswer, "order_history");
 
     const deterministicHistoryAnswer = isOrderHistoryQuestion(message)
       ? await answerOrderHistoryQuestionRuntime(user, message, selectedCategory)
       : null;
-    if (deterministicHistoryAnswer) return deterministicHistoryAnswer;
+    if (deterministicHistoryAnswer) return withCopilotTopic(deterministicHistoryAnswer, "order_history");
 
     const catalog = (POSTGRES_STRICT_RUNTIME && effectiveDbEngine === "postgres")
       ? buildCopilotCatalogContextFromDevices(allDevices)
@@ -4761,12 +4815,12 @@ async function runAiCopilot(user, body) {
     if (addIntent && (hasFilters || heuristicHasFilters)) {
       const addAction = buildCopilotAddToRequestAction(message, payloadForAdd, allDevices);
       if (!addAction) {
-        return {
+        return withCopilotTopic({
           reply: buildCopilotNoMatchReply(payloadForAdd),
           action: null
-        };
+        }, "requested_items");
       }
-      return addAction;
+      return withCopilotTopic(addAction, "requested_items");
     }
 
     let action = null;
@@ -4787,23 +4841,26 @@ async function runAiCopilot(user, body) {
     }
 
     if (!action && intent === "apply_filters" && hasFilters) {
-      return {
+      return withCopilotTopic({
         reply: buildCopilotNoMatchReply(normalizedPayload),
         action: null
-      };
+      }, "product_discovery");
     }
 
     const reply = String(plan?.reply || "").trim() || "I can help with product discovery, filter setup, and fulfillment guidance.";
-    return { reply, action };
+    const resultTopic = action?.type === "add_to_request" || action?.type === "choose_devices"
+      ? "requested_items"
+      : (action?.type === "apply_filters" || action?.type === "choose_filters" ? "product_discovery" : inferredTopic);
+    return withCopilotTopic({ reply, action }, resultTopic);
   } catch (error) {
     console.error("[ai-copilot] OpenAI call failed:", error?.message || error);
     const debugSuffix = AI_COPILOT_DEBUG_ERRORS && error?.message
       ? ` (${String(error.message).slice(0, 180)})`
       : "";
-    return {
+    return withCopilotTopic({
       reply: `AI copilot is temporarily unavailable right now. Please try again in a moment.${debugSuffix}`,
       action: null
-    };
+    }, inferredTopic);
   }
 }
 
