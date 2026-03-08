@@ -3507,7 +3507,15 @@ export default function App() {
         onAuthFail: clearAuthState,
         body: {
           message,
-          selectedCategory
+          selectedCategory,
+          chatHistory: aiCopilotMessages
+            .slice(-12)
+            .map((entry) => ({
+              role: entry?.role === "assistant" ? "assistant" : "user",
+              text: String(entry?.text || "").trim(),
+              timestamp: entry?.timestamp || null
+            }))
+            .filter((entry) => entry.text)
         }
       });
       await new Promise((resolve) => {

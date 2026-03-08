@@ -4532,7 +4532,7 @@ function buildCopilotAddToRequestAction(message, payload, allDevicesInput = null
   };
 }
 
-async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials) {
+async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials, chatHistory = []) {
   const endpoint = `${OPENAI_BASE_URL}/chat/completions`;
   const schema = {
     type: "object",
@@ -4561,6 +4561,8 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
   const systemPrompt = [
     "You are a retail device catalog copilot.",
     "Your task is to convert user requests into app filter payloads and a short reply.",
+    "Carry conversation context across turns: resolve references such as 'that', 'those', 'more', 'same', and short follow-ups.",
+    "Assume the user is continuing the current topic unless they clearly switch topics.",
     "Allowed categories: __ALL__, " + catalog.categories.join(", "),
     "Allowed manufacturers: " + catalog.manufacturers.join(", "),
     "Allowed model families: " + catalog.modelFamilies.slice(0, 120).join(", "),
@@ -4584,11 +4586,17 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     "Keep reply concise and user-facing."
   ].join("\n");
 
+  const conversationMessages = sanitizeCopilotChatHistory(chatHistory, 12).map((turn) => ({
+    role: turn.role,
+    content: turn.text
+  }));
+
   const payload = {
     model: AI_COPILOT_MODEL,
     temperature: 0.2,
     messages: [
       { role: "system", content: systemPrompt },
+      ...conversationMessages,
       { role: "user", content: `Selected category: ${selectedCategory || "__ALL__"}\nUser message: ${message}` }
     ],
     response_format: {
@@ -4628,8 +4636,63 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
   return parsed;
 }
 
+function sanitizeCopilotChatHistory(historyInput, maxTurns = 12) {
+  const turns = Array.isArray(historyInput) ? historyInput : [];
+  const sliced = turns.slice(-Math.max(1, Number(maxTurns || 12)));
+  const sanitized = [];
+  for (const turn of sliced) {
+    const role = String(turn?.role || "").trim().toLowerCase() === "assistant" ? "assistant" : "user";
+    const text = String(turn?.text || "").trim();
+    if (!text) continue;
+    sanitized.push({
+      role,
+      text: text.slice(0, 600)
+    });
+  }
+  return sanitized;
+}
+
+function findLastAssistantCopilotTurn(chatHistory) {
+  const turns = Array.isArray(chatHistory) ? chatHistory : [];
+  for (let idx = turns.length - 1; idx >= 0; idx -= 1) {
+    if (turns[idx]?.role === "assistant") return turns[idx];
+  }
+  return null;
+}
+
+function isLikelyFollowUpPrompt(messageRaw) {
+  const message = String(messageRaw || "").trim().toLowerCase();
+  if (!message) return false;
+  if (message.length <= 24 && /^(more|more\?|next|continue|yes|yep|ok|okay|sure|go on)$/i.test(message)) return true;
+  return /\b(more|next|continue|that|those|them|it|same|what about|how about|and what|anything else)\b/.test(message);
+}
+
+function applyCopilotConversationContext(messageRaw, chatHistory) {
+  const message = String(messageRaw || "").trim();
+  if (!message) return message;
+  if (!isLikelyFollowUpPrompt(message)) return message;
+  const lastAssistant = findLastAssistantCopilotTurn(chatHistory);
+  const lastAssistantText = String(lastAssistant?.text || "");
+  if (!lastAssistantText) return message;
+  if (/weekly specials?/i.test(lastAssistantText)) {
+    return `Regarding weekly specials, ${message}`;
+  }
+  if (/order history|completed orders|historical/i.test(lastAssistantText)) {
+    return `Regarding order history, ${message}`;
+  }
+  if (/requested items|add to requested|which one should i add/i.test(lastAssistantText)) {
+    return `Regarding the previously suggested items, ${message}`;
+  }
+  if (/filters|category|search/i.test(lastAssistantText)) {
+    return `Using the same filter/search context, ${message}`;
+  }
+  return message;
+}
+
 async function runAiCopilot(user, body) {
-  const message = String(body?.message || "").trim();
+  const rawMessage = String(body?.message || "").trim();
+  const chatHistory = sanitizeCopilotChatHistory(body?.chatHistory, 12);
+  const message = applyCopilotConversationContext(rawMessage, chatHistory);
   const selectedCategory = resolveCopilotSelectedCategoryContext(message, body?.selectedCategory);
   if (!message) {
     return { reply: "Please enter a message.", action: null };
@@ -4676,7 +4739,15 @@ async function runAiCopilot(user, body) {
     const history = await buildCopilotHistoricalSalesContextRuntime();
     const userHistory = await buildCopilotUserOrderHistoryContextRuntime(user);
     const weeklySpecials = buildCopilotWeeklySpecialContext(10, allDevices);
-    const plan = await requestOpenAiCopilotPlan(message, selectedCategory, catalog, history, userHistory, weeklySpecials);
+    const plan = await requestOpenAiCopilotPlan(
+      message,
+      selectedCategory,
+      catalog,
+      history,
+      userHistory,
+      weeklySpecials,
+      chatHistory
+    );
     const normalizedPayload = normalizeCopilotPlanPayload(plan, selectedCategory, catalog);
     const hasFilters = Object.keys(normalizedPayload.filters || {}).length > 0 || String(normalizedPayload.search || "").trim().length > 0;
     const heuristicPayload = await parseAiFiltersRuntime(message, selectedCategory);
