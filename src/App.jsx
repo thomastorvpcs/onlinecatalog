@@ -3432,12 +3432,63 @@ export default function App() {
     beginAiCopilotResize(touch.clientY);
   }
 
+  function isCopilotShowMoreFollowUp(messageRaw) {
+    const message = String(messageRaw || "").trim().toLowerCase();
+    if (!message) return false;
+    return /^(more|more\?|show more|next|next page|continue)$/i.test(message);
+  }
+
+  function findLatestExpandableCopilotMessage(messages, visibleCountByMessage) {
+    const recent = Array.isArray(messages) ? messages.slice(-10) : [];
+    for (let idx = recent.length - 1; idx >= 0; idx -= 1) {
+      const message = recent[idx];
+      if (message?.role !== "assistant") continue;
+      const actionType = String(message?.action?.type || "");
+      if (actionType !== "choose_devices" && actionType !== "choose_filters") continue;
+      const optionList = Array.isArray(message?.action?.options) ? message.action.options : [];
+      if (!optionList.length) continue;
+      const messageKey = `${String(message.timestamp || "")}:${String(message.text || "").slice(0, 80)}:${idx}`;
+      const visible = Math.max(10, Number(visibleCountByMessage?.[messageKey] || 10));
+      if (optionList.length > visible) {
+        return {
+          messageKey,
+          nextVisibleCount: Math.min(optionList.length, visible + 10),
+          total: optionList.length
+        };
+      }
+    }
+    return null;
+  }
+
   const runAiCopilot = async () => {
     if (!authToken || !user || aiCopilotLoading) return;
     const message = aiCopilotInput.trim();
     if (!message) {
       setAiCopilotError("Enter a message first.");
       return;
+    }
+    if (isCopilotShowMoreFollowUp(message)) {
+      const expandable = findLatestExpandableCopilotMessage(aiCopilotMessages, aiCopilotOptionVisibleCountByMessage);
+      if (expandable) {
+        const now = new Date().toISOString();
+        setAiCopilotError("");
+        setAiCopilotMessages((prev) => [...prev, {
+          role: "user",
+          text: message,
+          timestamp: now
+        }, {
+          role: "assistant",
+          text: `Showing more options (${expandable.nextVisibleCount}/${expandable.total}).`,
+          action: null,
+          timestamp: now
+        }]);
+        setAiCopilotOptionVisibleCountByMessage((prev) => ({
+          ...prev,
+          [expandable.messageKey]: expandable.nextVisibleCount
+        }));
+        setAiCopilotInput("");
+        return;
+      }
     }
     setAiCopilotLoading(true);
     setAiCopilotError("");
