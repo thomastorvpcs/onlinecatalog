@@ -3824,7 +3824,7 @@ async function queryOrderHistoryLineRowsRuntime(user, message, selectedCategory,
 }
 
 function buildCopilotUserOrderHistoryContext(user) {
-  const lines = queryOrderHistoryLineRows(user, "", "Smartphones", 300);
+  const lines = queryOrderHistoryLineRows(user, "", "__ALL__", 300);
   const byModel = new Map();
   for (const row of lines) {
     const key = row.model || "Unknown";
@@ -3979,7 +3979,7 @@ async function buildCopilotUserOrderHistoryContextRuntime(user) {
   if (!pgClient) {
     throw new Error("Postgres runtime is not initialized.");
   }
-  const lines = await queryOrderHistoryLineRowsRuntime(user, "", "Smartphones", 300);
+  const lines = await queryOrderHistoryLineRowsRuntime(user, "", "__ALL__", 300);
   const byModel = new Map();
   for (const row of lines) {
     const key = row.model || "Unknown";
@@ -4301,7 +4301,7 @@ function normalizeCopilotPlanPayload(plan, fallbackCategory, catalog) {
   const categoriesLowerMap = new Map(categories.map((item) => [item.toLowerCase(), item]));
   const selectedCategory = selectedRaw === "__ALL__"
     ? "__ALL__"
-    : (categoriesLowerMap.get(selectedRaw.toLowerCase()) || String(fallbackCategory || "Smartphones"));
+    : (categoriesLowerMap.get(selectedRaw.toLowerCase()) || String(fallbackCategory || "__ALL__"));
 
   const filters = {};
   const normalizedManufacturers = normalizeFromAllowed(plan?.filters?.manufacturer, catalog?.manufacturers);
@@ -4589,7 +4589,7 @@ async function requestOpenAiCopilotPlan(message, selectedCategory, catalog, hist
     temperature: 0.2,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: `Selected category: ${selectedCategory || "Smartphones"}\nUser message: ${message}` }
+      { role: "user", content: `Selected category: ${selectedCategory || "__ALL__"}\nUser message: ${message}` }
     ],
     response_format: {
       type: "json_schema",

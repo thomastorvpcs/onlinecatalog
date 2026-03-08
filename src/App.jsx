@@ -677,7 +677,7 @@ function mergeSavedFiltersById(entries) {
 
 function parseFiltersWithHeuristics(promptRaw, selectedCategoryRaw, allProducts) {
   const prompt = String(promptRaw || "").trim();
-  const selectedCategory = String(selectedCategoryRaw || "").trim() || "Smartphones";
+  const selectedCategory = String(selectedCategoryRaw || "").trim() || ALL_CATEGORIES_KEY;
   if (!prompt) {
     return { selectedCategory, search: "", filters: {}, warnings: ["Enter a prompt to parse filters."] };
   }
@@ -759,6 +759,15 @@ function hasExplicitCategoryIntent(promptRaw) {
   const text = String(promptRaw || "").toLowerCase();
   return /\bsmart\s?phones?\b|\bphones?\b|\btablet(s)?\b|\blaptop(s)?\b|\bnotebook(s)?\b|\bwearable(s)?\b|\bwatch(es)?\b|\baccessor(y|ies)\b/.test(text)
     || /\bmacbook\b|\bthinkpad\b|\bxps\b|\bsurface laptop\b|\byoga\b|\bipad\b|\bgalaxy tab\b|\bapple watch\b|\bwatch ultra\b|\bsmartwatch\b|\bairpods\b|\bcharger\b|\bkeyboard\b|\bheadset\b|\biphone\b|\bpixel\b/.test(text);
+}
+
+function resolveDemoCopilotSelectedCategoryContext(messageRaw, selectedCategoryRaw) {
+  const selectedCategory = String(selectedCategoryRaw || "").trim() || ALL_CATEGORIES_KEY;
+  const message = String(messageRaw || "");
+  if (selectedCategory === "Smartphones" && !hasExplicitCategoryIntent(message)) {
+    return ALL_CATEGORIES_KEY;
+  }
+  return selectedCategory;
 }
 
 function deviceMatchesFilterPayload(device, payload) {
@@ -1159,7 +1168,8 @@ async function demoApiRequest(path, options = {}) {
   if (method === "POST" && pathname === "/api/ai/parse-filters") {
     requireAuth();
     const all = productsSeed.map((p) => normalizeDevice(p));
-    return parseFiltersWithHeuristics(body.prompt, body.selectedCategory, all);
+    const categoryContext = resolveDemoCopilotSelectedCategoryContext(body.prompt, body.selectedCategory);
+    return parseFiltersWithHeuristics(body.prompt, categoryContext, all);
   }
 
   if (method === "POST" && pathname === "/api/ai/validate-request") {
@@ -1176,6 +1186,7 @@ async function demoApiRequest(path, options = {}) {
   if (method === "POST" && pathname === "/api/ai/copilot") {
     const auth = requireAuth();
     const all = productsSeed.map((p) => normalizeDevice(p));
+    const selectedCategory = resolveDemoCopilotSelectedCategoryContext(body.message, body.selectedCategory);
     const cartActivity = getDemoCartActivity(auth.id);
     const msgText = String(body.message || "").trim();
     const lowered = msgText.toLowerCase();
@@ -1244,7 +1255,7 @@ async function demoApiRequest(path, options = {}) {
         return { reply: `From cart activity, top items are: ${preview}. These are good promotion/follow-up candidates.`, action: null };
       }
     }
-    const parsed = parseFiltersWithHeuristics(body.message, body.selectedCategory, all);
+    const parsed = parseFiltersWithHeuristics(body.message, selectedCategory, all);
     const hasFilters = Object.keys(parsed.filters || {}).length > 0 || String(parsed.search || "").trim().length > 0;
     const suggestedName = buildCopilotSuggestedFilterName(parsed);
     const options = buildCopilotFilterOptions(body.message, parsed, all);
