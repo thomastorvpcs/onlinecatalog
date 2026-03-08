@@ -1992,6 +1992,7 @@ export default function App() {
   const [aiCopilotWelcomePending, setAiCopilotWelcomePending] = useState(false);
   const [aiCopilotPanelHeight, setAiCopilotPanelHeight] = useState(0);
   const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
+  const [aiCopilotOptionVisibleCountByMessage, setAiCopilotOptionVisibleCountByMessage] = useState({});
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -5166,7 +5167,13 @@ export default function App() {
               </button>
             </div>
             <div className="ai-copilot-feed" ref={aiCopilotFeedRef}>
-              {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => (
+              {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => {
+                const messageKey = `${String(message.timestamp || "")}:${String(message.text || "").slice(0, 80)}:${idx}`;
+                const optionList = Array.isArray(message?.action?.options) ? message.action.options : [];
+                const visibleOptionCount = Math.max(10, Number(aiCopilotOptionVisibleCountByMessage[messageKey] || 10));
+                const visibleOptions = optionList.slice(0, visibleOptionCount);
+                const canShowMoreOptions = optionList.length > visibleOptionCount;
+                return (
                 <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-row ${message.role}`}>
                   {message.role === "assistant" ? (
                     <span className="ai-copilot-avatar" aria-hidden="true">
@@ -5193,9 +5200,9 @@ export default function App() {
                         Add Available Items
                       </button>
                     ) : null}
-                    {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && Array.isArray(message.action.options) ? (
+                    {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && optionList.length ? (
                       <div className="ai-copilot-choice-list">
-                        {message.action.options.map((option) => (
+                        {visibleOptions.map((option) => (
                           <button
                             key={`${option.id}-${option.label}`}
                             type="button"
@@ -5211,11 +5218,27 @@ export default function App() {
                             {option.label}
                           </button>
                         ))}
+                        {canShowMoreOptions ? (
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            style={{ width: "auto", marginTop: 4 }}
+                            onClick={() => {
+                              setAiCopilotOptionVisibleCountByMessage((prev) => ({
+                                ...prev,
+                                [messageKey]: visibleOptionCount + 10
+                              }));
+                            }}
+                          >
+                            Show 10 more
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
                 </div>
-              )) : (
+                );
+              }) : (
                 <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
               )}
               {(aiCopilotLoading || aiCopilotGreetingTyping) ? (
