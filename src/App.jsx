@@ -2041,6 +2041,7 @@ export default function App() {
   const aiCopilotVoiceAutoSendTextRef = useRef("");
   const aiCopilotInputRef = useRef("");
   const aiCopilotVoiceAutoSendTimerRef = useRef(null);
+  const aiCopilotVoiceHasSentRef = useRef(false);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -3642,20 +3643,27 @@ export default function App() {
     const recognition = new SpeechRecognitionCtor();
     const baseInput = String(aiCopilotInput || "").trim();
     aiCopilotVoiceAutoSendTextRef.current = "";
+    aiCopilotVoiceHasSentRef.current = false;
     recognition.lang = "en-US";
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event) => {
       let transcript = "";
+      let hasFinalResult = false;
       for (let idx = event.resultIndex; idx < event.results.length; idx += 1) {
         transcript += String(event.results[idx]?.[0]?.transcript || "");
+        if (event.results[idx]?.isFinal) hasFinalResult = true;
       }
       const cleanTranscript = transcript.trim();
       if (!cleanTranscript) return;
       const nextInput = baseInput ? `${baseInput} ${cleanTranscript}` : cleanTranscript;
       setAiCopilotInput(nextInput);
       aiCopilotVoiceAutoSendTextRef.current = nextInput;
+      if (hasFinalResult && !aiCopilotVoiceHasSentRef.current && !aiCopilotLoading) {
+        aiCopilotVoiceHasSentRef.current = true;
+        runAiCopilot(nextInput);
+      }
     };
     recognition.onerror = (event) => {
       const code = String(event?.error || "").toLowerCase();
@@ -3677,7 +3685,8 @@ export default function App() {
         const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || aiCopilotInputRef.current || "").trim();
         aiCopilotVoiceAutoSendTextRef.current = "";
         aiCopilotVoiceAutoSendTimerRef.current = null;
-        if (autoMessage && !aiCopilotLoading) {
+        if (autoMessage && !aiCopilotVoiceHasSentRef.current && !aiCopilotLoading) {
+          aiCopilotVoiceHasSentRef.current = true;
           runAiCopilot(autoMessage);
         }
       }, 260);
