@@ -2039,6 +2039,7 @@ export default function App() {
   const aiCopilotLastSeenMessageCountRef = useRef(0);
   const aiCopilotSpeechRef = useRef(null);
   const aiCopilotVoiceAutoSendTextRef = useRef("");
+  const aiCopilotInputRef = useRef("");
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -2700,6 +2701,10 @@ export default function App() {
     const timer = setTimeout(() => setSavedFilterNotice(""), 2500);
     return () => clearTimeout(timer);
   }, [savedFilterNotice]);
+
+  useEffect(() => {
+    aiCopilotInputRef.current = String(aiCopilotInput || "");
+  }, [aiCopilotInput]);
 
   useEffect(() => {
     if (!aiCopilotStateKey) {
@@ -3660,7 +3665,7 @@ export default function App() {
     recognition.onend = () => {
       aiCopilotSpeechRef.current = null;
       setAiCopilotListening(false);
-      const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || "").trim();
+      const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || aiCopilotInputRef.current || "").trim();
       aiCopilotVoiceAutoSendTextRef.current = "";
       if (autoMessage && !aiCopilotLoading) {
         runAiCopilot(autoMessage);
