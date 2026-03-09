@@ -4576,6 +4576,9 @@ export default function App() {
   const dashboardConversionRate = requests.length
     ? Math.round((completedRequestsCount / requests.length) * 100)
     : 0;
+  const dashboardInventoryLoading = productsLoading;
+  const dashboardRequestsLoading = requestsLoading;
+  const dashboardUsersLoading = user.role === "admin" && usersLoading;
   const productById = new Map(products.map((p) => [p.id, p]));
   const allRequestLocations = (() => {
     const names = new Set();
@@ -4691,34 +4694,88 @@ export default function App() {
               <div className="dashboard-kpi-grid">
                 <article className="dashboard-kpi-card panel">
                   <div className="dashboard-kpi-label">Total Inventory Units</div>
-                  <div className="dashboard-kpi-value">{totalInventoryUnits.toLocaleString()}</div>
-                  <div className="dashboard-kpi-sub">{inStockProducts} products in stock</div>
+                  {dashboardInventoryLoading ? (
+                    <div className="dashboard-kpi-skeleton">
+                      <div className="skeleton skeleton-line" style={{ width: "60%", height: 24 }} />
+                      <div className="skeleton skeleton-line" style={{ width: "72%" }} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="dashboard-kpi-value">{totalInventoryUnits.toLocaleString()}</div>
+                      <div className="dashboard-kpi-sub">{inStockProducts} products in stock</div>
+                    </>
+                  )}
                 </article>
                 <article className="dashboard-kpi-card panel">
                   <div className="dashboard-kpi-label">Open Requests</div>
-                  <div className="dashboard-kpi-value">{openRequestsCount.toLocaleString()}</div>
-                  <div className="dashboard-kpi-sub">{completedRequestsCount} completed</div>
+                  {dashboardRequestsLoading ? (
+                    <div className="dashboard-kpi-skeleton">
+                      <div className="skeleton skeleton-line" style={{ width: "56%", height: 24 }} />
+                      <div className="skeleton skeleton-line" style={{ width: "68%" }} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="dashboard-kpi-value">{openRequestsCount.toLocaleString()}</div>
+                      <div className="dashboard-kpi-sub">{completedRequestsCount} completed</div>
+                    </>
+                  )}
                 </article>
                 <article className="dashboard-kpi-card panel">
                   <div className="dashboard-kpi-label">Request Value</div>
-                  <div className="dashboard-kpi-value">{formatUsd(requestsTotalValue)}</div>
-                  <div className="dashboard-kpi-sub">Avg {formatUsd(averageRequestValue)} per request</div>
+                  {dashboardRequestsLoading ? (
+                    <div className="dashboard-kpi-skeleton">
+                      <div className="skeleton skeleton-line" style={{ width: "74%", height: 24 }} />
+                      <div className="skeleton skeleton-line" style={{ width: "84%" }} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="dashboard-kpi-value">{formatUsd(requestsTotalValue)}</div>
+                      <div className="dashboard-kpi-sub">Avg {formatUsd(averageRequestValue)} per request</div>
+                    </>
+                  )}
                 </article>
                 <article className="dashboard-kpi-card panel">
                   <div className="dashboard-kpi-label">30-Day Activity</div>
-                  <div className="dashboard-kpi-value">{requestsLast30Days.length.toLocaleString()}</div>
-                  <div className="dashboard-kpi-sub">{dashboardConversionRate}% completion rate</div>
+                  {dashboardRequestsLoading ? (
+                    <div className="dashboard-kpi-skeleton">
+                      <div className="skeleton skeleton-line" style={{ width: "52%", height: 24 }} />
+                      <div className="skeleton skeleton-line" style={{ width: "62%" }} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="dashboard-kpi-value">{requestsLast30Days.length.toLocaleString()}</div>
+                      <div className="dashboard-kpi-sub">{dashboardConversionRate}% completion rate</div>
+                    </>
+                  )}
                 </article>
                 <article className="dashboard-kpi-card panel">
                   <div className="dashboard-kpi-label">Weekly Specials</div>
-                  <div className="dashboard-kpi-value">{weeklySpecialDevices.length.toLocaleString()}</div>
-                  <div className="dashboard-kpi-sub">{lowStockProducts} low-stock products</div>
+                  {dashboardInventoryLoading ? (
+                    <div className="dashboard-kpi-skeleton">
+                      <div className="skeleton skeleton-line" style={{ width: "48%", height: 24 }} />
+                      <div className="skeleton skeleton-line" style={{ width: "58%" }} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="dashboard-kpi-value">{weeklySpecialDevices.length.toLocaleString()}</div>
+                      <div className="dashboard-kpi-sub">{lowStockProducts} low-stock products</div>
+                    </>
+                  )}
                 </article>
                 {user.role === "admin" ? (
                   <article className="dashboard-kpi-card panel">
                     <div className="dashboard-kpi-label">Active Users</div>
-                    <div className="dashboard-kpi-value">{dashboardUserCount !== null ? dashboardUserCount.toLocaleString() : "-"}</div>
-                    <div className="dashboard-kpi-sub">Admin view</div>
+                    {dashboardUsersLoading ? (
+                      <div className="dashboard-kpi-skeleton">
+                        <div className="skeleton skeleton-line" style={{ width: "46%", height: 24 }} />
+                        <div className="skeleton skeleton-line" style={{ width: "52%" }} />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="dashboard-kpi-value">{dashboardUserCount !== null ? dashboardUserCount.toLocaleString() : "-"}</div>
+                        <div className="dashboard-kpi-sub">Admin view</div>
+                      </>
+                    )}
                   </article>
                 ) : null}
               </div>
@@ -4726,42 +4783,74 @@ export default function App() {
               <div className="dashboard-grid">
                 <article className="panel dashboard-card">
                   <h3 className="dashboard-card-title">Inventory by Category</h3>
-                  <div className="dashboard-bars">
-                    {categoryInventorySummary.length ? categoryInventorySummary.map((entry) => (
-                      <div key={`dash-category-${entry.category}`} className="dashboard-bar-row">
-                        <div className="dashboard-bar-head">
-                          <span>{entry.category}</span>
-                          <span>{entry.units.toLocaleString()} units</span>
+                  {dashboardInventoryLoading ? (
+                    <div className="dashboard-bars">
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <div key={`dash-cat-sk-${idx}`} className="dashboard-bar-row">
+                          <div className="skeleton skeleton-line" style={{ width: `${58 + (idx % 3) * 8}%` }} />
+                          <div className="skeleton dashboard-bar-track" />
+                          <div className="skeleton skeleton-line" style={{ width: "26%" }} />
                         </div>
-                        <div className="dashboard-bar-track">
-                          <div className="dashboard-bar-fill" style={{ width: `${Math.max(4, Math.round((entry.units / categoryInventoryMax) * 100))}%` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="dashboard-bars">
+                      {categoryInventorySummary.length ? categoryInventorySummary.map((entry) => (
+                        <div key={`dash-category-${entry.category}`} className="dashboard-bar-row">
+                          <div className="dashboard-bar-head">
+                            <span>{entry.category}</span>
+                            <span>{entry.units.toLocaleString()} units</span>
+                          </div>
+                          <div className="dashboard-bar-track">
+                            <div className="dashboard-bar-fill" style={{ width: `${Math.max(4, Math.round((entry.units / categoryInventoryMax) * 100))}%` }} />
+                          </div>
+                          <div className="small">{entry.products} products</div>
                         </div>
-                        <div className="small">{entry.products} products</div>
-                      </div>
-                    )) : <p className="small">No category data yet.</p>}
-                  </div>
+                      )) : <p className="small">No category data yet.</p>}
+                    </div>
+                  )}
                 </article>
 
                 <article className="panel dashboard-card">
                   <h3 className="dashboard-card-title">Request Status Mix</h3>
-                  <div className="dashboard-bars">
-                    {requestStatusSummary.length ? requestStatusSummary.map((entry) => (
-                      <div key={`dash-status-${entry.status}`} className="dashboard-bar-row">
-                        <div className="dashboard-bar-head">
-                          <span>{entry.status}</span>
-                          <span>{entry.count}</span>
+                  {dashboardRequestsLoading ? (
+                    <div className="dashboard-bars">
+                      {Array.from({ length: 4 }).map((_, idx) => (
+                        <div key={`dash-status-sk-${idx}`} className="dashboard-bar-row">
+                          <div className="skeleton skeleton-line" style={{ width: `${44 + (idx % 3) * 10}%` }} />
+                          <div className="skeleton dashboard-bar-track" />
                         </div>
-                        <div className="dashboard-bar-track">
-                          <div className="dashboard-bar-fill dashboard-bar-fill-alt" style={{ width: `${Math.max(6, Math.round((entry.count / requestStatusMax) * 100))}%` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="dashboard-bars">
+                      {requestStatusSummary.length ? requestStatusSummary.map((entry) => (
+                        <div key={`dash-status-${entry.status}`} className="dashboard-bar-row">
+                          <div className="dashboard-bar-head">
+                            <span>{entry.status}</span>
+                            <span>{entry.count}</span>
+                          </div>
+                          <div className="dashboard-bar-track">
+                            <div className="dashboard-bar-fill dashboard-bar-fill-alt" style={{ width: `${Math.max(6, Math.round((entry.count / requestStatusMax) * 100))}%` }} />
+                          </div>
                         </div>
-                      </div>
-                    )) : <p className="small">No requests found yet.</p>}
-                  </div>
+                      )) : <p className="small">No requests found yet.</p>}
+                    </div>
+                  )}
                 </article>
 
                 <article className="panel dashboard-card">
                   <h3 className="dashboard-card-title">Top Weekly Specials</h3>
-                  {topWeeklySpecials.length ? (
+                  {dashboardInventoryLoading ? (
+                    <ul className="dashboard-list">
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <li key={`dash-weekly-sk-${idx}`}>
+                          <div className="skeleton skeleton-line" style={{ width: `${56 + (idx % 2) * 10}%` }} />
+                          <div className="skeleton skeleton-line" style={{ width: "30%" }} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : topWeeklySpecials.length ? (
                     <ul className="dashboard-list">
                       {topWeeklySpecials.map((device) => (
                         <li key={`dash-weekly-${device.id}`}>
@@ -4777,7 +4866,16 @@ export default function App() {
 
                 <article className="panel dashboard-card">
                   <h3 className="dashboard-card-title">Recent Requests</h3>
-                  {recentRequests.length ? (
+                  {dashboardRequestsLoading ? (
+                    <ul className="dashboard-list">
+                      {Array.from({ length: 6 }).map((_, idx) => (
+                        <li key={`dash-request-sk-${idx}`}>
+                          <div className="skeleton skeleton-line" style={{ width: `${62 - (idx % 3) * 8}%` }} />
+                          <div className="skeleton skeleton-line" style={{ width: "34%" }} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : recentRequests.length ? (
                     <ul className="dashboard-list">
                       {recentRequests.map((requestItem) => (
                         <li key={`dash-request-${requestItem.id}`}>
