@@ -3479,6 +3479,19 @@ export default function App() {
       && /\b(request|requested items?|quote|order|cart)\b/.test(message);
   }
 
+  function polishCopilotOutgoingMessage(messageRaw) {
+    const base = String(messageRaw || "").replace(/\s+/g, " ").trim();
+    if (!base) return "";
+    let next = base;
+    if (/^[a-z]/.test(next)) {
+      next = `${next.charAt(0).toUpperCase()}${next.slice(1)}`;
+    }
+    if (/[.!?]$/.test(next)) return next;
+    const looksLikeQuestion = /^(who|what|when|where|why|how|is|are|am|do|does|did|can|could|would|should|will|won't|have|has|had|which)\b/i.test(next)
+      || /\b(can you|could you|would you|will you)\b/i.test(next);
+    return `${next}${looksLikeQuestion ? "?" : "."}`;
+  }
+
   function findLatestExpandableCopilotMessage(messages, visibleCountByMessage) {
     const recent = Array.isArray(messages) ? messages.slice(-10) : [];
     for (let idx = recent.length - 1; idx >= 0; idx -= 1) {
@@ -3507,7 +3520,7 @@ export default function App() {
       stopAiCopilotVoice();
     }
     const safeOverride = typeof messageOverride === "string" ? messageOverride : null;
-    const message = String((safeOverride ?? aiCopilotInput) || "").trim();
+    const message = polishCopilotOutgoingMessage(String((safeOverride ?? aiCopilotInput) || ""));
     if (!message) {
       setAiCopilotError("Enter a message first.");
       return;
