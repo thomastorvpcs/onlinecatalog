@@ -6236,6 +6236,22 @@ function ProductCard({ p, image, onOpen, onAdd, onOpenGrade }) {
   const unavailable = p.available < 1;
   const cardPrice = Math.round(Number(p.price || 0)).toLocaleString("en-US");
   const availableDisplay = p.availableDisplay || String(p.available || 0);
+  const maxSelectableQty = Math.max(1, Math.min(9999, Math.floor(Number(p.available || 1))));
+  const [cardQty, setCardQty] = useState("1");
+
+  useEffect(() => {
+    setCardQty("1");
+  }, [p.id]);
+
+  const normalizeCardQty = (value) => {
+    const asText = String(value ?? "").trim();
+    if (!asText) return 1;
+    const numeric = Math.floor(Number(asText));
+    if (!Number.isFinite(numeric) || numeric < 1) return 1;
+    return Math.min(maxSelectableQty, numeric);
+  };
+
+  const currentQty = normalizeCardQty(cardQty);
   return (
     <article className="card product-card">
       <div className="thumb product-thumb" onClick={() => onOpen(p)}><ImageWithFallback src={image} alt={p.model} /></div>
@@ -6254,7 +6270,39 @@ function ProductCard({ p, image, onOpen, onAdd, onOpenGrade }) {
         </button>
       </div>
       <div className={`avail ${unavailable ? "bad" : "ok"}`}>{unavailable ? "Currently not available" : `${availableDisplay} items available`}</div>
-      <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, 1, "")}>Add to request</button>
+      <div className="card-qty-row">
+        <label className="card-qty-label" htmlFor={`card-qty-${p.id}`}>Qty</label>
+        <div className="card-qty-control">
+          <button
+            type="button"
+            className="card-qty-btn"
+            disabled={unavailable || currentQty <= 1}
+            onClick={() => setCardQty(String(Math.max(1, currentQty - 1)))}
+          >
+            -
+          </button>
+          <input
+            id={`card-qty-${p.id}`}
+            className="card-qty-input"
+            type="number"
+            min="1"
+            max={maxSelectableQty}
+            value={cardQty}
+            onChange={(e) => setCardQty(e.target.value)}
+            onBlur={() => setCardQty(String(normalizeCardQty(cardQty)))}
+            disabled={unavailable}
+          />
+          <button
+            type="button"
+            className="card-qty-btn"
+            disabled={unavailable || currentQty >= maxSelectableQty}
+            onClick={() => setCardQty(String(Math.min(maxSelectableQty, currentQty + 1)))}
+          >
+            +
+          </button>
+        </div>
+      </div>
+      <button className="add-btn" disabled={unavailable} onClick={() => onAdd(p, currentQty, "")}>Add to request</button>
     </article>
   );
 }

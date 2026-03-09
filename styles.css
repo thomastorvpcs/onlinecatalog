@@ -1595,6 +1595,56 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   color: #6b7280;
 }
 
+.card-qty-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-qty-label {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.card-qty-control {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.card-qty-btn {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.card-qty-control .card-qty-btn:last-child {
+  border-right: none;
+  border-left: 1px solid var(--line);
+}
+
+.card-qty-input {
+  width: 54px;
+  min-width: 54px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 0;
+  text-align: center;
+  margin: 0;
+}
+
 .panel {
   background: #fff;
   border: 1px solid var(--line);
