@@ -2040,6 +2040,7 @@ export default function App() {
   const aiCopilotSpeechRef = useRef(null);
   const aiCopilotVoiceAutoSendTextRef = useRef("");
   const aiCopilotInputRef = useRef("");
+  const aiCopilotVoiceAutoSendTimerRef = useRef(null);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -3609,6 +3610,10 @@ export default function App() {
   };
 
   const stopAiCopilotVoice = useCallback(() => {
+    if (aiCopilotVoiceAutoSendTimerRef.current) {
+      clearTimeout(aiCopilotVoiceAutoSendTimerRef.current);
+      aiCopilotVoiceAutoSendTimerRef.current = null;
+    }
     const recognition = aiCopilotSpeechRef.current;
     if (!recognition) {
       setAiCopilotListening(false);
@@ -3665,11 +3670,17 @@ export default function App() {
     recognition.onend = () => {
       aiCopilotSpeechRef.current = null;
       setAiCopilotListening(false);
-      const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || aiCopilotInputRef.current || "").trim();
-      aiCopilotVoiceAutoSendTextRef.current = "";
-      if (autoMessage && !aiCopilotLoading) {
-        runAiCopilot(autoMessage);
+      if (aiCopilotVoiceAutoSendTimerRef.current) {
+        clearTimeout(aiCopilotVoiceAutoSendTimerRef.current);
       }
+      aiCopilotVoiceAutoSendTimerRef.current = setTimeout(() => {
+        const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || aiCopilotInputRef.current || "").trim();
+        aiCopilotVoiceAutoSendTextRef.current = "";
+        aiCopilotVoiceAutoSendTimerRef.current = null;
+        if (autoMessage && !aiCopilotLoading) {
+          runAiCopilot(autoMessage);
+        }
+      }, 260);
     };
     aiCopilotSpeechRef.current = recognition;
     setAiCopilotListening(true);
@@ -3683,6 +3694,10 @@ export default function App() {
   }, [aiCopilotInput, aiCopilotListening, stopAiCopilotVoice]);
 
   useEffect(() => () => {
+    if (aiCopilotVoiceAutoSendTimerRef.current) {
+      clearTimeout(aiCopilotVoiceAutoSendTimerRef.current);
+      aiCopilotVoiceAutoSendTimerRef.current = null;
+    }
     const recognition = aiCopilotSpeechRef.current;
     if (!recognition) return;
     try { recognition.stop(); } catch {}
