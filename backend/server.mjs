@@ -313,6 +313,7 @@ const CORS_ALLOWED_ORIGINS = (() => {
   return origins;
 })();
 const sessions = new Map();
+const USER_ROLE_VALUES = new Set(["admin", "buyer", "sales_rep"]);
 const auth0UserSyncState = {
   running: false,
   lastRunAt: 0,
@@ -622,7 +623,7 @@ async function ensurePostgresRuntimeSchema() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       company TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('admin', 'buyer')),
+      role TEXT NOT NULL CHECK (role IN ('admin', 'buyer', 'sales_rep')),
       password_hash TEXT NOT NULL,
       is_active BIGINT NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -636,6 +637,23 @@ async function ensurePostgresRuntimeSchema() {
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS registration_completed BIGINT NOT NULL DEFAULT 0`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS login_count BIGINT NOT NULL DEFAULT 0`);
   await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD COLUMN IF NOT EXISTS last_login_at TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ALTER COLUMN role TYPE TEXT`);
+  await pgClient.query(`
+    DO $$
+    DECLARE c RECORD;
+    BEGIN
+      FOR c IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = '${PG_SCHEMA}.users'::regclass
+          AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%role%'
+      LOOP
+        EXECUTE format('ALTER TABLE ${postgresTableRef("users")} DROP CONSTRAINT %I', c.conname);
+      END LOOP;
+    END$$;
+  `);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("users")} ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'buyer', 'sales_rep'))`);
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS ${postgresTableRef("refresh_tokens")} (
       id BIGSERIAL PRIMARY KEY,
@@ -738,6 +756,15 @@ async function ensurePostgresRuntimeSchema() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("company_sales_rep_assignments")} (
+      company TEXT PRIMARY KEY,
+      sales_rep_user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_company_sales_rep_user ON ${postgresTableRef("company_sales_rep_assignments")} (sales_rep_user_id)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON ${postgresTableRef("quote_request_lines")} (request_id)`);
@@ -2212,6 +2239,16 @@ function normalizePersonName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
 }
 
+function normalizeUserRole(value, fallback = "buyer") {
+  const role = String(value || "").trim().toLowerCase();
+  if (USER_ROLE_VALUES.has(role)) return role;
+  return USER_ROLE_VALUES.has(String(fallback || "").trim().toLowerCase()) ? String(fallback || "").trim().toLowerCase() : "buyer";
+}
+
+function isSalesRepRole(value) {
+  return normalizeUserRole(value) === "sales_rep";
+}
+
 async function getUserByEmailRuntime(email, includePassword = false) {
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
@@ -2261,7 +2298,7 @@ async function createUserRuntime({
 }) {
   const normalizedEmail = normalizeEmail(email);
   const safeCompany = String(company || "").trim();
-  const safeRole = String(role || "").trim() === "admin" ? "admin" : "buyer";
+  const safeRole = normalizeUserRole(role, "buyer");
   if (!normalizedEmail || !safeCompany || !passwordHash) throw new Error("Invalid user payload.");
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const result = await pgClient.query(`
@@ -2356,7 +2393,10 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
     pgSet.push(`is_active = $${pgParams.length + 1}`);
     pgParams.push(updates.isActive ? 1 : 0);
   }
-  if (typeof updates?.isAdmin === "boolean") {
+  if (typeof updates?.role === "string" && String(updates.role || "").trim()) {
+    pgSet.push(`role = $${pgParams.length + 1}`);
+    pgParams.push(normalizeUserRole(updates.role, "buyer"));
+  } else if (typeof updates?.isAdmin === "boolean") {
     pgSet.push(`role = $${pgParams.length + 1}`);
     pgParams.push(updates.isAdmin ? "admin" : "buyer");
   }
@@ -2372,6 +2412,164 @@ async function updateUserAdminFieldsRuntime(userId, updates) {
     pgParams
   );
   if (Number(result.rowCount || 0) < 1) throw new Error("User not found.");
+  if ((typeof updates?.role === "string" && normalizeUserRole(updates.role) !== "sales_rep")
+    || (typeof updates?.isAdmin === "boolean" && updates.isAdmin === false)) {
+    await pgClient.query(`DELETE FROM ${postgresTableRef("company_sales_rep_assignments")} WHERE sales_rep_user_id = $1`, [id]);
+  }
+}
+
+async function listSalesRepUsersRuntime() {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const result = await pgClient.query(`
+    SELECT id, email, first_name, last_name, company, role, is_active, registration_completed, login_count, last_login_at, created_at
+    FROM ${postgresTableRef("users")}
+    WHERE role = 'sales_rep'
+    ORDER BY first_name ASC NULLS LAST, last_name ASC NULLS LAST, email ASC
+  `);
+  return (result.rows || []).map(makePublicUser);
+}
+
+async function listCompanySalesRepAssignmentsRuntime() {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const result = await pgClient.query(`
+    WITH companies AS (
+      SELECT DISTINCT TRIM(company) AS company
+      FROM ${postgresTableRef("users")}
+      WHERE TRIM(company) <> ''
+      UNION
+      SELECT DISTINCT TRIM(company) AS company
+      FROM ${postgresTableRef("quote_requests")}
+      WHERE TRIM(company) <> ''
+    )
+    SELECT
+      c.company,
+      a.sales_rep_user_id,
+      u.email AS sales_rep_email,
+      u.first_name AS sales_rep_first_name,
+      u.last_name AS sales_rep_last_name,
+      u.is_active AS sales_rep_is_active,
+      a.updated_at
+    FROM companies c
+    LEFT JOIN ${postgresTableRef("company_sales_rep_assignments")} a ON a.company = c.company
+    LEFT JOIN ${postgresTableRef("users")} u ON u.id = a.sales_rep_user_id
+    ORDER BY c.company ASC
+  `);
+  return (result.rows || []).map((row) => ({
+    company: String(row.company || ""),
+    salesRepUserId: row.sales_rep_user_id ? Number(row.sales_rep_user_id) : null,
+    salesRepEmail: row.sales_rep_email || "",
+    salesRepFirstName: row.sales_rep_first_name || "",
+    salesRepLastName: row.sales_rep_last_name || "",
+    salesRepIsActive: Number(row.sales_rep_is_active || 0) === 1,
+    updatedAt: row.updated_at || null
+  }));
+}
+
+async function upsertCompanySalesRepAssignmentRuntime(companyRaw, salesRepUserIdRaw) {
+  const company = normalizeCompanyName(companyRaw);
+  if (!company) throw new Error("Company is required.");
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const salesRepUserId = Number(salesRepUserIdRaw);
+  if (!Number.isInteger(salesRepUserId) || salesRepUserId < 1) {
+    await pgClient.query(`DELETE FROM ${postgresTableRef("company_sales_rep_assignments")} WHERE company = $1`, [company]);
+    return { ok: true, company, salesRepUserId: null };
+  }
+  const repRes = await pgClient.query(
+    `SELECT id, role FROM ${postgresTableRef("users")} WHERE id = $1 LIMIT 1`,
+    [salesRepUserId]
+  );
+  const rep = repRes.rows?.[0];
+  if (!rep?.id || !isSalesRepRole(rep.role)) {
+    throw new Error("Selected user must be a sales rep.");
+  }
+  await pgClient.query(`
+    INSERT INTO ${postgresTableRef("company_sales_rep_assignments")} (company, sales_rep_user_id, updated_at)
+    VALUES ($1, $2, CURRENT_TIMESTAMP)
+    ON CONFLICT (company) DO UPDATE
+    SET sales_rep_user_id = EXCLUDED.sales_rep_user_id,
+        updated_at = CURRENT_TIMESTAMP
+  `, [company, salesRepUserId]);
+  return { ok: true, company, salesRepUserId };
+}
+
+async function getAssignedCompaniesForSalesRepRuntime(salesRepUserIdRaw) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const salesRepUserId = Number(salesRepUserIdRaw);
+  if (!Number.isInteger(salesRepUserId) || salesRepUserId < 1) return [];
+  const result = await pgClient.query(
+    `SELECT company FROM ${postgresTableRef("company_sales_rep_assignments")} WHERE sales_rep_user_id = $1 ORDER BY company ASC`,
+    [salesRepUserId]
+  );
+  return (result.rows || []).map((row) => String(row.company || "").trim()).filter(Boolean);
+}
+
+async function getSalesRepDashboardRuntime(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  if (!user || !isSalesRepRole(user.role)) throw new Error("Forbidden");
+  const assignedCompanies = await getAssignedCompaniesForSalesRepRuntime(user.id);
+  if (!assignedCompanies.length) {
+    return {
+      summary: {
+        assignedCompanies: 0,
+        totalRequests: 0,
+        openRequests: 0,
+        completedRequests: 0,
+        totalValue: 0,
+        avgRequestValue: 0
+      },
+      companyStats: [],
+      recentRequests: []
+    };
+  }
+  const reqRes = await pgClient.query(`
+    SELECT id, request_number, company, status, total_amount, created_at
+    FROM ${postgresTableRef("quote_requests")}
+    WHERE company = ANY($1::text[])
+    ORDER BY created_at DESC
+  `, [assignedCompanies]);
+  const rows = Array.isArray(reqRes.rows) ? reqRes.rows : [];
+  const totalRequests = rows.length;
+  const completedRequests = rows.filter((r) => String(r.status || "").toLowerCase() === "completed").length;
+  const openRequests = Math.max(0, totalRequests - completedRequests);
+  const totalValue = rows.reduce((sum, row) => sum + Number(row.total_amount || 0), 0);
+  const avgRequestValue = totalRequests ? (totalValue / totalRequests) : 0;
+  const companyStats = assignedCompanies.map((company) => {
+    const companyRows = rows.filter((r) => String(r.company || "") === company);
+    const lastRequestAt = companyRows[0]?.created_at || null;
+    const companyCompleted = companyRows.filter((r) => String(r.status || "").toLowerCase() === "completed").length;
+    const companyOpen = Math.max(0, companyRows.length - companyCompleted);
+    const companyValue = companyRows.reduce((sum, row) => sum + Number(row.total_amount || 0), 0);
+    return {
+      company,
+      requestCount: companyRows.length,
+      openRequests: companyOpen,
+      completedRequests: companyCompleted,
+      totalValue: companyValue,
+      lastRequestAt
+    };
+  }).sort((a, b) => b.totalValue - a.totalValue || b.requestCount - a.requestCount || a.company.localeCompare(b.company));
+
+  const recentRequests = rows.slice(0, 12).map((row) => ({
+    id: String(row.id || ""),
+    requestNumber: String(row.request_number || ""),
+    company: String(row.company || ""),
+    status: String(row.status || ""),
+    total: Number(row.total_amount || 0),
+    createdAt: row.created_at || null
+  }));
+
+  return {
+    summary: {
+      assignedCompanies: assignedCompanies.length,
+      totalRequests,
+      openRequests,
+      completedRequests,
+      totalValue,
+      avgRequestValue
+    },
+    companyStats,
+    recentRequests
+  };
 }
 
 async function deleteUserRuntime(userId) {
@@ -7045,11 +7243,36 @@ async function mapRequestRowPostgres(row) {
   return mapRequestRowWithLines(row, lines);
 }
 
+async function canUserAccessCompany(user, companyRaw) {
+  if (!user) return false;
+  const role = normalizeUserRole(user.role);
+  const company = normalizeCompanyName(companyRaw);
+  if (!company) return false;
+  if (role === "admin") return true;
+  if (role === "buyer") return normalizeCompanyName(user.company) === company;
+  if (role === "sales_rep") {
+    const assigned = await getAssignedCompaniesForSalesRepRuntime(user.id);
+    return assigned.includes(company);
+  }
+  return false;
+}
+
 async function getRequestsForUserPostgres(user) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
-  const result = user.role === "admin"
-    ? await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} ORDER BY created_at DESC`)
-    : await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = $1 ORDER BY created_at DESC`, [user.company]);
+  const role = normalizeUserRole(user?.role);
+  let result;
+  if (role === "admin") {
+    result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} ORDER BY created_at DESC`);
+  } else if (role === "sales_rep") {
+    const assigned = await getAssignedCompaniesForSalesRepRuntime(user.id);
+    if (!assigned.length) return [];
+    result = await pgClient.query(
+      `SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = ANY($1::text[]) ORDER BY created_at DESC`,
+      [assigned]
+    );
+  } else {
+    result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE company = $1 ORDER BY created_at DESC`, [user.company]);
+  }
   const rows = Array.isArray(result.rows) ? result.rows : [];
   const mapped = [];
   for (const row of rows) {
@@ -7063,7 +7286,7 @@ async function getRequestByIdForUserPostgres(user, requestId) {
   const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("quote_requests")} WHERE id = $1 LIMIT 1`, [requestId]);
   const row = result.rows?.[0];
   if (!row?.id) return null;
-  if (user.role !== "admin" && row.company !== user.company) return null;
+  if (!(await canUserAccessCompany(user, row.company))) return null;
   return mapRequestRowPostgres(row);
 }
 
@@ -7110,7 +7333,7 @@ async function ensurePostgresUserForRuntime(user) {
   if (byEmail.rows?.[0]?.id) return Number(byEmail.rows[0].id);
 
   const company = String(user.company || "Unknown").trim() || "Unknown";
-  const role = String(user.role || "buyer").trim() === "admin" ? "admin" : "buyer";
+  const role = normalizeUserRole(user.role, "buyer");
   const placeholderPasswordHash = hashPassword(randomBytes(24).toString("hex"));
   if (requestedId !== null) {
     try {
@@ -7137,6 +7360,9 @@ async function ensurePostgresUserForRuntime(user) {
 
 async function createRequestForUserPostgres(user, body) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  if (isSalesRepRole(user?.role)) {
+    throw new Error("Sales reps cannot create requests.");
+  }
   const lines = validateRequestLines(body.lines);
   const requestId = randomBytes(16).toString("hex");
   const createdByUserId = await ensurePostgresUserForRuntime(user);
@@ -7189,7 +7415,7 @@ async function createDummyEstimateForRequestPostgres(user, requestId) {
   if (!row?.id) {
     throw new Error("Request not found.");
   }
-  if (user.role !== "admin" && row.company !== user.company) {
+  if (!(await canUserAccessCompany(user, row.company))) {
     throw new Error("Forbidden");
   }
   if (row.netsuite_estimate_id) {
@@ -7223,7 +7449,7 @@ async function updateDummyEstimateStatusPostgres(user, requestId, nextStatus) {
   if (!row?.id) {
     throw new Error("Request not found.");
   }
-  if (user.role !== "admin" && row.company !== user.company) {
+  if (!(await canUserAccessCompany(user, row.company))) {
     throw new Error("Forbidden");
   }
   const status = normalizeRequestStatus(nextStatus, row.status || "New");
@@ -7754,6 +7980,32 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/admin/sales-reps/assignments") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const [salesReps, assignments] = await Promise.all([
+        listSalesRepUsersRuntime(),
+        listCompanySalesRepAssignmentsRuntime()
+      ]);
+      json(req, res, 200, { salesReps, assignments });
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/admin/sales-reps/assignments") {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+      try {
+        const result = await upsertCompanySalesRepAssignmentRuntime(body.company, body.salesRepUserId);
+        json(req, res, 200, result);
+      } catch (error) {
+        const message = String(error?.message || "Failed to update company assignment.");
+        const statusCode = message.includes("required") || message.includes("must be a sales rep") ? 400 : 500;
+        json(req, res, statusCode, { error: message });
+      }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/admin/cart-drafts") {
       const user = requireAdmin(req, res);
       if (!user) return;
@@ -7787,7 +8039,7 @@ const server = createServer(async (req, res) => {
       const firstName = normalizePersonName(body.firstName || "");
       const lastName = normalizePersonName(body.lastName || "");
       const isActive = body.isActive === true;
-      const isAdmin = body.isAdmin === true;
+      const role = normalizeUserRole(body.role, typeof body.isAdmin === "boolean" ? (body.isAdmin ? "admin" : "buyer") : "buyer");
 
       if (!email || !company) {
         json(req, res, 400, { error: "Email and company are required." });
@@ -7799,7 +8051,6 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const role = isAdmin ? "admin" : "buyer";
       const hash = hashPassword(randomBytes(24).toString("hex"));
       await createUserRuntime({
         email,
@@ -7825,6 +8076,7 @@ const server = createServer(async (req, res) => {
         await updateUserAdminFieldsRuntime(userId, {
           isActive: body.isActive,
           isAdmin: body.isAdmin,
+          role: body.role,
           registrationCompleted: body.registrationCompleted
         });
         json(req, res, 200, { ok: true });
@@ -7832,6 +8084,25 @@ const server = createServer(async (req, res) => {
         const message = String(error?.message || "Failed to update user.");
         const status = message === "No valid fields to update." ? 400 : (message === "User not found." ? 404 : 500);
         json(req, res, status, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/sales-rep/dashboard") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (!isSalesRepRole(user.role)) {
+        json(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+      try {
+        const payload = await getSalesRepDashboardRuntime(user);
+        json(req, res, 200, payload);
+      } catch (error) {
+        json(req, res, 500, { error: String(error?.message || "Failed to load sales dashboard.") });
       }
       return;
     }
@@ -8098,7 +8369,8 @@ const server = createServer(async (req, res) => {
           || message.includes("grade is required.")
           || message.includes("quantity must be an integer >= 1.")
           || message.includes("offerPrice must be a number >= 0.");
-        json(req, res, isValidation ? 400 : 500, { error: message });
+        const statusCode = message.includes("Sales reps cannot create requests.") ? 403 : (isValidation ? 400 : 500);
+        json(req, res, statusCode, { error: message });
       }
       return;
     }

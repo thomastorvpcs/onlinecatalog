@@ -75,6 +75,19 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeUserRole(value) {
+  const role = String(value || "").trim().toLowerCase();
+  if (role === "admin" || role === "buyer" || role === "sales_rep") return role;
+  return "buyer";
+}
+
+function userRoleLabel(value) {
+  const role = normalizeUserRole(value);
+  if (role === "admin") return "Admin";
+  if (role === "sales_rep") return "Sales Rep";
+  return "Buyer";
+}
+
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -278,6 +291,7 @@ const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostnam
 const DEMO_USERS_KEY = "pcs.demo.users";
 const DEMO_SESSIONS_KEY = "pcs.demo.sessions";
 const DEMO_REFRESH_TOKENS_KEY = "pcs.demo.refreshTokens";
+const DEMO_SALES_REP_ASSIGNMENTS_KEY = "pcs.demo.salesRepAssignments";
 const DEMO_ACCESS_TTL_MS = 30 * 60 * 1000;
 const DEMO_REFRESH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const SESSION_WARNING_MS = 5 * 60 * 1000;
@@ -541,6 +555,16 @@ function getDemoRefreshTokens() {
 
 function setDemoRefreshTokens(tokens) {
   writeJson(localStorage, DEMO_REFRESH_TOKENS_KEY, tokens);
+}
+
+function getDemoSalesRepAssignments() {
+  const raw = readJson(localStorage, DEMO_SALES_REP_ASSIGNMENTS_KEY, {});
+  return raw && typeof raw === "object" ? raw : {};
+}
+
+function setDemoSalesRepAssignments(assignments) {
+  const safe = assignments && typeof assignments === "object" ? assignments : {};
+  writeJson(localStorage, DEMO_SALES_REP_ASSIGNMENTS_KEY, safe);
 }
 
 function demoRequestsKey(company) {
@@ -1559,7 +1583,7 @@ async function demoApiRequest(path, options = {}) {
     const email = String(body.email || "").trim().toLowerCase();
     const company = String(body.company || "").trim();
     const isActive = body.isActive === true;
-    const isAdmin = body.isAdmin === true;
+    const role = normalizeUserRole(body.role || (body.isAdmin === true ? "admin" : "buyer"));
     if (!email || !company) throwApiError("Email and company are required.", 400);
     if (users.some((u) => u.email === email)) throwApiError("User already exists.", 409);
     const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
@@ -1567,7 +1591,7 @@ async function demoApiRequest(path, options = {}) {
       id: nextId,
       email,
       company,
-      role: isAdmin ? "admin" : "buyer",
+      role,
       password: crypto.randomUUID(),
       isActive,
       loginCount: 0,
@@ -1578,6 +1602,98 @@ async function demoApiRequest(path, options = {}) {
     });
     setDemoUsers(users);
     return { ok: true };
+  }
+
+  if (method === "GET" && pathname === "/api/admin/sales-reps/assignments") {
+    requireAdmin();
+    const assignmentsMap = getDemoSalesRepAssignments();
+    const salesReps = users
+      .filter((u) => normalizeUserRole(u.role) === "sales_rep")
+      .map((u) => makeDemoPublicUser(u));
+    const companies = [...new Set(users.map((u) => String(u.company || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const assignments = companies.map((company) => {
+      const salesRepUserId = Number(assignmentsMap[company] || 0) || null;
+      const rep = salesReps.find((u) => Number(u.id) === Number(salesRepUserId)) || null;
+      return {
+        company,
+        salesRepUserId,
+        salesRepEmail: rep?.email || "",
+        salesRepFirstName: rep?.firstName || "",
+        salesRepLastName: rep?.lastName || "",
+        salesRepIsActive: rep?.isActive === true,
+        updatedAt: new Date().toISOString()
+      };
+    });
+    return { salesReps, assignments };
+  }
+
+  if (method === "PUT" && pathname === "/api/admin/sales-reps/assignments") {
+    requireAdmin();
+    const company = String(body.company || "").trim();
+    if (!company) throwApiError("Company is required.", 400);
+    const assignmentsMap = getDemoSalesRepAssignments();
+    const salesRepUserId = Number(body.salesRepUserId || 0);
+    if (!Number.isInteger(salesRepUserId) || salesRepUserId < 1) {
+      delete assignmentsMap[company];
+      setDemoSalesRepAssignments(assignmentsMap);
+      return { ok: true, company, salesRepUserId: null };
+    }
+    const rep = users.find((u) => Number(u.id) === salesRepUserId);
+    if (!rep || normalizeUserRole(rep.role) !== "sales_rep") {
+      throwApiError("Selected user must be a sales rep.", 400);
+    }
+    assignmentsMap[company] = salesRepUserId;
+    setDemoSalesRepAssignments(assignmentsMap);
+    return { ok: true, company, salesRepUserId };
+  }
+
+  if (method === "GET" && pathname === "/api/sales-rep/dashboard") {
+    const auth = requireAuth();
+    if (normalizeUserRole(auth.role) !== "sales_rep") throwApiError("Forbidden", 403);
+    const assignmentsMap = getDemoSalesRepAssignments();
+    const assignedCompanies = Object.entries(assignmentsMap)
+      .filter(([, userId]) => Number(userId || 0) === Number(auth.id))
+      .map(([company]) => String(company || "").trim())
+      .filter(Boolean);
+    const requests = assignedCompanies.flatMap((company) => getDemoRequests(company).map((req) => ({ ...req, company })));
+    const completedRequests = requests.filter((r) => String(r.status || "").toLowerCase() === "completed").length;
+    const totalValue = requests.reduce((sum, r) => sum + Number(r.total || 0), 0);
+    const companyStats = assignedCompanies.map((company) => {
+      const rows = requests.filter((r) => String(r.company || "") === company);
+      const completed = rows.filter((r) => String(r.status || "").toLowerCase() === "completed").length;
+      return {
+        company,
+        requestCount: rows.length,
+        openRequests: Math.max(0, rows.length - completed),
+        completedRequests: completed,
+        totalValue: rows.reduce((sum, r) => sum + Number(r.total || 0), 0),
+        lastRequestAt: rows.length ? rows.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0].createdAt : null
+      };
+    }).sort((a, b) => b.totalValue - a.totalValue);
+    const recentRequests = requests
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 12)
+      .map((r) => ({
+        id: r.id,
+        requestNumber: r.requestNumber,
+        company: r.company,
+        status: r.status,
+        total: Number(r.total || 0),
+        createdAt: r.createdAt
+      }));
+    return {
+      summary: {
+        assignedCompanies: assignedCompanies.length,
+        totalRequests: requests.length,
+        openRequests: Math.max(0, requests.length - completedRequests),
+        completedRequests,
+        totalValue,
+        avgRequestValue: requests.length ? (totalValue / requests.length) : 0
+      },
+      companyStats,
+      recentRequests
+    };
   }
 
   const demoSeedHistoryMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/seed-history$/);
@@ -1703,7 +1819,8 @@ async function demoApiRequest(path, options = {}) {
     const target = users.find((u) => u.id === targetId);
     if (!target) throwApiError("User not found.", 404);
     if (typeof body.isActive === "boolean") target.isActive = body.isActive;
-    if (typeof body.isAdmin === "boolean") target.role = body.isAdmin ? "admin" : "buyer";
+    if (typeof body.role === "string" && String(body.role || "").trim()) target.role = normalizeUserRole(body.role);
+    else if (typeof body.isAdmin === "boolean") target.role = body.isAdmin ? "admin" : "buyer";
     if (target.id === actingUser.id && target.role !== "admin") throwApiError("You cannot remove your own admin role.", 400);
     setDemoUsers(users);
     return { ok: true };
@@ -1907,7 +2024,7 @@ export default function App() {
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserCompany, setNewUserCompany] = useState("");
   const [newUserIsActive, setNewUserIsActive] = useState(false);
-  const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
+  const [newUserRole, setNewUserRole] = useState("buyer");
   const [userActionLoading, setUserActionLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
@@ -1962,6 +2079,16 @@ export default function App() {
   const [adminUserCartActivityLoading, setAdminUserCartActivityLoading] = useState(false);
   const [adminUserCartActivityError, setAdminUserCartActivityError] = useState("");
   const [adminUserCartActivity, setAdminUserCartActivity] = useState([]);
+  const [salesRepAssignmentsLoading, setSalesRepAssignmentsLoading] = useState(false);
+  const [salesRepAssignmentsError, setSalesRepAssignmentsError] = useState("");
+  const [salesRepAssignments, setSalesRepAssignments] = useState([]);
+  const [salesRepUsers, setSalesRepUsers] = useState([]);
+  const [selectedAssignmentCompany, setSelectedAssignmentCompany] = useState("");
+  const [selectedSalesRepUserId, setSelectedSalesRepUserId] = useState("");
+  const [salesRepAssignmentNotice, setSalesRepAssignmentNotice] = useState("");
+  const [salesRepDashboardLoading, setSalesRepDashboardLoading] = useState(false);
+  const [salesRepDashboardError, setSalesRepDashboardError] = useState("");
+  const [salesRepDashboard, setSalesRepDashboard] = useState(null);
   const [cartNotice, setCartNotice] = useState("");
   const skipInitialCategoryResetRef = useRef(true);
   const cartNoticeTimerRef = useRef(null);
@@ -2129,6 +2256,14 @@ export default function App() {
     setAdminAiAnomalies([]);
     setAdminAiInsights(null);
     setAdminAiError("");
+    setSalesRepAssignments([]);
+    setSalesRepUsers([]);
+    setSelectedAssignmentCompany("");
+    setSelectedSalesRepUserId("");
+    setSalesRepAssignmentsError("");
+    setSalesRepAssignmentNotice("");
+    setSalesRepDashboard(null);
+    setSalesRepDashboardError("");
     localStorage.removeItem(UI_VIEW_STATE_KEY);
   };
 
@@ -2994,7 +3129,13 @@ export default function App() {
   useEffect(() => {
     if (route !== "users" || user?.role !== "admin" || !authToken) return;
     loadAdminCartDrafts();
+    loadSalesRepAssignments();
   }, [route, user, authToken]);
+
+  useEffect(() => {
+    if (route !== "dashboard" || normalizeUserRole(user?.role) !== "sales_rep" || !authToken) return;
+    loadSalesRepDashboard();
+  }, [route, authToken, user]);
 
   const refreshUsers = async () => {
     if (!user || user.role !== "admin") return;
@@ -3034,6 +3175,77 @@ export default function App() {
     }
   };
 
+  async function loadSalesRepAssignments() {
+    if (!user || user.role !== "admin" || !authToken) return;
+    setSalesRepAssignmentsLoading(true);
+    setSalesRepAssignmentsError("");
+    try {
+      const payload = await apiRequest("/api/admin/sales-reps/assignments", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      const assignments = Array.isArray(payload?.assignments) ? payload.assignments : [];
+      const reps = Array.isArray(payload?.salesReps) ? payload.salesReps : [];
+      setSalesRepAssignments(assignments);
+      setSalesRepUsers(reps);
+      if (!selectedAssignmentCompany && assignments.length) {
+        setSelectedAssignmentCompany(String(assignments[0].company || ""));
+      }
+    } catch (error) {
+      setSalesRepAssignmentsError(error.message || "Failed to load sales rep assignments.");
+    } finally {
+      setSalesRepAssignmentsLoading(false);
+    }
+  }
+
+  async function saveSalesRepAssignment() {
+    if (!selectedAssignmentCompany) return;
+    try {
+      setSalesRepAssignmentsLoading(true);
+      setSalesRepAssignmentsError("");
+      setSalesRepAssignmentNotice("");
+      await apiRequest("/api/admin/sales-reps/assignments", {
+        method: "PUT",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: {
+          company: selectedAssignmentCompany,
+          salesRepUserId: selectedSalesRepUserId ? Number(selectedSalesRepUserId) : null
+        }
+      });
+      setSalesRepAssignmentNotice(`Assignment updated for ${selectedAssignmentCompany}.`);
+      await loadSalesRepAssignments();
+    } catch (error) {
+      setSalesRepAssignmentsError(error.message || "Failed to save assignment.");
+    } finally {
+      setSalesRepAssignmentsLoading(false);
+    }
+  }
+
+  async function loadSalesRepDashboard() {
+    if (!authToken || !user || normalizeUserRole(user.role) !== "sales_rep") return;
+    setSalesRepDashboardLoading(true);
+    setSalesRepDashboardError("");
+    try {
+      const payload = await apiRequest("/api/sales-rep/dashboard", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setSalesRepDashboard(payload || null);
+    } catch (error) {
+      setSalesRepDashboardError(error.message || "Failed to load sales dashboard.");
+      setSalesRepDashboard(null);
+    } finally {
+      setSalesRepDashboardLoading(false);
+    }
+  }
+
   const loadAdminUserCartActivity = async (targetUserId = historySeedUserId) => {
     if (!user || user.role !== "admin" || !authToken || !targetUserId) return;
     setAdminUserCartActivityLoading(true);
@@ -3070,6 +3282,15 @@ export default function App() {
       setHistorySeedUserId(String(users[0].id));
     }
   }, [users, historySeedUserId]);
+
+  useEffect(() => {
+    if (!selectedAssignmentCompany) {
+      setSelectedSalesRepUserId("");
+      return;
+    }
+    const match = salesRepAssignments.find((row) => String(row.company || "") === String(selectedAssignmentCompany));
+    setSelectedSalesRepUserId(match?.salesRepUserId ? String(match.salesRepUserId) : "");
+  }, [selectedAssignmentCompany, salesRepAssignments]);
 
   useEffect(() => {
     if (route !== "users" || user?.role !== "admin" || !authToken || !historySeedUserId) return;
@@ -4101,14 +4322,14 @@ export default function App() {
         body: {
           email: newUserEmail.trim(),
           company: newUserCompany.trim(),
+          role: newUserRole,
           isActive: newUserIsActive,
-          isAdmin: newUserIsAdmin
         }
       });
       setNewUserEmail("");
       setNewUserCompany("");
       setNewUserIsActive(false);
-      setNewUserIsAdmin(false);
+      setNewUserRole("buyer");
       await refreshUsers();
     } catch (error) {
       setUsersError(error.message);
@@ -4576,6 +4797,12 @@ export default function App() {
   const dashboardConversionRate = requests.length
     ? Math.round((completedRequestsCount / requests.length) * 100)
     : 0;
+  const salesSummary = salesRepDashboard?.summary || {};
+  const salesCompanyStats = Array.isArray(salesRepDashboard?.companyStats) ? salesRepDashboard.companyStats : [];
+  const salesRecentRequests = Array.isArray(salesRepDashboard?.recentRequests) ? salesRepDashboard.recentRequests : [];
+  const salesDashboardConversionRate = Number(salesSummary.totalRequests || 0) > 0
+    ? Math.round((Number(salesSummary.completedRequests || 0) / Number(salesSummary.totalRequests || 1)) * 100)
+    : 0;
   const dashboardInventoryLoading = productsLoading;
   const dashboardRequestsLoading = requestsLoading;
   const dashboardUsersLoading = user.role === "admin" && usersLoading;
@@ -4635,6 +4862,7 @@ export default function App() {
   const sessionCountdown = showSessionWarning
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
+  const canManageRequests = normalizeUserRole(user?.role) !== "sales_rep";
   const shortcutEntries = [...new Set([...categories, ALL_CATEGORIES_KEY])].flatMap((categoryName) =>
     (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
       categoryName,
@@ -4689,6 +4917,103 @@ export default function App() {
         <main className="view">
           {route === "dashboard" && (
             <section className="dashboard-wrap">
+              {normalizeUserRole(user.role) === "sales_rep" ? (
+                <>
+                  <div className="dashboard-head panel">
+                    <div>
+                      <h1 className="page-title" style={{ marginBottom: 6 }}>Sales Rep Dashboard</h1>
+                      <p className="small" style={{ margin: 0 }}>Assigned customer performance and pipeline overview.</p>
+                    </div>
+                    <div className="dashboard-head-actions">
+                      <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={loadSalesRepDashboard} disabled={salesRepDashboardLoading}>
+                        {salesRepDashboardLoading ? "Refreshing..." : "Refresh"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {salesRepDashboardError ? <section className="panel"><p className="small" style={{ color: "#b91c1c", margin: 0 }}>{salesRepDashboardError}</p></section> : null}
+
+                  <div className="dashboard-kpi-grid">
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Assigned Companies</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "44%", height: 24 }} /> : <div className="dashboard-kpi-value">{Number(salesSummary.assignedCompanies || 0)}</div>}
+                    </article>
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Total Requests</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "50%", height: 24 }} /> : <div className="dashboard-kpi-value">{Number(salesSummary.totalRequests || 0)}</div>}
+                    </article>
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Open Requests</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "48%", height: 24 }} /> : <div className="dashboard-kpi-value">{Number(salesSummary.openRequests || 0)}</div>}
+                    </article>
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Completed</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "46%", height: 24 }} /> : <div className="dashboard-kpi-value">{Number(salesSummary.completedRequests || 0)}</div>}
+                    </article>
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Portfolio Value</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "66%", height: 24 }} /> : <div className="dashboard-kpi-value">{formatUsd(Number(salesSummary.totalValue || 0))}</div>}
+                    </article>
+                    <article className="dashboard-kpi-card panel">
+                      <div className="dashboard-kpi-label">Completion Rate</div>
+                      {salesRepDashboardLoading ? <div className="skeleton skeleton-line" style={{ width: "42%", height: 24 }} /> : <div className="dashboard-kpi-value">{salesDashboardConversionRate}%</div>}
+                    </article>
+                  </div>
+
+                  <div className="dashboard-grid">
+                    <article className="panel dashboard-card">
+                      <h3 className="dashboard-card-title">Assigned Companies</h3>
+                      {salesRepDashboardLoading ? (
+                        <div className="dashboard-bars">
+                          {Array.from({ length: 5 }).map((_, idx) => (
+                            <div key={`sales-company-sk-${idx}`} className="dashboard-bar-row">
+                              <div className="skeleton skeleton-line" style={{ width: `${58 + (idx % 2) * 10}%` }} />
+                              <div className="skeleton dashboard-bar-track" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : salesCompanyStats.length ? (
+                        <ul className="dashboard-list">
+                          {salesCompanyStats.slice(0, 12).map((row) => (
+                            <li key={`sales-company-${row.company}`}>
+                              <span>{row.company} ({Number(row.requestCount || 0)} req)</span>
+                              <span>{formatUsd(Number(row.totalValue || 0))}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="small">No assigned companies yet. Ask an admin to assign customers to your profile.</p>
+                      )}
+                    </article>
+
+                    <article className="panel dashboard-card">
+                      <h3 className="dashboard-card-title">Recent Requests</h3>
+                      {salesRepDashboardLoading ? (
+                        <ul className="dashboard-list">
+                          {Array.from({ length: 6 }).map((_, idx) => (
+                            <li key={`sales-recent-sk-${idx}`}>
+                              <div className="skeleton skeleton-line" style={{ width: `${60 - (idx % 3) * 8}%` }} />
+                              <div className="skeleton skeleton-line" style={{ width: "30%" }} />
+                            </li>
+                          ))}
+                        </ul>
+                      ) : salesRecentRequests.length ? (
+                        <ul className="dashboard-list">
+                          {salesRecentRequests.map((requestItem) => (
+                            <li key={`sales-recent-${requestItem.id}`}>
+                              <span>{requestItem.requestNumber} | {requestItem.company}</span>
+                              <span>{new Date(requestItem.createdAt).toLocaleDateString()} | {formatUsd(requestItem.total)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="small">No requests yet for assigned companies.</p>
+                      )}
+                    </article>
+                  </div>
+                </>
+              ) : (
+              <>
               <div className="dashboard-head panel">
                 <div>
                   <h1 className="page-title" style={{ marginBottom: 6 }}>Welcome back{user.firstName ? `, ${user.firstName}` : ""}</h1>
@@ -4902,6 +5227,8 @@ export default function App() {
                   )}
                 </article>
               </div>
+              </>
+              )}
             </section>
           )}
 
@@ -4915,7 +5242,7 @@ export default function App() {
             <>
               <div className="products-home-top">
                 <h1 className="page-title" style={{ margin: 0 }}>Products</h1>
-                <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
+                {canManageRequests ? <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button> : null}
               </div>
               {shortcutEntries.length ? (
                 <section className="panel shortcuts-panel">
@@ -5114,7 +5441,7 @@ export default function App() {
                 <section className="products-main">
                   <div className="products-top">
                     <div><p className="small"><span className="crumb-link" onClick={() => setProductsView("home")}>Home</span> &gt; {selectedCategoryLabel}</p><h2 style={{ margin: "4px 0 0", fontSize: "2.6rem", fontWeight: 400 }}>{selectedCategoryLabel}</h2></div>
-                    <div className="right-actions"><input className="catalog-search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" /><button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button></div>
+                    <div className="right-actions"><input className="catalog-search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by model" />{canManageRequests ? <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button> : null}</div>
                   </div>
                   <div className="small" style={{ marginBottom: 8 }}>
                     Showing {categoryTotal ? categoryStartIndex + 1 : 0}-{Math.min(categoryTotal, categoryStartIndex + CATEGORY_PAGE_SIZE)} of {categoryTotal} devices
@@ -5191,7 +5518,7 @@ export default function App() {
                     </div>
                     <div className="right-actions">
                       <input className="catalog-search-input" value={weeklySearch} onChange={(e) => setWeeklySearch(e.target.value)} placeholder="Search by model" />
-                      <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button>
+                      {canManageRequests ? <button className="request-btn" onClick={() => setCartOpen(true)}>Requested items ({cart.length})</button> : null}
                     </div>
                   </div>
                   <div className="small" style={{ marginBottom: 8 }}>
@@ -5540,14 +5867,81 @@ export default function App() {
                   <p className="small" style={{ marginTop: 8 }}>No tracked carts yet.</p>
                 )}
               </div>
+              <div className="admin-user-form" style={{ marginBottom: 10 }}>
+                <h3 style={{ margin: "0 0 8px" }}>Company Sales Rep Assignment</h3>
+                <p className="small" style={{ marginTop: 0 }}>
+                  Link each customer company to one sales rep. Sales reps will only see assigned companies in their dashboard.
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <select
+                    value={selectedAssignmentCompany}
+                    onChange={(e) => setSelectedAssignmentCompany(e.target.value)}
+                    disabled={salesRepAssignmentsLoading || !salesRepAssignments.length}
+                    style={{ minWidth: 260 }}
+                  >
+                    {salesRepAssignments.map((row) => (
+                      <option key={`assignment-company-${row.company}`} value={row.company}>
+                        {row.company}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedSalesRepUserId}
+                    onChange={(e) => setSelectedSalesRepUserId(e.target.value)}
+                    disabled={salesRepAssignmentsLoading}
+                    style={{ minWidth: 240 }}
+                  >
+                    <option value="">Unassigned</option>
+                    {salesRepUsers.map((rep) => (
+                      <option key={`assignment-rep-${rep.id}`} value={String(rep.id)}>
+                        {rep.fullName || rep.email} ({rep.email})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    style={{ width: "auto" }}
+                    onClick={saveSalesRepAssignment}
+                    disabled={salesRepAssignmentsLoading || !selectedAssignmentCompany}
+                  >
+                    {salesRepAssignmentsLoading ? "Saving..." : "Save Assignment"}
+                  </button>
+                </div>
+                {salesRepAssignmentsError ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>{salesRepAssignmentsError}</p> : null}
+                {salesRepAssignmentNotice ? <p className="small" style={{ marginTop: 8, color: "#166534" }}>{salesRepAssignmentNotice}</p> : null}
+                {salesRepAssignments.length ? (
+                  <div style={{ overflowX: "auto", marginTop: 8 }}>
+                    <table className="table">
+                      <thead><tr><th>Company</th><th>Sales Rep</th><th>Status</th></tr></thead>
+                      <tbody>
+                        {salesRepAssignments.map((row) => (
+                          <tr key={`assignment-row-${row.company}`}>
+                            <td>{row.company}</td>
+                            <td>{row.salesRepEmail ? `${row.salesRepFirstName || ""} ${row.salesRepLastName || ""}`.trim() || row.salesRepEmail : "-"}</td>
+                            <td>{row.salesRepEmail ? (row.salesRepIsActive ? "Assigned" : "Assigned (inactive user)") : "Unassigned"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="small" style={{ marginTop: 8 }}>
+                    {salesRepAssignmentsLoading ? "Loading assignments..." : "No companies available for assignment yet."}
+                  </p>
+                )}
+              </div>
               <form onSubmit={createUserAsAdmin} className="admin-user-form">
                 <div className="admin-user-form-grid">
                   <input type="email" placeholder="Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
                   <input type="text" placeholder="Company" value={newUserCompany} onChange={(e) => setNewUserCompany(e.target.value)} required />
+                  <select value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)}>
+                    <option value="buyer">Buyer</option>
+                    <option value="sales_rep">Sales Rep</option>
+                    <option value="admin">Admin</option>
+                  </select>
                 </div>
                 <div className="admin-user-form-checks">
                   <label><input type="checkbox" checked={newUserIsActive} onChange={(e) => setNewUserIsActive(e.target.checked)} /> Active</label>
-                  <label><input type="checkbox" checked={newUserIsAdmin} onChange={(e) => setNewUserIsAdmin(e.target.checked)} /> Admin rights</label>
                 </div>
                 <button type="submit" style={{ width: "auto" }} disabled={userActionLoading}>Create user</button>
               </form>
@@ -5555,16 +5949,26 @@ export default function App() {
                 <UsersTableSkeleton />
               ) : (
                 <table className="table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Registered</th><th>Active</th><th>Admin</th><th>Logins</th><th>Created</th><th /></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Role</th><th>Registered</th><th>Active</th><th>Logins</th><th>Created</th><th /></tr></thead>
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id}>
                         <td>{u.fullName || "-"}</td>
                         <td>{u.email}</td>
                         <td>{u.company}</td>
+                        <td>
+                          <select
+                            value={normalizeUserRole(u.role)}
+                            disabled={userActionLoading}
+                            onChange={(e) => toggleUserField(u, "role", e.target.value)}
+                          >
+                            <option value="buyer">Buyer</option>
+                            <option value="sales_rep">Sales Rep</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </td>
                         <td><input type="checkbox" checked={u.registrationCompleted === true} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "registrationCompleted", e.target.checked)} /></td>
                         <td><input type="checkbox" checked={u.isActive} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isActive", e.target.checked)} /></td>
-                        <td><input type="checkbox" checked={u.role === "admin"} disabled={userActionLoading} onChange={(e) => toggleUserField(u, "isAdmin", e.target.checked)} /></td>
                         <td>{Math.max(0, Number(u.loginCount || 0))}</td>
                         <td>{new Date(u.createdAt).toLocaleString()}</td>
                         <td>{u.email === user.email ? <span className="small">Current</span> : <button className="delete-btn" style={{ width: "auto" }} disabled={userActionLoading} onClick={() => deleteUser(u)}>Delete</button>}</td>
@@ -5580,7 +5984,7 @@ export default function App() {
         </main>
       </div>
 
-      {route === "products" ? (
+      {route === "products" && canManageRequests ? (
         <button className="request-btn request-btn-floating" onClick={() => setCartOpen(true)}>
           Requested items ({cart.length})
         </button>
@@ -6048,7 +6452,7 @@ export default function App() {
                 <p className="small" style={{ marginTop: 6 }}>Inventory source: {String(aiRequestReview.inventorySource).toUpperCase()}</p>
               ) : null}
             </div>
-            <div className="cart-footer"><div className="cart-grand-total"><div className="cart-grand-total-label">Grand Total</div><div className="cart-grand-total-value">{formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{requestSubmitLoading ? "Submitting..." : "Submit request"}</button></div></div>
+            <div className="cart-footer"><div className="cart-grand-total"><div className="cart-grand-total-label">Grand Total</div><div className="cart-grand-total-value">{formatUsd(cart.reduce((s, i) => s + Number(i.quantity || 0) * Number(i.offerPrice || 0), 0))}</div><div className="small">{cart.reduce((s, i) => s + Number(i.quantity || 0), 0)} units</div></div><div className="cart-actions"><button className="delete-btn" onClick={() => updateCart([])} disabled={requestSubmitLoading}>Remove all</button><button className="submit-btn" disabled={!canManageRequests || requestSubmitLoading || !selectedRequestLocation || cartHasFulfillmentIssues || !cart.length || !cart.every((i) => i.offerPrice !== "" && Number(i.quantity) >= 1 && Number(i.offerPrice) >= 0)} onClick={submitRequest}>{!canManageRequests ? "Sales rep view only" : (requestSubmitLoading ? "Submitting..." : "Submit request")}</button></div></div>
           </article>
         </div>
       )}
