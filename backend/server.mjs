@@ -1,6 +1,6 @@
 ﻿import { createServer } from "node:http";
 import https from "node:https";
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1005,21 +1005,10 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function isPasswordValid(password) {
-  return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
-}
-
 function hashPassword(password) {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(password, salt, 64).toString("hex");
   return `${salt}:${hash}`;
-}
-
-function verifyPassword(password, stored) {
-  if (!stored || !stored.includes(":")) return false;
-  const [salt, hash] = stored.split(":");
-  const calculated = scryptSync(password, salt, 64).toString("hex");
-  return timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(calculated, "hex"));
 }
 
 function ensureDefaultUsers() {
@@ -7797,16 +7786,11 @@ const server = createServer(async (req, res) => {
       const company = String(body.company || "").trim();
       const firstName = normalizePersonName(body.firstName || "");
       const lastName = normalizePersonName(body.lastName || "");
-      const password = String(body.password || "");
       const isActive = body.isActive === true;
       const isAdmin = body.isAdmin === true;
 
-      if (!email || !company || !password) {
-        json(req, res, 400, { error: "Email, company and password are required." });
-        return;
-      }
-      if (!isPasswordValid(password)) {
-        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
+      if (!email || !company) {
+        json(req, res, 400, { error: "Email and company are required." });
         return;
       }
       const existing = await getUserByEmailRuntime(email, false);
@@ -7816,7 +7800,7 @@ const server = createServer(async (req, res) => {
       }
 
       const role = isAdmin ? "admin" : "buyer";
-      const hash = hashPassword(password);
+      const hash = hashPassword(randomBytes(24).toString("hex"));
       await createUserRuntime({
         email,
         company,

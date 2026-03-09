@@ -464,10 +464,6 @@ function buildGradeDefinitionReply(messageRaw) {
   return "I can explain your grading codes (C2, C4, C5, C6, COB, CPO, CRC, CRD, CRX, D2, D3, D4, MD A, MD B, TBG, TBG FIN, TBG2). Click any grade in the UI for the full guide.";
 }
 
-function passwordMeetsPolicy(password) {
-  return /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password || "");
-}
-
 function initDemoState() {
   let users = readJson(localStorage, DEMO_USERS_KEY, null);
   if (!users) {
@@ -1560,12 +1556,10 @@ async function demoApiRequest(path, options = {}) {
   if (method === "POST" && pathname === "/api/users") {
     requireAdmin();
     const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
     const company = String(body.company || "").trim();
     const isActive = body.isActive === true;
     const isAdmin = body.isAdmin === true;
-    if (!email || !password || !company) throwApiError("Email, company and password are required.", 400);
-    if (!passwordMeetsPolicy(password)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
+    if (!email || !company) throwApiError("Email and company are required.", 400);
     if (users.some((u) => u.email === email)) throwApiError("User already exists.", 409);
     const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
     users.push({
@@ -1573,7 +1567,7 @@ async function demoApiRequest(path, options = {}) {
       email,
       company,
       role: isAdmin ? "admin" : "buyer",
-      password,
+      password: crypto.randomUUID(),
       isActive,
       loginCount: 0,
       lastLoginAt: null,
@@ -1902,7 +1896,6 @@ export default function App() {
   const [historyChatResetNotice, setHistoryChatResetNotice] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserCompany, setNewUserCompany] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserIsActive, setNewUserIsActive] = useState(false);
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
   const [userActionLoading, setUserActionLoading] = useState(false);
@@ -4072,7 +4065,7 @@ export default function App() {
 
   const createUserAsAdmin = async (e) => {
     e.preventDefault();
-    if (!newUserEmail || !newUserCompany || !newUserPassword) return;
+    if (!newUserEmail || !newUserCompany) return;
     try {
       setUserActionLoading(true);
       setUsersError("");
@@ -4085,14 +4078,12 @@ export default function App() {
         body: {
           email: newUserEmail.trim(),
           company: newUserCompany.trim(),
-          password: newUserPassword,
           isActive: newUserIsActive,
           isAdmin: newUserIsAdmin
         }
       });
       setNewUserEmail("");
       setNewUserCompany("");
-      setNewUserPassword("");
       setNewUserIsActive(false);
       setNewUserIsAdmin(false);
       await refreshUsers();
@@ -5255,7 +5246,6 @@ export default function App() {
                 <div className="admin-user-form-grid">
                   <input type="email" placeholder="Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
                   <input type="text" placeholder="Company" value={newUserCompany} onChange={(e) => setNewUserCompany(e.target.value)} required />
-                  <input type="password" placeholder="Password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} required />
                 </div>
                 <div className="admin-user-form-checks">
                   <label><input type="checkbox" checked={newUserIsActive} onChange={(e) => setNewUserIsActive(e.target.checked)} /> Active</label>

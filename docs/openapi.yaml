@@ -797,14 +797,12 @@ components:
           type: string
     AdminCreateUserRequest:
       type: object
-      required: [email, company, password]
+      required: [email, company]
       properties:
         email:
           type: string
           format: email
         company:
-          type: string
-        password:
           type: string
         isActive:
           type: boolean
