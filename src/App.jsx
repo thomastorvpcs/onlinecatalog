@@ -3455,6 +3455,13 @@ export default function App() {
     return /^(more|more\?|show more|next|next page|continue)$/i.test(message);
   }
 
+  function isCopilotDirectAddIntent(messageRaw) {
+    const message = String(messageRaw || "").trim().toLowerCase();
+    if (!message) return false;
+    return /\b(add|include|put)\b/.test(message)
+      && /\b(request|requested items?|quote|order|cart)\b/.test(message);
+  }
+
   function findLatestExpandableCopilotMessage(messages, visibleCountByMessage) {
     const recent = Array.isArray(messages) ? messages.slice(-10) : [];
     for (let idx = recent.length - 1; idx >= 0; idx -= 1) {
@@ -3548,6 +3555,11 @@ export default function App() {
         setAiCopilotCurrentTopic(nextTopic);
       }
       const suggestedAction = payload.action && typeof payload.action === "object" ? payload.action : null;
+      const shouldAutoApplyAddAction = isCopilotDirectAddIntent(message)
+        && (suggestedAction?.type === "add_to_request" || suggestedAction?.type === "add_lines_to_request");
+      if (shouldAutoApplyAddAction) {
+        applyCopilotAction(suggestedAction);
+      }
       if (suggestedAction?.type === "apply_filters") {
         const suggestedPayload = sanitizeFilterPayload(suggestedAction.payload);
         const suggestedCount = products.filter((p) => deviceMatchesFilterPayload(p, suggestedPayload)).length;
@@ -3565,7 +3577,7 @@ export default function App() {
       setAiCopilotMessages((prev) => [...prev, {
         role: "assistant",
         text: payload.reply || "I could not generate a response.",
-        action: suggestedAction,
+        action: shouldAutoApplyAddAction ? null : suggestedAction,
         topic: AI_COPILOT_TOPICS.has(nextTopic) ? nextTopic : aiCopilotCurrentTopic,
         timestamp: new Date().toISOString()
       }]);
