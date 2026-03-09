@@ -4681,7 +4681,6 @@ export default function App() {
               <div className="dashboard-head panel">
                 <div>
                   <h1 className="page-title" style={{ marginBottom: 6 }}>Welcome back{user.firstName ? `, ${user.firstName}` : ""}</h1>
-                  <p className="small" style={{ margin: 0 }}>Live overview of inventory, requests, and activity from your current database data.</p>
                 </div>
                 <div className="dashboard-head-actions">
                   <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setRoute("products")}>Browse Products</button>
