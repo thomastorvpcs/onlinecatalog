@@ -1495,6 +1495,18 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   font-weight: 700;
 }
 
+.dashboard-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dashboard-card-head .dashboard-card-title {
+  margin: 0;
+}
+
 .dashboard-bars {
   display: grid;
   gap: 10px;
@@ -2562,6 +2574,11 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
     flex-direction: column;
     align-items: flex-start;
     gap: 4px;
+  }
+
+  .dashboard-card-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .saved-filter-item-actions {

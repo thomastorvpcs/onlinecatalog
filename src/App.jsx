@@ -4657,6 +4657,14 @@ export default function App() {
     setSavedFilterNotice(`Applied "${savedFilter.name}".`);
   };
 
+  const openWeeklySpecialsFromDashboard = () => {
+    setRoute("products");
+    setProductsView("weekly");
+    setWeeklySearch("");
+    setWeeklyFilters({});
+    setWeeklyExpandedFilters({});
+  };
+
   return (
     <div className="app-shell">
       <aside className="left-rail">
@@ -4840,7 +4848,12 @@ export default function App() {
                 </article>
 
                 <article className="panel dashboard-card">
-                  <h3 className="dashboard-card-title">Top Weekly Specials</h3>
+                  <div className="dashboard-card-head">
+                    <h3 className="dashboard-card-title">Top Weekly Specials</h3>
+                    <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={openWeeklySpecialsFromDashboard}>
+                      View Weekly Specials
+                    </button>
+                  </div>
                   {dashboardInventoryLoading ? (
                     <ul className="dashboard-list">
                       {Array.from({ length: 5 }).map((_, idx) => (
