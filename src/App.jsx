@@ -23,6 +23,7 @@ const categoryImagePlaceholders = {
 };
 
 const baseNavItems = [
+  { key: "dashboard", label: "Dashboard", icon: "dashboard" },
   { key: "products", label: "Products", icon: "phone" },
   { key: "requests", label: "Requests", icon: "R" }
 ];
@@ -1824,6 +1825,15 @@ function PhoneNavIcon() {
   return <svg className="nav-icon-svg" viewBox="0 0 24 24"><rect x="7.2" y="3" width="9.6" height="18" rx="2.4" fill="none" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="18.1" r="1" fill="currentColor" /></svg>;
 }
 
+function DashboardNavIcon() {
+  return (
+    <svg className="nav-icon-svg" viewBox="0 0 24 24">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 15.5v-3.2M12 15.5V9.8M16 15.5V7.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function App() {
   const {
     loginWithRedirect,
@@ -1853,7 +1863,7 @@ export default function App() {
   const [categoryDevices, setCategoryDevices] = useState([]);
   const [categoryTotal, setCategoryTotal] = useState(0);
   const [categoryLoading, setCategoryLoading] = useState(false);
-  const [route, setRoute] = useState(() => persistedViewState.route || "products");
+  const [route, setRoute] = useState(() => persistedViewState.route || "dashboard");
   const [productsView, setProductsView] = useState(() => persistedViewState.productsView || "home");
   const [selectedCategory, setSelectedCategory] = useState(() => persistedViewState.selectedCategory || ALL_CATEGORIES_KEY);
   const [search, setSearch] = useState(() => persistedViewState.search || "");
@@ -1973,6 +1983,7 @@ export default function App() {
   const aiCopilotVoiceHasSentRef = useRef(false);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
+  const postLoginLandingSetRef = useRef("");
   const cartLoadedFromBackendRef = useRef(false);
   const cartDraftSyncTimerRef = useRef(null);
 
@@ -2053,7 +2064,7 @@ export default function App() {
   };
 
   const resetViewStateToHome = () => {
-    setRoute("products");
+    setRoute("dashboard");
     setProductsView("home");
     setSelectedCategory(ALL_CATEGORIES_KEY);
     setSearch("");
@@ -2144,6 +2155,18 @@ export default function App() {
       clearAuth0LogoutRequested();
     }
   }, [auth0IsAuthenticated]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      postLoginLandingSetRef.current = "";
+      return;
+    }
+    const currentUserId = String(user.id);
+    if (postLoginLandingSetRef.current === currentUserId) return;
+    postLoginLandingSetRef.current = currentUserId;
+    setRoute("dashboard");
+    setProductsView("home");
+  }, [user?.id]);
 
   useEffect(() => {
     let ignore = false;
@@ -2770,10 +2793,10 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const allowedRoutes = user.role === "admin"
-      ? new Set(["products", "requests", "users"])
-      : new Set(["products", "requests"]);
+      ? new Set(["dashboard", "products", "requests", "users"])
+      : new Set(["dashboard", "products", "requests"]);
     if (!allowedRoutes.has(route)) {
-      setRoute("products");
+      setRoute("dashboard");
       setProductsView("home");
     }
   }, [user, route]);
@@ -2939,7 +2962,7 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
     async function loadUsers() {
-      if (!user || user.role !== "admin" || route !== "users") return;
+      if (!user || user.role !== "admin" || (route !== "users" && route !== "dashboard")) return;
       try {
         setUsersLoading(true);
         setUsersError("");
@@ -4509,6 +4532,50 @@ export default function App() {
   const filteredRequests = requests
     .filter((r) => requestStatusFilter === "All" || r.status === requestStatusFilter)
     .filter((r) => String(r.requestNumber || "").toLowerCase().includes(requestSearch.toLowerCase()));
+  const totalInventoryUnits = products.reduce((sum, p) => sum + Math.max(0, Number(p.available || 0)), 0);
+  const inStockProducts = products.filter((p) => Number(p.available || 0) > 0).length;
+  const lowStockProducts = products.filter((p) => {
+    const available = Number(p.available || 0);
+    return available > 0 && available <= 10;
+  }).length;
+  const completedRequestsCount = requests.filter((r) => String(r.status || "").toLowerCase() === "completed").length;
+  const openRequestsCount = Math.max(0, requests.length - completedRequestsCount);
+  const requestsTotalValue = requests.reduce((sum, r) => sum + Number(r.total || 0), 0);
+  const averageRequestValue = requests.length ? (requestsTotalValue / requests.length) : 0;
+  const last30DaysCutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  const requestsLast30Days = requests.filter((r) => {
+    const ts = new Date(r.createdAt).getTime();
+    return Number.isFinite(ts) && ts >= last30DaysCutoff;
+  });
+  const recentRequests = [...requests]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 6);
+  const requestStatusSummary = Array.from(requests.reduce((map, request) => {
+    const status = String(request.status || "Unknown").trim() || "Unknown";
+    map.set(status, (map.get(status) || 0) + 1);
+    return map;
+  }, new Map()).entries())
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
+  const requestStatusMax = Math.max(1, ...requestStatusSummary.map((entry) => entry.count));
+  const categoryInventorySummary = Array.from(products.reduce((map, product) => {
+    const category = String(product.category || "Other");
+    const entry = map.get(category) || { category, units: 0, products: 0 };
+    entry.units += Math.max(0, Number(product.available || 0));
+    entry.products += 1;
+    map.set(category, entry);
+    return map;
+  }, new Map()).values())
+    .sort((a, b) => b.units - a.units);
+  const categoryInventoryMax = Math.max(1, ...categoryInventorySummary.map((entry) => entry.units));
+  const topWeeklySpecials = weeklySpecialDevices
+    .slice()
+    .sort((a, b) => Number(b.available || 0) - Number(a.available || 0))
+    .slice(0, 5);
+  const dashboardUserCount = user.role === "admin" ? users.length : null;
+  const dashboardConversionRate = requests.length
+    ? Math.round((completedRequestsCount / requests.length) * 100)
+    : 0;
   const productById = new Map(products.map((p) => [p.id, p]));
   const allRequestLocations = (() => {
     const names = new Set();
@@ -4594,7 +4661,9 @@ export default function App() {
         <nav className="rail-nav">
           {navItems.map((n) => (
             <button key={n.key} className={n.key === route ? "active" : ""} onClick={() => { setRoute(n.key); if (n.key === "products") { setProductsView("home"); setSearch(""); setFilters({}); } }}>
-              <span className="nav-icon-wrap">{n.icon === "phone" ? <PhoneNavIcon /> : <span className="nav-icon">{n.icon}</span>}</span>
+              <span className="nav-icon-wrap">
+                {n.icon === "phone" ? <PhoneNavIcon /> : n.icon === "dashboard" ? <DashboardNavIcon /> : <span className="nav-icon">{n.icon}</span>}
+              </span>
               <span className="nav-label">{n.label}</span>
             </button>
           ))}
@@ -4607,6 +4676,125 @@ export default function App() {
           <div className="top-actions"><span className="muted">{user.fullName || user.email}</span><span className="user-chip">{user.company}</span><button className="ghost-btn" onClick={logout}>Logout</button></div>
         </header>
         <main className="view">
+          {route === "dashboard" && (
+            <section className="dashboard-wrap">
+              <div className="dashboard-head panel">
+                <div>
+                  <h1 className="page-title" style={{ marginBottom: 6 }}>Welcome back{user.firstName ? `, ${user.firstName}` : ""}</h1>
+                  <p className="small" style={{ margin: 0 }}>Live overview of inventory, requests, and activity from your current database data.</p>
+                </div>
+                <div className="dashboard-head-actions">
+                  <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setRoute("products")}>Browse Products</button>
+                  <button type="button" style={{ width: "auto" }} onClick={() => setRoute("requests")}>Open Requests</button>
+                </div>
+              </div>
+
+              <div className="dashboard-kpi-grid">
+                <article className="dashboard-kpi-card panel">
+                  <div className="dashboard-kpi-label">Total Inventory Units</div>
+                  <div className="dashboard-kpi-value">{totalInventoryUnits.toLocaleString()}</div>
+                  <div className="dashboard-kpi-sub">{inStockProducts} products in stock</div>
+                </article>
+                <article className="dashboard-kpi-card panel">
+                  <div className="dashboard-kpi-label">Open Requests</div>
+                  <div className="dashboard-kpi-value">{openRequestsCount.toLocaleString()}</div>
+                  <div className="dashboard-kpi-sub">{completedRequestsCount} completed</div>
+                </article>
+                <article className="dashboard-kpi-card panel">
+                  <div className="dashboard-kpi-label">Request Value</div>
+                  <div className="dashboard-kpi-value">{formatUsd(requestsTotalValue)}</div>
+                  <div className="dashboard-kpi-sub">Avg {formatUsd(averageRequestValue)} per request</div>
+                </article>
+                <article className="dashboard-kpi-card panel">
+                  <div className="dashboard-kpi-label">30-Day Activity</div>
+                  <div className="dashboard-kpi-value">{requestsLast30Days.length.toLocaleString()}</div>
+                  <div className="dashboard-kpi-sub">{dashboardConversionRate}% completion rate</div>
+                </article>
+                <article className="dashboard-kpi-card panel">
+                  <div className="dashboard-kpi-label">Weekly Specials</div>
+                  <div className="dashboard-kpi-value">{weeklySpecialDevices.length.toLocaleString()}</div>
+                  <div className="dashboard-kpi-sub">{lowStockProducts} low-stock products</div>
+                </article>
+                {user.role === "admin" ? (
+                  <article className="dashboard-kpi-card panel">
+                    <div className="dashboard-kpi-label">Active Users</div>
+                    <div className="dashboard-kpi-value">{dashboardUserCount !== null ? dashboardUserCount.toLocaleString() : "-"}</div>
+                    <div className="dashboard-kpi-sub">Admin view</div>
+                  </article>
+                ) : null}
+              </div>
+
+              <div className="dashboard-grid">
+                <article className="panel dashboard-card">
+                  <h3 className="dashboard-card-title">Inventory by Category</h3>
+                  <div className="dashboard-bars">
+                    {categoryInventorySummary.length ? categoryInventorySummary.map((entry) => (
+                      <div key={`dash-category-${entry.category}`} className="dashboard-bar-row">
+                        <div className="dashboard-bar-head">
+                          <span>{entry.category}</span>
+                          <span>{entry.units.toLocaleString()} units</span>
+                        </div>
+                        <div className="dashboard-bar-track">
+                          <div className="dashboard-bar-fill" style={{ width: `${Math.max(4, Math.round((entry.units / categoryInventoryMax) * 100))}%` }} />
+                        </div>
+                        <div className="small">{entry.products} products</div>
+                      </div>
+                    )) : <p className="small">No category data yet.</p>}
+                  </div>
+                </article>
+
+                <article className="panel dashboard-card">
+                  <h3 className="dashboard-card-title">Request Status Mix</h3>
+                  <div className="dashboard-bars">
+                    {requestStatusSummary.length ? requestStatusSummary.map((entry) => (
+                      <div key={`dash-status-${entry.status}`} className="dashboard-bar-row">
+                        <div className="dashboard-bar-head">
+                          <span>{entry.status}</span>
+                          <span>{entry.count}</span>
+                        </div>
+                        <div className="dashboard-bar-track">
+                          <div className="dashboard-bar-fill dashboard-bar-fill-alt" style={{ width: `${Math.max(6, Math.round((entry.count / requestStatusMax) * 100))}%` }} />
+                        </div>
+                      </div>
+                    )) : <p className="small">No requests found yet.</p>}
+                  </div>
+                </article>
+
+                <article className="panel dashboard-card">
+                  <h3 className="dashboard-card-title">Top Weekly Specials</h3>
+                  {topWeeklySpecials.length ? (
+                    <ul className="dashboard-list">
+                      {topWeeklySpecials.map((device) => (
+                        <li key={`dash-weekly-${device.id}`}>
+                          <span>{device.manufacturer} {device.model}</span>
+                          <span>{device.availableDisplay || device.available} in stock</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="small">No weekly specials are currently flagged.</p>
+                  )}
+                </article>
+
+                <article className="panel dashboard-card">
+                  <h3 className="dashboard-card-title">Recent Requests</h3>
+                  {recentRequests.length ? (
+                    <ul className="dashboard-list">
+                      {recentRequests.map((requestItem) => (
+                        <li key={`dash-request-${requestItem.id}`}>
+                          <span>{requestItem.requestNumber} ({requestItem.status})</span>
+                          <span>{new Date(requestItem.createdAt).toLocaleDateString()} | {formatUsd(requestItem.total)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="small">No requests yet.</p>
+                  )}
+                </article>
+              </div>
+            </section>
+          )}
+
           {route === "products" && productsError && (
             <section className="panel" style={{ marginBottom: 10 }}>
               <p className="small" style={{ margin: 0 }}>{productsError}</p>
@@ -5278,7 +5466,7 @@ export default function App() {
             </section>
           )}
 
-          {route !== "products" && route !== "requests" && route !== "users" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
+          {route !== "dashboard" && route !== "products" && route !== "requests" && route !== "users" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
         </main>
       </div>
 
