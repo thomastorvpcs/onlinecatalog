@@ -1287,6 +1287,17 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   display: block;
 }
 
+.ai-copilot-voice-btn {
+  width: auto;
+  min-width: 76px;
+}
+
+.ai-copilot-voice-btn.listening {
+  border-color: #ef4444;
+  color: #b91c1c;
+  background: #fff1f2;
+}
+
 .ai-chatbot-icon {
   width: 24px;
   height: 24px;

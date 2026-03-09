@@ -48,6 +48,10 @@ const DIALOG_FOCUSABLE_SELECTOR = [
   "[contenteditable='true']"
 ].join(",");
 const dialogA11yStack = [];
+const getSpeechRecognitionCtor = () => {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+};
 
 function readJson(area, key, fallback) {
   try {
@@ -2006,6 +2010,8 @@ export default function App() {
   const [aiCopilotMinPanelHeight, setAiCopilotMinPanelHeight] = useState(0);
   const [aiCopilotOptionVisibleCountByMessage, setAiCopilotOptionVisibleCountByMessage] = useState({});
   const [aiCopilotCurrentTopic, setAiCopilotCurrentTopic] = useState("general");
+  const [aiCopilotListening, setAiCopilotListening] = useState(false);
+  const [aiCopilotVoiceError, setAiCopilotVoiceError] = useState("");
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -2031,6 +2037,7 @@ export default function App() {
   const aiCopilotStateLoadedRef = useRef(false);
   const aiCopilotPendingResultCheckRef = useRef(null);
   const aiCopilotLastSeenMessageCountRef = useRef(0);
+  const aiCopilotSpeechRef = useRef(null);
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -2170,6 +2177,8 @@ export default function App() {
     setAiCopilotOpen(false);
     setAiCopilotWelcomePending(false);
     setAiCopilotCurrentTopic("general");
+    setAiCopilotListening(false);
+    setAiCopilotVoiceError("");
     setAiCopilotPanelHeight(0);
     setAiCopilotMinPanelHeight(0);
     aiCopilotPendingResultCheckRef.current = null;
@@ -3486,6 +3495,9 @@ export default function App() {
 
   const runAiCopilot = async () => {
     if (!authToken || !user || aiCopilotLoading) return;
+    if (aiCopilotListening) {
+      stopAiCopilotVoice();
+    }
     const message = aiCopilotInput.trim();
     if (!message) {
       setAiCopilotError("Enter a message first.");
@@ -3518,6 +3530,7 @@ export default function App() {
     }
     setAiCopilotLoading(true);
     setAiCopilotError("");
+    setAiCopilotVoiceError("");
     setAiCopilotMessages((prev) => [...prev, {
       role: "user",
       text: message,
@@ -3587,6 +3600,86 @@ export default function App() {
       setAiCopilotLoading(false);
     }
   };
+
+  const stopAiCopilotVoice = useCallback(() => {
+    const recognition = aiCopilotSpeechRef.current;
+    if (!recognition) {
+      setAiCopilotListening(false);
+      return;
+    }
+    try {
+      recognition.stop();
+    } catch {
+      // ignore stop errors from already-stopped recognizer
+    }
+    aiCopilotSpeechRef.current = null;
+    setAiCopilotListening(false);
+  }, []);
+
+  const toggleAiCopilotVoice = useCallback(() => {
+    if (aiCopilotListening) {
+      stopAiCopilotVoice();
+      return;
+    }
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
+    if (!SpeechRecognitionCtor) {
+      setAiCopilotVoiceError("Voice input is not supported in this browser.");
+      return;
+    }
+    setAiCopilotVoiceError("");
+    const recognition = new SpeechRecognitionCtor();
+    const baseInput = String(aiCopilotInput || "").trim();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let idx = event.resultIndex; idx < event.results.length; idx += 1) {
+        transcript += String(event.results[idx]?.[0]?.transcript || "");
+      }
+      const cleanTranscript = transcript.trim();
+      if (!cleanTranscript) return;
+      const nextInput = baseInput ? `${baseInput} ${cleanTranscript}` : cleanTranscript;
+      setAiCopilotInput(nextInput);
+    };
+    recognition.onerror = (event) => {
+      const code = String(event?.error || "").toLowerCase();
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setAiCopilotVoiceError("Microphone permission was denied.");
+      } else if (code === "no-speech") {
+        setAiCopilotVoiceError("No speech detected. Try again.");
+      } else {
+        setAiCopilotVoiceError("Voice input failed. Please try again.");
+      }
+    };
+    recognition.onend = () => {
+      aiCopilotSpeechRef.current = null;
+      setAiCopilotListening(false);
+    };
+    aiCopilotSpeechRef.current = recognition;
+    setAiCopilotListening(true);
+    try {
+      recognition.start();
+    } catch {
+      aiCopilotSpeechRef.current = null;
+      setAiCopilotListening(false);
+      setAiCopilotVoiceError("Could not start voice input.");
+    }
+  }, [aiCopilotInput, aiCopilotListening, stopAiCopilotVoice]);
+
+  useEffect(() => () => {
+    const recognition = aiCopilotSpeechRef.current;
+    if (!recognition) return;
+    try { recognition.stop(); } catch {}
+    aiCopilotSpeechRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!aiCopilotOpen && aiCopilotListening) {
+      stopAiCopilotVoice();
+    }
+  }, [aiCopilotOpen, aiCopilotListening, stopAiCopilotVoice]);
 
   const loadAdminAiAnomalies = async () => {
     if (!authToken || !user || user.role !== "admin" || adminAiAnomaliesLoading) return;
@@ -4501,6 +4594,7 @@ export default function App() {
   })();
   const cartHasFulfillmentIssues = cartFulfillmentIssues.length > 0;
   const activeRequest = requests.find((r) => r.id === activeRequestId) || null;
+  const aiCopilotVoiceSupported = Boolean(getSpeechRecognitionCtor());
   const modalImages = activeProduct ? (activeProduct.images?.length ? activeProduct.images : [imageFor(activeProduct)]) : [];
   const canCarousel = modalImages.length > 1;
   const activeModalImage = modalImages[activeImageIndex] || modalImages[0] || "";
@@ -5383,11 +5477,21 @@ export default function App() {
                   }
                 }}
               />
+              <button
+                type="button"
+                className={`ghost-btn ai-copilot-voice-btn${aiCopilotListening ? " listening" : ""}`}
+                onClick={toggleAiCopilotVoice}
+                disabled={!aiCopilotVoiceSupported || aiCopilotLoading}
+                title={aiCopilotVoiceSupported ? (aiCopilotListening ? "Stop voice input" : "Start voice input") : "Voice input not supported"}
+              >
+                {aiCopilotListening ? "Listening..." : "Mic"}
+              </button>
               <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
                 {aiCopilotLoading ? "Thinking..." : "Send"}
               </button>
             </div>
             {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
+            {aiCopilotVoiceError ? <div className="saved-filter-error">{aiCopilotVoiceError}</div> : null}
           </div>
         ) : (
           <button
