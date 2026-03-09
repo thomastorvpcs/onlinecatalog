@@ -3499,7 +3499,7 @@ export default function App() {
     if (aiCopilotListening) {
       stopAiCopilotVoice();
     }
-    const message = String(messageOverride ?? aiCopilotInput || "").trim();
+    const message = String((messageOverride ?? aiCopilotInput) || "").trim();
     if (!message) {
       setAiCopilotError("Enter a message first.");
       return;
