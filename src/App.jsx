@@ -3631,7 +3631,12 @@ export default function App() {
 
   const toggleAiCopilotVoice = useCallback(() => {
     if (aiCopilotListening) {
+      const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || aiCopilotInputRef.current || "").trim();
       stopAiCopilotVoice();
+      if (autoMessage && !aiCopilotVoiceHasSentRef.current && !aiCopilotLoading) {
+        aiCopilotVoiceHasSentRef.current = true;
+        runAiCopilot(autoMessage);
+      }
       return;
     }
     const SpeechRecognitionCtor = getSpeechRecognitionCtor();
@@ -3700,7 +3705,7 @@ export default function App() {
       setAiCopilotListening(false);
       setAiCopilotVoiceError("Could not start voice input.");
     }
-  }, [aiCopilotInput, aiCopilotListening, stopAiCopilotVoice]);
+  }, [aiCopilotInput, aiCopilotListening, aiCopilotLoading, stopAiCopilotVoice, runAiCopilot]);
 
   useEffect(() => () => {
     if (aiCopilotVoiceAutoSendTimerRef.current) {
