@@ -2038,6 +2038,7 @@ export default function App() {
   const aiCopilotPendingResultCheckRef = useRef(null);
   const aiCopilotLastSeenMessageCountRef = useRef(0);
   const aiCopilotSpeechRef = useRef(null);
+  const aiCopilotVoiceAutoSendTextRef = useRef("");
   const auth0ExchangeInFlightRef = useRef(false);
   const auth0LogoutInProgressRef = useRef(false);
   const cartLoadedFromBackendRef = useRef(false);
@@ -3493,12 +3494,12 @@ export default function App() {
     return null;
   }
 
-  const runAiCopilot = async () => {
+  const runAiCopilot = async (messageOverride = null) => {
     if (!authToken || !user || aiCopilotLoading) return;
     if (aiCopilotListening) {
       stopAiCopilotVoice();
     }
-    const message = aiCopilotInput.trim();
+    const message = String(messageOverride ?? aiCopilotInput || "").trim();
     if (!message) {
       setAiCopilotError("Enter a message first.");
       return;
@@ -3629,6 +3630,7 @@ export default function App() {
     setAiCopilotVoiceError("");
     const recognition = new SpeechRecognitionCtor();
     const baseInput = String(aiCopilotInput || "").trim();
+    aiCopilotVoiceAutoSendTextRef.current = "";
     recognition.lang = "en-US";
     recognition.interimResults = true;
     recognition.continuous = false;
@@ -3642,6 +3644,7 @@ export default function App() {
       if (!cleanTranscript) return;
       const nextInput = baseInput ? `${baseInput} ${cleanTranscript}` : cleanTranscript;
       setAiCopilotInput(nextInput);
+      aiCopilotVoiceAutoSendTextRef.current = nextInput;
     };
     recognition.onerror = (event) => {
       const code = String(event?.error || "").toLowerCase();
@@ -3656,6 +3659,11 @@ export default function App() {
     recognition.onend = () => {
       aiCopilotSpeechRef.current = null;
       setAiCopilotListening(false);
+      const autoMessage = String(aiCopilotVoiceAutoSendTextRef.current || "").trim();
+      aiCopilotVoiceAutoSendTextRef.current = "";
+      if (autoMessage && !aiCopilotLoading) {
+        runAiCopilot(autoMessage);
+      }
     };
     aiCopilotSpeechRef.current = recognition;
     setAiCopilotListening(true);
@@ -5483,8 +5491,12 @@ export default function App() {
                 onClick={toggleAiCopilotVoice}
                 disabled={!aiCopilotVoiceSupported || aiCopilotLoading}
                 title={aiCopilotVoiceSupported ? (aiCopilotListening ? "Stop voice input" : "Start voice input") : "Voice input not supported"}
+                aria-label={aiCopilotListening ? "Stop voice input" : "Start voice input"}
               >
-                {aiCopilotListening ? "Listening..." : "Mic"}
+                <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+                  <path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V6.75a3.75 3.75 0 1 0-7.5 0v4.75A3.75 3.75 0 0 0 12 15.25z" />
+                  <path d="M6.5 11.5a.75.75 0 0 1 1.5 0 4 4 0 1 0 8 0 .75.75 0 0 1 1.5 0A5.5 5.5 0 0 1 12.75 17v2h2.25a.75.75 0 0 1 0 1.5H9a.75.75 0 0 1 0-1.5h2.25v-2A5.5 5.5 0 0 1 6.5 11.5z" />
+                </svg>
               </button>
               <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
                 {aiCopilotLoading ? "Thinking..." : "Send"}
