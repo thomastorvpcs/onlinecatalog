@@ -3499,7 +3499,8 @@ export default function App() {
     if (aiCopilotListening) {
       stopAiCopilotVoice();
     }
-    const message = String((messageOverride ?? aiCopilotInput) || "").trim();
+    const safeOverride = typeof messageOverride === "string" ? messageOverride : null;
+    const message = String((safeOverride ?? aiCopilotInput) || "").trim();
     if (!message) {
       setAiCopilotError("Enter a message first.");
       return;
@@ -5498,7 +5499,7 @@ export default function App() {
                   <path d="M6.5 11.5a.75.75 0 0 1 1.5 0 4 4 0 1 0 8 0 .75.75 0 0 1 1.5 0A5.5 5.5 0 0 1 12.75 17v2h2.25a.75.75 0 0 1 0 1.5H9a.75.75 0 0 1 0-1.5h2.25v-2A5.5 5.5 0 0 1 6.5 11.5z" />
                 </svg>
               </button>
-              <button type="button" className="saved-filter-save-btn" onClick={runAiCopilot} disabled={aiCopilotLoading}>
+              <button type="button" className="saved-filter-save-btn" onClick={() => runAiCopilot()} disabled={aiCopilotLoading}>
                 {aiCopilotLoading ? "Thinking..." : "Send"}
               </button>
             </div>
