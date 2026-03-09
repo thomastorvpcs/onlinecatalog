@@ -7541,54 +7541,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/register") {
-      const body = await parseBody(req);
-      const email = normalizeEmail(body.email);
-      const password = String(body.password || "");
-      const company = String(body.company || "").trim();
-
-      if (!email || !company || !password) {
-        json(req, res, 400, { error: "Email, company and password are required." });
-        return;
-      }
-
-      if (!isPasswordValid(password)) {
-        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
-        return;
-      }
-
-      const existing = await getUserByEmailRuntime(email, false);
-      if (existing?.id) {
-        json(req, res, 409, { error: "User already exists." });
-        return;
-      }
-
-      const passwordHash = hashPassword(password);
-      await createUserRuntime({ email, company, role: "buyer", passwordHash, isActive: false, registrationCompleted: true });
-      json(req, res, 201, { ok: true });
+      json(req, res, 410, { error: "Password registration is disabled. Use Auth0 sign-up." });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
-      const body = await parseBody(req);
-      const email = normalizeEmail(body.email);
-      const password = String(body.password || "");
-      const row = await getUserByEmailRuntime(email, true);
-
-      if (!row || !verifyPassword(password, row.password_hash)) {
-        json(req, res, 401, { error: "Invalid email or password." });
-        return;
-      }
-      if (Number(row.is_active) !== 1) {
-        json(req, res, 200, { pendingApproval: true, email: row.email, company: row.company });
-        return;
-      }
-
-      await recordUserLoginRuntime(row.id);
-      row.login_count = Number(row.login_count || 0) + 1;
-      row.last_login_at = new Date().toISOString();
-      const issued = createSession(row);
-      const refreshToken = await issueRefreshTokenRuntime(row.id);
-      json(req, res, 200, { token: issued.token, refreshToken, accessTokenExpiresAt: new Date(issued.expiresAt).toISOString(), user: makePublicUser(row) });
+      json(req, res, 410, { error: "Password login is disabled. Use Auth0 sign-in." });
       return;
     }
 
@@ -7748,56 +7706,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/request-password-reset") {
-      const body = await parseBody(req);
-      const email = normalizeEmail(body.email);
-      if (!email) {
-        json(req, res, 400, { error: "Email is required." });
-        return;
-      }
-      const row = await getUserByEmailRuntime(email, false);
-      if (row?.id) {
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-        await setUserResetCodeRuntime(row.id, DEMO_RESET_CODE, expiresAt);
-      }
-      json(req, res, 200, {
-        ok: true,
-        message: "If the email exists, a verification code has been sent.",
-        demoCode: DEMO_RESET_CODE
-      });
+      json(req, res, 410, { error: "Password reset is disabled. Use Auth0 account recovery." });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/reset-password") {
-      const body = await parseBody(req);
-      const email = normalizeEmail(body.email);
-      const code = String(body.code || "").trim();
-      const newPassword = String(body.newPassword || "");
-      if (!email || !code || !newPassword) {
-        json(req, res, 400, { error: "Email, verification code and new password are required." });
-        return;
-      }
-      if (!/^\d{6}$/.test(code)) {
-        json(req, res, 400, { error: "Verification code must be 6 digits." });
-        return;
-      }
-      if (!isPasswordValid(newPassword)) {
-        json(req, res, 400, { error: "Password must be at least 8 chars and include uppercase, number, and special character." });
-        return;
-      }
-
-      const row = await getUserByEmailRuntime(email, false);
-      if (!row?.id || !row.reset_code || row.reset_code !== code) {
-        json(req, res, 400, { error: "Invalid verification code." });
-        return;
-      }
-      if (!row.reset_code_expires_at || new Date(row.reset_code_expires_at).getTime() < Date.now()) {
-        json(req, res, 400, { error: "Verification code expired. Please request a new code." });
-        return;
-      }
-
-      const passwordHash = hashPassword(newPassword);
-      await updateUserPasswordAndClearResetRuntime(row.id, passwordHash);
-      json(req, res, 200, { ok: true });
+      json(req, res, 410, { error: "Password reset is disabled. Use Auth0 account recovery." });
       return;
     }
 
