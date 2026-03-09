@@ -36,25 +36,12 @@ paths:
   /api/auth/register:
     post:
       tags: [Auth]
-      summary: Register a new buyer user (inactive by default)
+      summary: Legacy password registration endpoint (disabled)
+      deprecated: true
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterRequest"
       responses:
-        "201":
-          description: User created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OkResponse"
-        "400":
-          $ref: "#/components/responses/Error400"
-        "409":
-          description: User already exists
+        "410":
+          description: Disabled. Use Auth0 sign-up.
           content:
             application/json:
               schema:
@@ -62,25 +49,12 @@ paths:
   /api/auth/login:
     post:
       tags: [Auth]
-      summary: Login user
+      summary: Legacy password login endpoint (disabled)
+      deprecated: true
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
       responses:
-        "200":
-          description: Logged in or pending approval
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/LoginSuccessResponse"
-                  - $ref: "#/components/schemas/LoginPendingApprovalResponse"
-        "401":
-          description: Invalid credentials
+        "410":
+          description: Disabled. Use Auth0 sign-in.
           content:
             application/json:
               schema:
@@ -143,49 +117,29 @@ paths:
   /api/auth/request-password-reset:
     post:
       tags: [Auth]
-      summary: Request password reset code
+      summary: Legacy password reset request endpoint (disabled)
+      deprecated: true
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PasswordResetRequest"
       responses:
-        "200":
-          description: Reset flow started
+        "410":
+          description: Disabled. Use Auth0 account recovery.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                  demoCode:
-                    type: string
-                    example: "123456"
+                $ref: "#/components/schemas/ErrorResponse"
   /api/auth/reset-password:
     post:
       tags: [Auth]
-      summary: Reset password with 6-digit verification code
+      summary: Legacy password reset confirm endpoint (disabled)
+      deprecated: true
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PasswordResetConfirmRequest"
       responses:
-        "200":
-          description: Password updated
+        "410":
+          description: Disabled. Use Auth0 account recovery.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OkResponse"
-        "400":
-          $ref: "#/components/responses/Error400"
+                $ref: "#/components/schemas/ErrorResponse"
   /api/users:
     get:
       tags: [Users]

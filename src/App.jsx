@@ -274,7 +274,6 @@ function normalizeDevice(p) {
 }
 
 const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostname.endsWith("github.io");
-const DEMO_VERIFICATION_CODE = "123456";
 const DEMO_USERS_KEY = "pcs.demo.users";
 const DEMO_SESSIONS_KEY = "pcs.demo.sessions";
 const DEMO_REFRESH_TOKENS_KEY = "pcs.demo.refreshTokens";
@@ -1013,47 +1012,11 @@ async function demoApiRequest(path, options = {}) {
   }
 
   if (method === "POST" && pathname === "/api/auth/register") {
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
-    const company = String(body.company || "").trim();
-    if (!email || !password || !company) throwApiError("Email, company and password are required.", 400);
-    if (!passwordMeetsPolicy(password)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
-    if (users.some((u) => u.email === email)) throwApiError("User already exists.", 409);
-    const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
-    users.push({
-      id: nextId,
-      email,
-      company,
-      role: "buyer",
-      password,
-      isActive: false,
-      loginCount: 0,
-      lastLoginAt: null,
-      createdAt: new Date().toISOString(),
-      resetCode: null,
-      resetCodeExpiresAt: null
-    });
-    setDemoUsers(users);
-    return { ok: true };
+    throwApiError("Legacy auth disabled. Use Auth0.", 410);
   }
 
   if (method === "POST" && pathname === "/api/auth/login") {
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
-    const user = users.find((u) => u.email === email && u.password === password);
-    if (!user) throwApiError("Invalid email or password.", 401);
-    if (!user.isActive) return { pendingApproval: true, email: user.email, company: user.company };
-    user.loginCount = Math.max(0, Number(user.loginCount || 0)) + 1;
-    user.lastLoginAt = new Date().toISOString();
-    const nextToken = crypto.randomUUID();
-    const nextRefreshToken = crypto.randomUUID();
-    const accessExpiresAt = Date.now() + DEMO_ACCESS_TTL_MS;
-    sessions[nextToken] = { userId: user.id, expiresAt: accessExpiresAt };
-    refreshTokens[nextRefreshToken] = { userId: user.id, expiresAt: Date.now() + DEMO_REFRESH_TTL_MS };
-    setDemoUsers(users);
-    setDemoSessions(sessions);
-    setDemoRefreshTokens(refreshTokens);
-    return { token: nextToken, refreshToken: nextRefreshToken, accessTokenExpiresAt: new Date(accessExpiresAt).toISOString(), user: makeDemoPublicUser(user) };
+    throwApiError("Legacy auth disabled. Use Auth0.", 410);
   }
 
   if (method === "POST" && pathname === "/api/auth/refresh") {
@@ -1094,38 +1057,11 @@ async function demoApiRequest(path, options = {}) {
   }
 
   if (method === "POST" && pathname === "/api/auth/request-password-reset") {
-    const email = String(body.email || "").trim().toLowerCase();
-    if (!email) throwApiError("Email is required.", 400);
-    const user = users.find((u) => u.email === email);
-    if (user) {
-      user.resetCode = DEMO_VERIFICATION_CODE;
-      user.resetCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      setDemoUsers(users);
-    }
-    return {
-      ok: true,
-      message: "If the email exists, a verification code has been sent.",
-      demoCode: DEMO_VERIFICATION_CODE
-    };
+    throwApiError("Legacy auth disabled. Use Auth0.", 410);
   }
 
   if (method === "POST" && pathname === "/api/auth/reset-password") {
-    const email = String(body.email || "").trim().toLowerCase();
-    const code = String(body.code || "").trim();
-    const newPassword = String(body.newPassword || "");
-    if (!email || !code || !newPassword) throwApiError("Email, verification code and new password are required.", 400);
-    if (!/^\d{6}$/.test(code)) throwApiError("Verification code must be 6 digits.", 400);
-    if (!passwordMeetsPolicy(newPassword)) throwApiError("Password must be at least 8 chars and include uppercase, number, and special character.", 400);
-    const user = users.find((u) => u.email === email);
-    if (!user || user.resetCode !== code) throwApiError("Invalid verification code.", 400);
-    if (!user.resetCodeExpiresAt || new Date(user.resetCodeExpiresAt).getTime() < Date.now()) {
-      throwApiError("Verification code expired. Please request a new code.", 400);
-    }
-    user.password = newPassword;
-    user.resetCode = null;
-    user.resetCodeExpiresAt = null;
-    setDemoUsers(users);
-    return { ok: true };
+    throwApiError("Legacy auth disabled. Use Auth0.", 410);
   }
 
   if (method === "GET" && pathname === "/api/devices") {
@@ -1804,7 +1740,7 @@ async function apiRequest(path, options = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined
   });
   const payload = await response.json().catch(() => ({}));
-  if (response.status === 401 && !skipRefresh && refreshToken && path !== "/api/auth/refresh" && path !== "/api/auth/login" && path !== "/api/auth/register") {
+  if (response.status === 401 && !skipRefresh && refreshToken && path !== "/api/auth/refresh") {
     try {
       const refreshed = await apiRequest("/api/auth/refresh", {
         method: "POST",
@@ -4040,19 +3976,6 @@ export default function App() {
     }
   };
 
-  const handleLogin = async (email, password) => {
-    const data = await apiRequest("/api/auth/login", { method: "POST", body: { email, password } });
-    if (data.pendingApproval) {
-      return { pendingApproval: true, email: data.email };
-    }
-    applyAuthTokens(data);
-    setAiCopilotOpen(false);
-    setAiCopilotGreetingTyping(false);
-    setAiCopilotWelcomePending(true);
-    resetViewStateToHome();
-    return { pendingApproval: false };
-  };
-
   const handleAuth0Login = async () => {
     auth0LogoutInProgressRef.current = false;
     clearAuth0LogoutRequested();
@@ -4098,10 +4021,6 @@ export default function App() {
     } catch {}
   };
 
-  const handleRegister = async (email, password, company) => {
-    await apiRequest("/api/auth/register", { method: "POST", body: { email, password, company } });
-  };
-
   const handleCompleteAuth0Profile = async ({ firstName, lastName, company }) => {
     const accessToken = await getAccessTokenSilently();
     const payload = await apiRequest("/api/auth/complete-profile", {
@@ -4130,14 +4049,6 @@ export default function App() {
       skipRefresh: true
     });
     await returnToLoginAfterAuth0PendingFlow();
-  };
-
-  const handleRequestPasswordReset = async (email) => {
-    return apiRequest("/api/auth/request-password-reset", { method: "POST", body: { email } });
-  };
-
-  const handleResetPassword = async (email, code, newPassword) => {
-    return apiRequest("/api/auth/reset-password", { method: "POST", body: { email, code, newPassword } });
   };
 
   const logout = () => {
@@ -4277,7 +4188,6 @@ export default function App() {
         auth0PendingApprovalEmail={authPendingApprovalEmail}
         auth0ProfileRequired={authProfileRequired}
         auth0ProfilePrefill={authProfilePrefill}
-        auth0Only={true}
       />
     );
   }
@@ -5859,10 +5769,6 @@ export default function App() {
 }
 
 function Login({
-  onLogin,
-  onRegister,
-  onRequestPasswordReset,
-  onResetPassword,
   onAuth0Login,
   onAuth0Signup,
   onAuth0CompleteProfile,
@@ -5873,23 +5779,10 @@ function Login({
   auth0ErrorText,
   auth0PendingApprovalEmail = "",
   auth0ProfileRequired = false,
-  auth0ProfilePrefill = { firstName: "", lastName: "", company: "", email: "" },
-  auth0Only = false
+  auth0ProfilePrefill = { firstName: "", lastName: "", company: "", email: "" }
 }) {
   const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
-  const [mode, setMode] = useState("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [company, setCompany] = useState("");
-  const [resetCode, setResetCode] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
   const [pendingEmail, setPendingEmail] = useState("");
-  const [demoCodeHint, setDemoCodeHint] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showResetPassword, setShowResetPassword] = useState(false);
   const [auth0FirstName, setAuth0FirstName] = useState("");
   const [auth0LastName, setAuth0LastName] = useState("");
   const [auth0Company, setAuth0Company] = useState("");
@@ -5937,7 +5830,7 @@ function Login({
 
   const pendingApprovalView = (
     <div className="auth-approval-card" role="status" aria-live="polite">
-      <div className="auth-approval-icon" aria-hidden="true">✓</div>
+      <div className="auth-approval-icon" aria-hidden="true">?</div>
       <h2 className="auth-approval-title">Account Created</h2>
       <p className="auth-approval-text">
         {activePendingEmail || "This account"} is waiting for admin approval.
@@ -5949,9 +5842,6 @@ function Login({
         type="button"
         className="ghost-btn auth-approval-btn"
         onClick={() => {
-          setMode("login");
-          setError("");
-          setNotice("");
           setPendingEmail("");
           if (typeof onClearPendingApproval === "function") {
             onClearPendingApproval();
@@ -6001,7 +5891,7 @@ function Login({
 
   useDialogA11y({ isOpen: auth0CancelConfirmOpen, dialogRef: auth0CancelModalRef, onClose: closeAuth0CancelDialog });
 
-  if (auth0Only && auth0ProfileRequired) {
+  if (auth0ProfileRequired) {
     return (
       <div className="auth-shell">
         <div className="auth-layout">
@@ -6083,7 +5973,7 @@ function Login({
     );
   }
 
-  if (auth0Only && auth0PendingApprovalEmail) {
+  if (auth0PendingApprovalEmail) {
     return (
       <div className="auth-shell">
         <div className="auth-layout">
@@ -6102,81 +5992,6 @@ function Login({
     );
   }
 
-  if (auth0Only) {
-    return (
-      <div className="auth-shell">
-        <div className="auth-layout">
-          <aside className="auth-hero">
-            <div className="auth-hero-logo-wrap">
-              <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
-            </div>
-            <h2 className="auth-hero-title">PCS Online Catalog</h2>
-            <p className="auth-hero-text">AI-assisted sourcing and request management.</p>
-          </aside>
-          <div className="auth-card auth0-card">
-            <div className="auth0-meta-row">
-              <div className="auth0-ai-pill" aria-label="AI powered">AI Powered</div>
-            </div>
-            <h1 className="auth-title auth0-title">PCS Online Catalog</h1>
-            <p className="auth0-subtitle">Sign in to continue.</p>
-            <div className="auth0-actions">
-              <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Sign in"}
-              </button>
-              <button type="button" className="ghost-btn auth0-secondary-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Create account"}
-              </button>
-            </div>
-            <p className="auth0-note">Secure sign-in by Auth0</p>
-            {auth0ErrorText ? <p className="auth-error auth0-error">Auth0 error: {auth0ErrorText}</p> : null}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (mode === "approval") return;
-    if (mode === "login" && (!email || !password)) return;
-    if (mode === "register" && (!email || !password || !company)) return;
-    if (mode === "reset-request" && !email) return;
-    if (mode === "reset-confirm" && (!email || !resetCode || !resetPassword)) return;
-    try {
-      setLoading(true);
-      setError("");
-      setNotice("");
-      if (mode === "login") {
-        const result = await onLogin(email.trim(), password);
-        if (result?.pendingApproval) {
-          setPendingEmail(result.email || email.trim());
-          setMode("approval");
-          return;
-        }
-      } else if (mode === "register") {
-        await onRegister(email.trim(), password, company.trim());
-        setMode("login");
-        setPassword("");
-        setNotice("User created. You can now sign in.");
-      } else if (mode === "reset-request") {
-        const result = await onRequestPasswordReset(email.trim());
-        setMode("reset-confirm");
-        setDemoCodeHint(result.demoCode || "");
-        setNotice("Verification code sent. Enter it below with your new password.");
-      } else if (mode === "reset-confirm") {
-        await onResetPassword(email.trim(), resetCode.trim(), resetPassword);
-        setMode("login");
-        setResetCode("");
-        setResetPassword("");
-        setNotice("Password has been reset. You can now sign in.");
-      }
-    } catch (err) {
-      setError(err.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="auth-shell">
       <div className="auth-layout">
@@ -6185,105 +6000,27 @@ function Login({
             <img className="auth-hero-logo" src={logoUrl} alt="PCS Wireless" />
           </div>
           <h2 className="auth-hero-title">PCS Online Catalog</h2>
-          <p className="auth-hero-text">PCS Wireless: powering smarter sourcing with trusted device lifecycle solutions.</p>
+          <p className="auth-hero-text">AI-assisted sourcing and request management.</p>
         </aside>
-        <div className="auth-card">
-        <h1 className="auth-title">{mode === "register" ? "Create Account" : mode === "reset-confirm" ? "Reset Password" : mode === "reset-request" ? "Forgot Password" : "Login"}</h1>
-        {mode === "approval" ? (
-          pendingApprovalView
-        ) : (
-          <>
-        {error ? <p className="auth-error">{error}</p> : null}
-        {notice ? <p className="auth-notice">{notice}</p> : null}
-        <form onSubmit={submit}>
-          <label>Email Address *</label>
-          <div className="auth-input-wrap">
-            <span className="auth-input-icon">✉</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="buyer@company.com" />
+        <div className="auth-card auth0-card">
+          <div className="auth0-meta-row">
+            <div className="auth0-ai-pill" aria-label="AI powered">AI Powered</div>
           </div>
-          {(mode === "login" || mode === "register") ? (
-            <>
-              <label>Password *</label>
-              <div className="auth-input-wrap">
-                <span className="auth-input-icon">⌨</span>
-                <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Password" />
-                <button type="button" className="auth-toggle-btn" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>
-                  {showPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
-                </button>
-              </div>
-              {mode === "login" ? (
-                <div className="auth-inline-link-row">
-                  <button type="button" className="link-btn" onClick={() => { setMode("reset-request"); setError(""); setNotice(""); }}>Forgot password?</button>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-          {mode === "register" ? (
-            <>
-              <label>Company</label><input type="text" value={company} onChange={(e) => setCompany(e.target.value)} required placeholder="Test Company" />
-              <p className="small">Password: 8+ chars, one uppercase, one number, one special character.</p>
-            </>
-          ) : null}
-          {mode === "reset-confirm" ? (
-            <>
-              <label>Verification code</label><input type="text" inputMode="numeric" maxLength={6} value={resetCode} onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
-              <label>New password</label>
-              <div className="auth-input-wrap">
-                <span className="auth-input-icon">⌨</span>
-                <input type={showResetPassword ? "text" : "password"} value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required placeholder="New password" />
-                <button type="button" className="auth-toggle-btn" onClick={() => setShowResetPassword((v) => !v)} aria-label={showResetPassword ? "Hide password" : "Show password"} title={showResetPassword ? "Hide password" : "Show password"}>
-                  {showResetPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
-                </button>
-              </div>
-              <p className="small">Code must be 6 digits. Password policy still applies.</p>
-              {demoCodeHint ? <p className="small">Demo verification code: {demoCodeHint}</p> : null}
-            </>
-          ) : null}
-          <button type="submit" className="auth-submit-btn" disabled={loading}>
-            {loading ? "Please wait..." : mode === "login" ? "Sign In" : mode === "register" ? "Create User" : mode === "reset-request" ? "Send verification code" : "Reset password"}
-          </button>
-        </form>
-        <div className="auth-links">
-          {mode === "login" ? <p className="auth-link-text">Don&apos;t have an account? <button type="button" className="link-btn auth-inline-link" onClick={() => { setMode("register"); setError(""); setNotice(""); }}>Create user</button></p> : null}
-          {(mode === "register" || mode === "reset-request" || mode === "reset-confirm") ? <button type="button" className="link-btn" onClick={() => { setMode("login"); setError(""); setNotice(""); }}>Back to sign in</button> : null}
-        </div>
-        {mode === "login" && typeof onAuth0Login === "function" && typeof onAuth0Signup === "function" ? (
-          <div style={{ marginTop: 12 }}>
-            <div className="small" style={{ marginBottom: 6, textAlign: "center" }}>or continue with Auth0</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <button type="button" className="ghost-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Continue with Auth0"}
-              </button>
-              <button type="button" className="ghost-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
-                {auth0Loading ? "Redirecting..." : "Sign up with Auth0"}
-              </button>
-            </div>
-            {auth0ErrorText ? <p className="small" style={{ marginTop: 8, color: "#b91c1c" }}>Auth0 error: {auth0ErrorText}</p> : null}
+          <h1 className="auth-title auth0-title">PCS Online Catalog</h1>
+          <p className="auth0-subtitle">Sign in to continue.</p>
+          <div className="auth0-actions">
+            <button type="button" className="auth-submit-btn auth0-primary-btn" onClick={onAuth0Login} disabled={Boolean(auth0Loading)}>
+              {auth0Loading ? "Redirecting..." : "Sign in"}
+            </button>
+            <button type="button" className="ghost-btn auth0-secondary-btn" onClick={onAuth0Signup} disabled={Boolean(auth0Loading)}>
+              {auth0Loading ? "Redirecting..." : "Create account"}
+            </button>
           </div>
-        ) : null}
-          </>
-        )}
+          <p className="auth0-note">Secure sign-in by Auth0</p>
+          {auth0ErrorText ? <p className="auth-error auth0-error">Auth0 error: {auth0ErrorText}</p> : null}
         </div>
       </div>
     </div>
-  );
-}
-
-function EyeOpenIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
-    </svg>
-  );
-}
-
-function EyeClosedIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path d="M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M2 12s3.5-6 10-6c2 0 3.8.6 5.3 1.5M22 12s-3.5 6-10 6c-2 0-3.8-.6-5.3-1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-    </svg>
   );
 }
 
@@ -6482,3 +6219,4 @@ function ProductCard({ p, image, onOpen, onAdd, onOpenGrade }) {
     </article>
   );
 }
+
