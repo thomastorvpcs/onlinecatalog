@@ -6555,11 +6555,6 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  {normalizeUserRole(user?.role) === "buyer" ? (
-                    <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => requestHumanHandoff(aiCopilotInput)} disabled={humanChatLoading}>
-                      {humanChatLoading ? "Connecting..." : "Talk to Sales Rep"}
-                    </button>
-                  ) : null}
                   <button type="button" className="saved-filter-save-btn" onClick={() => runAiCopilot()} disabled={aiCopilotLoading}>
                     {aiCopilotLoading ? "Thinking..." : "Send"}
                   </button>

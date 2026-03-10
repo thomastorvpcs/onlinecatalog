@@ -2765,18 +2765,45 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
   const assignedRep = await getSalesRepForCompanyRuntime(company);
   if (!assignedRep?.id) throw new Error("No active sales rep is assigned to your company.");
 
-  const existingRes = await pgClient.query(`
+  const existingActiveRes = await pgClient.query(`
     SELECT *
     FROM ${postgresTableRef("chat_sessions")}
     WHERE buyer_user_id = $1 AND status = 'active'
     ORDER BY last_activity_at DESC, id DESC
     LIMIT 1
   `, [buyerId]);
-  const existing = existingRes.rows?.[0];
-  if (existing?.id) {
+  const existingActive = existingActiveRes.rows?.[0];
+  if (existingActive?.id) {
     const text = String(initialMessageRaw || "").trim();
-    if (text) await insertChatMessageRuntime(existing.id, buyerId, "buyer", text);
-    return mapChatSessionRow(existing);
+    if (text) await insertChatMessageRuntime(existingActive.id, buyerId, "buyer", text);
+    const refreshed = await getChatSessionByIdRuntime(existingActive.id);
+    return mapChatSessionRow(refreshed || existingActive);
+  }
+
+  const latestSessionRes = await pgClient.query(`
+    SELECT id, sales_rep_user_id
+    FROM ${postgresTableRef("chat_sessions")}
+    WHERE buyer_user_id = $1
+    ORDER BY last_activity_at DESC, id DESC
+    LIMIT 1
+  `, [buyerId]);
+  const latestSession = latestSessionRes.rows?.[0];
+  if (latestSession?.id) {
+    await pgClient.query(`
+      UPDATE ${postgresTableRef("chat_sessions")}
+      SET sales_rep_user_id = $1,
+          company = $2,
+          status = 'active',
+          ended_at = NULL,
+          ended_by = NULL,
+          close_reason = NULL,
+          last_activity_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+    `, [assignedRep.id, company, Number(latestSession.id)]);
+    const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
+    await insertChatMessageRuntime(Number(latestSession.id), buyerId, "buyer", firstMessage);
+    const refreshed = await getChatSessionByIdRuntime(Number(latestSession.id));
+    return mapChatSessionRow(refreshed || latestSession);
   }
 
   const created = await pgClient.query(`
