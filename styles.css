@@ -980,7 +980,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   overflow: auto;
   display: grid;
   gap: 6px;
-  align-content: start;
+  align-content: end;
 }
 
 .ai-copilot-row {
