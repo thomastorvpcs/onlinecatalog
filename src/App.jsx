@@ -6370,23 +6370,48 @@ export default function App() {
                     Conversation history{inboxHasUnread ? ` (${inboxUnreadCount} unread)` : ""}.
                   </p>
                   {salesRepInbox.length ? (
-                    <div className="ai-copilot-choice-list">
+                    <div style={{ display: "grid", gap: 10 }}>
                       {salesRepInbox.map((session) => {
                         const label = `${session.company} - ${buildPersonDisplayName(session.buyerFirstName, session.buyerLastName, session.buyerEmail, "Buyer")}`;
                         const status = String(session.status || "").toLowerCase();
                         const statusLabel = status === "active" ? "Active" : (status === "timed_out" ? "Timed out" : "Ended");
+                        const statusColor = status === "active" ? "#166534" : (status === "timed_out" ? "#92400e" : "#475569");
+                        const lastActivityText = session.lastActivityAt ? new Date(session.lastActivityAt).toLocaleString() : "-";
+                        const startedText = session.startedAt ? new Date(session.startedAt).toLocaleString() : "-";
+                        const endedText = session.endedAt ? new Date(session.endedAt).toLocaleString() : "-";
+                        const isSelected = Number(session.id || 0) === Number(salesRepSelectedSessionId || 0);
                         return (
                           <button
                             key={`inbox-session-${session.id}`}
                             type="button"
-                            className="ai-copilot-choice-btn"
                             onClick={() => {
                               setSalesRepSelectedSessionId(Number(session.id || 0));
                               setAiCopilotOpen(true);
                             }}
-                            style={Number(session.id || 0) === Number(salesRepSelectedSessionId || 0) ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
+                            style={{
+                              textAlign: "left",
+                              width: "100%",
+                              borderRadius: 12,
+                              padding: "12px 14px",
+                              border: isSelected ? "2px solid #256fd6" : "1px solid #d4dbe6",
+                              background: "#fff",
+                              display: "grid",
+                              gap: 6
+                            }}
                           >
-                            {label} ({statusLabel}){session.hasUnread ? " (new)" : ""}
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                              <strong style={{ fontSize: "0.98rem", color: "#0f172a" }}>{label}</strong>
+                              <span className="small" style={{ color: "#334155" }}>{lastActivityText}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <span style={{ fontSize: "0.74rem", fontWeight: 700, color: statusColor, border: `1px solid ${statusColor}`, borderRadius: 999, padding: "1px 8px" }}>{statusLabel}</span>
+                              {session.hasUnread ? <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "#b91c1c" }}>New message</span> : null}
+                              <span className="small" style={{ color: "#64748b" }}>Started: {startedText}</span>
+                              {status !== "active" ? <span className="small" style={{ color: "#64748b" }}>Ended: {endedText}</span> : null}
+                            </div>
+                            <div className="small" style={{ color: "#334155", whiteSpace: "pre-wrap" }}>
+                              {String(session.lastMessagePreview || "").trim() || "No messages yet."}
+                            </div>
                           </button>
                         );
                       })}
