@@ -2973,9 +2973,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    const allowedRoutes = user.role === "admin"
-      ? new Set(["dashboard", "products", "requests", "users"])
-      : new Set(["dashboard", "products", "requests"]);
+    const role = normalizeUserRole(user.role);
+    const allowedRoutes = role === "admin"
+      ? new Set(["dashboard", "products", "requests", "users", "inbox"])
+      : (role === "sales_rep" ? new Set(["dashboard", "products", "requests", "inbox"]) : new Set(["dashboard", "products", "requests"]));
     if (!allowedRoutes.has(route)) {
       setRoute("dashboard");
       setProductsView("home");
@@ -3764,7 +3765,8 @@ export default function App() {
   }
 
   const refreshBuyerHumanChat = useCallback(async ({ silent = false } = {}) => {
-    if (!authToken || !user || normalizeUserRole(user.role) !== "buyer") return;
+    const role = normalizeUserRole(user?.role);
+    if (!authToken || !user || (role !== "buyer" && role !== "admin")) return;
     if (buyerHumanChatPollInFlightRef.current) return;
     buyerHumanChatPollInFlightRef.current = true;
     if (!silent) {
@@ -4746,9 +4748,10 @@ export default function App() {
     );
   }
 
-  const navItems = user.role === "admin"
-    ? [...baseNavItems, { key: "users", label: "Users", icon: "U" }]
-    : baseNavItems;
+  const userRole = normalizeUserRole(user?.role);
+  const navItems = userRole === "admin"
+    ? [...baseNavItems, { key: "inbox", label: "Inbox", icon: "I" }, { key: "users", label: "Users", icon: "U" }]
+    : (userRole === "sales_rep" ? [...baseNavItems, { key: "inbox", label: "Inbox", icon: "I" }] : baseNavItems);
 
   const categories = categoryNames;
   const weeklySpecialDevices = products.filter((p) => p.weeklySpecial === true);
@@ -5212,6 +5215,10 @@ export default function App() {
     humanChatSession?.salesRepEmail,
     "SR"
   );
+  const inboxUnreadCount = userRole === "sales_rep"
+    ? salesRepInbox.filter((s) => s?.hasUnread === true).length
+    : (userRole === "admin" ? Math.max(0, Number(humanChatUnreadCount || 0)) : 0);
+  const inboxHasUnread = inboxUnreadCount > 0;
   const chatUnreadCount = Math.max(
     0,
     Number(aiCopilotUnreadCount || 0) + (aiCopilotOpen ? 0 : Number(humanChatUnreadCount || 0))
@@ -5256,7 +5263,10 @@ export default function App() {
               <span className="nav-icon-wrap">
                 {n.icon === "phone" ? <PhoneNavIcon /> : n.icon === "dashboard" ? <DashboardNavIcon /> : <span className="nav-icon">{n.icon}</span>}
               </span>
-              <span className="nav-label">{n.label}</span>
+              <span className="nav-label">
+                {n.label}
+                {n.key === "inbox" && inboxHasUnread ? <span style={{ marginLeft: 6, color: "#dc2626", fontWeight: 700 }}>•</span> : null}
+              </span>
             </button>
           ))}
         </nav>
@@ -6333,7 +6343,67 @@ export default function App() {
             </section>
           )}
 
-          {route !== "dashboard" && route !== "products" && route !== "requests" && route !== "users" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
+          {route === "inbox" && (
+            <section className="panel">
+              <h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 10 }}>Inbox</h2>
+              {userRole === "sales_rep" ? (
+                <>
+                  <p className="small" style={{ marginTop: 0 }}>
+                    Active buyer conversations{inboxHasUnread ? ` (${inboxUnreadCount} unread)` : ""}.
+                  </p>
+                  {salesRepInbox.length ? (
+                    <div className="ai-copilot-choice-list">
+                      {salesRepInbox.map((session) => {
+                        const label = `${session.company} - ${buildPersonDisplayName(session.buyerFirstName, session.buyerLastName, session.buyerEmail, "Buyer")}`;
+                        return (
+                          <button
+                            key={`inbox-session-${session.id}`}
+                            type="button"
+                            className="ai-copilot-choice-btn"
+                            onClick={() => {
+                              setSalesRepSelectedSessionId(Number(session.id || 0));
+                              setAiCopilotOpen(true);
+                            }}
+                            style={Number(session.id || 0) === Number(salesRepSelectedSessionId || 0) ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
+                          >
+                            {label}{session.hasUnread ? " (new)" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="small">No active conversations.</p>
+                  )}
+                </>
+              ) : userRole === "admin" ? (
+                <>
+                  <p className="small" style={{ marginTop: 0 }}>Direct chat with sales rep.</p>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="saved-filter-save-btn"
+                      style={{ width: "auto" }}
+                      onClick={async () => {
+                        const connected = await requestHumanHandoff("Hi, I would like to talk to a sales rep.");
+                        if (connected) setAiCopilotOpen(true);
+                      }}
+                      disabled={humanChatLoading}
+                    >
+                      {humanChatLoading ? "Connecting..." : "Connect to Sales Rep"}
+                    </button>
+                    <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => setAiCopilotOpen(true)}>
+                      Open Chat Window
+                    </button>
+                  </div>
+                  {inboxHasUnread ? <p className="small" style={{ marginTop: 10, color: "#dc2626" }}>You have unread messages.</p> : null}
+                </>
+              ) : (
+                <p className="small">Inbox is available for admins and sales reps.</p>
+              )}
+            </section>
+          )}
+
+          {route !== "dashboard" && route !== "products" && route !== "requests" && route !== "users" && route !== "inbox" && <section className="panel"><h2 className="page-title" style={{ fontSize: "2rem", marginBottom: 8 }}>{navItems.find((n) => n.key === route)?.label || "Page"}</h2><p className="muted">This section is not part of MVP flow in this demo build.</p></section>}
         </main>
       </div>
 

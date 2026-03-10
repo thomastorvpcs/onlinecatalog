@@ -789,11 +789,27 @@ async function ensurePostgresRuntimeSchema() {
       id BIGSERIAL PRIMARY KEY,
       session_id BIGINT NOT NULL REFERENCES ${postgresTableRef("chat_sessions")}(id) ON DELETE CASCADE,
       sender_user_id BIGINT REFERENCES ${postgresTableRef("users")}(id) ON DELETE SET NULL,
-      sender_role TEXT NOT NULL CHECK (sender_role IN ('buyer', 'sales_rep', 'system', 'ai')),
+      sender_role TEXT NOT NULL CHECK (sender_role IN ('buyer', 'admin', 'sales_rep', 'system', 'ai')),
       message TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pgClient.query(`
+    DO $$
+    DECLARE c RECORD;
+    BEGIN
+      FOR c IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = '${PG_SCHEMA}.chat_messages'::regclass
+          AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%sender_role%'
+      LOOP
+        EXECUTE format('ALTER TABLE ${postgresTableRef("chat_messages")} DROP CONSTRAINT %I', c.conname);
+      END LOOP;
+    END$$;
+  `);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("chat_messages")} ADD CONSTRAINT chat_messages_sender_role_check CHECK (sender_role IN ('buyer', 'admin', 'sales_rep', 'system', 'ai'))`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON ${postgresTableRef("chat_messages")} (session_id, id)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
