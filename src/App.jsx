@@ -4024,13 +4024,33 @@ export default function App() {
     if (!sessionId || !status || status === "active") return;
     if (Number(humanChatEndedNoticeSessionRef.current || 0) === sessionId) return;
     humanChatEndedNoticeSessionRef.current = sessionId;
-    setAiCopilotMessages((prev) => [...prev, {
-      role: "assistant",
-      text: "Welcome back. I am here if you need any more assistance.",
-      action: null,
-      topic: "general",
-      timestamp: new Date().toISOString()
-    }]);
+    const closeReason = String(humanChatSession?.closeReason || "").toLowerCase();
+    const endedBy = String(humanChatSession?.endedBy || "").toLowerCase();
+    const timestamp = new Date().toISOString();
+    const returnNotice = closeReason === "inactive_timeout_5m" || status === "timed_out"
+      ? "You have been redirected back to the AI chat because the human chat was inactive."
+      : (endedBy === "sales_rep"
+        ? "Your human chat was ended by your sales rep."
+        : (endedBy === "buyer"
+          ? "You ended the human chat."
+          : "Your human chat has ended."));
+    setAiCopilotMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        text: returnNotice,
+        action: null,
+        topic: "general",
+        timestamp
+      },
+      {
+        role: "assistant",
+        text: "Welcome back. Do you need any more assistance?",
+        action: null,
+        topic: "general",
+        timestamp: new Date().toISOString()
+      }
+    ]);
   }, [user, humanChatSession]);
 
   useEffect(() => () => {
