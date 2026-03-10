@@ -3628,7 +3628,10 @@ export default function App() {
   }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading, aiCopilotGreetingTyping]);
 
   useEffect(() => {
-    if (!aiCopilotOpen || !humanChatAvailable) return;
+    const isSalesRepLocal = normalizeUserRole(user?.role) === "sales_rep";
+    const isHumanSessionActiveLocal = Number(humanChatSession?.id || 0) > 0 && String(humanChatSession?.status || "") === "active";
+    const humanChatAvailableLocal = isSalesRepLocal || isHumanSessionActiveLocal;
+    if (!aiCopilotOpen || !humanChatAvailableLocal) return;
     const node = aiCopilotFeedRef.current;
     if (!node) return;
     const sessionId = Number(humanChatSession?.id || 0);
@@ -3645,7 +3648,7 @@ export default function App() {
       node.scrollTop = node.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [aiCopilotOpen, humanChatAvailable, humanChatSession, humanChatMessages]);
+  }, [aiCopilotOpen, user, humanChatSession, humanChatMessages]);
 
   function handleAiCopilotResizeAtY(clientY) {
     const state = aiCopilotResizeRef.current;
