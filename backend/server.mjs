@@ -2615,7 +2615,13 @@ function mapChatSessionRow(row) {
     endedBy: row.ended_by || null,
     closeReason: row.close_reason || null,
     lastMessageSenderRole: row.last_message_sender_role || null,
-    lastMessagePreview: row.last_message_preview || null
+    lastMessagePreview: row.last_message_preview || null,
+    buyerEmail: String(row.buyer_email || ""),
+    buyerFirstName: String(row.buyer_first_name || ""),
+    buyerLastName: String(row.buyer_last_name || ""),
+    salesRepEmail: String(row.sales_rep_email || ""),
+    salesRepFirstName: String(row.sales_rep_first_name || ""),
+    salesRepLastName: String(row.sales_rep_last_name || "")
   };
 }
 
@@ -2731,9 +2737,18 @@ async function getCurrentChatSessionForBuyerRuntime(user) {
   const uid = Number(user?.id || 0);
   if (!Number.isInteger(uid) || uid < 1) return null;
   const result = await pgClient.query(`
-    SELECT *
-    FROM ${postgresTableRef("chat_sessions")}
-    WHERE buyer_user_id = $1
+    SELECT
+      s.*,
+      b.email AS buyer_email,
+      b.first_name AS buyer_first_name,
+      b.last_name AS buyer_last_name,
+      r.email AS sales_rep_email,
+      r.first_name AS sales_rep_first_name,
+      r.last_name AS sales_rep_last_name
+    FROM ${postgresTableRef("chat_sessions")} s
+    LEFT JOIN ${postgresTableRef("users")} b ON b.id = s.buyer_user_id
+    LEFT JOIN ${postgresTableRef("users")} r ON r.id = s.sales_rep_user_id
+    WHERE s.buyer_user_id = $1
     ORDER BY last_activity_at DESC, id DESC
     LIMIT 1
   `, [uid]);
@@ -2798,7 +2813,21 @@ async function getChatSessionByIdRuntime(sessionIdRaw) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const sessionId = Number(sessionIdRaw);
   if (!Number.isInteger(sessionId) || sessionId < 1) return null;
-  const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("chat_sessions")} WHERE id = $1 LIMIT 1`, [sessionId]);
+  const result = await pgClient.query(`
+    SELECT
+      s.*,
+      b.email AS buyer_email,
+      b.first_name AS buyer_first_name,
+      b.last_name AS buyer_last_name,
+      r.email AS sales_rep_email,
+      r.first_name AS sales_rep_first_name,
+      r.last_name AS sales_rep_last_name
+    FROM ${postgresTableRef("chat_sessions")} s
+    LEFT JOIN ${postgresTableRef("users")} b ON b.id = s.buyer_user_id
+    LEFT JOIN ${postgresTableRef("users")} r ON r.id = s.sales_rep_user_id
+    WHERE s.id = $1
+    LIMIT 1
+  `, [sessionId]);
   return result.rows?.[0] || null;
 }
 

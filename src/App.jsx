@@ -116,6 +116,29 @@ function formatChatTimestamp(value) {
   return chatTimeFormatter.format(parsed);
 }
 
+function buildPersonDisplayName(firstName, lastName, email, fallback = "") {
+  const first = String(firstName || "").trim();
+  const last = String(lastName || "").trim();
+  const name = [first, last].filter(Boolean).join(" ").trim();
+  if (name) return name;
+  const mail = String(email || "").trim();
+  if (mail) return mail;
+  return String(fallback || "").trim();
+}
+
+function buildInitialsFromPerson(firstName, lastName, email, fallback = "SR") {
+  const first = String(firstName || "").trim();
+  const last = String(lastName || "").trim();
+  const letters = `${first.charAt(0)}${last.charAt(0)}`.toUpperCase().replace(/[^A-Z]/g, "");
+  if (letters) return letters.slice(0, 2);
+  const mail = String(email || "").trim();
+  if (mail.includes("@")) {
+    const local = mail.split("@")[0].replace(/[^a-zA-Z]/g, "");
+    if (local) return local.slice(0, 2).toUpperCase();
+  }
+  return String(fallback || "SR").slice(0, 2).toUpperCase();
+}
+
 function formatDurationMs(value) {
   const ms = Math.max(0, Number(value || 0));
   const totalSeconds = Math.floor(ms / 1000);
@@ -3775,7 +3798,7 @@ export default function App() {
       if (!silent) setHumanChatError(error.message || "Failed to load sales rep inbox.");
     } finally {
       salesRepInboxPollInFlightRef.current = false;
-      if (!silent) setSalesRepInboxLoading(false);
+      setSalesRepInboxLoading(false);
     }
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState, salesRepSelectedSessionId]);
 
@@ -5117,6 +5140,33 @@ export default function App() {
   const isSalesRepUser = normalizeUserRole(user?.role) === "sales_rep";
   const isHumanSessionActive = Number(humanChatSession?.id || 0) > 0 && String(humanChatSession?.status || "") === "active";
   const humanChatAvailable = isSalesRepUser || isHumanSessionActive;
+  const selectedSalesRepSession = isSalesRepUser
+    ? (salesRepInbox.find((session) => Number(session.id || 0) === Number(salesRepSelectedSessionId || 0)) || null)
+    : null;
+  const activeBuyerDisplayName = buildPersonDisplayName(
+    selectedSalesRepSession?.buyerFirstName || humanChatSession?.buyerFirstName,
+    selectedSalesRepSession?.buyerLastName || humanChatSession?.buyerLastName,
+    selectedSalesRepSession?.buyerEmail || humanChatSession?.buyerEmail,
+    "Buyer"
+  );
+  const activeBuyerInitials = buildInitialsFromPerson(
+    selectedSalesRepSession?.buyerFirstName || humanChatSession?.buyerFirstName,
+    selectedSalesRepSession?.buyerLastName || humanChatSession?.buyerLastName,
+    selectedSalesRepSession?.buyerEmail || humanChatSession?.buyerEmail,
+    "BY"
+  );
+  const salesRepDisplayName = buildPersonDisplayName(
+    humanChatSession?.salesRepFirstName,
+    humanChatSession?.salesRepLastName,
+    humanChatSession?.salesRepEmail,
+    "Sales Rep"
+  );
+  const salesRepInitials = buildInitialsFromPerson(
+    humanChatSession?.salesRepFirstName,
+    humanChatSession?.salesRepLastName,
+    humanChatSession?.salesRepEmail,
+    "SR"
+  );
   const chatUnreadCount = Math.max(
     0,
     Number(aiCopilotUnreadCount || 0) + (aiCopilotOpen ? 0 : Number(humanChatUnreadCount || 0))
@@ -6293,12 +6343,10 @@ export default function App() {
                   {isSalesRepUser ? (
                     <div style={{ marginBottom: 8 }}>
                       <div className="small" style={{ marginBottom: 6 }}>Active buyer conversations</div>
-                      {salesRepInboxLoading ? (
-                        <div className="small">Loading inbox...</div>
-                      ) : salesRepInbox.length ? (
+                      {salesRepInbox.length ? (
                         <div className="ai-copilot-choice-list">
                           {salesRepInbox.map((session) => {
-                            const label = `${session.company} - ${session.buyerFirstName || session.buyerEmail || "Buyer"}`;
+                            const label = `${session.company} - ${buildPersonDisplayName(session.buyerFirstName, session.buyerLastName, session.buyerEmail, "Buyer")}`;
                             return (
                               <button
                                 key={`rep-session-${session.id}`}
@@ -6312,26 +6360,35 @@ export default function App() {
                             );
                           })}
                         </div>
+                      ) : salesRepInboxLoading ? (
+                        <div className="small">Loading inbox...</div>
                       ) : (
                         <div className="small">No active buyer conversations.</div>
                       )}
+                      {salesRepInboxLoading && salesRepInbox.length ? <div className="small" style={{ marginTop: 6 }}>Refreshing...</div> : null}
                     </div>
                   ) : null}
 
                   {humanChatSession ? (
                     <>
+                      {isSalesRepUser ? (
+                        <div className="small" style={{ marginBottom: 8 }}>
+                          Talking with: {activeBuyerDisplayName}{humanChatSession?.company ? ` (${humanChatSession.company})` : ""}
+                        </div>
+                      ) : null}
                       {humanChatMessages.length ? humanChatMessages.map((message, idx) => {
                         const senderRole = String(message?.senderRole || "").trim().toLowerCase();
                         const mine = (senderRole === "buyer" && normalizeUserRole(user?.role) === "buyer")
                           || (senderRole === "sales_rep" && normalizeUserRole(user?.role) === "sales_rep");
                         const visualRole = mine ? "user" : "assistant";
+                        const avatarText = senderRole === "sales_rep"
+                          ? salesRepInitials
+                          : (senderRole === "buyer" ? activeBuyerInitials : "HS");
                         return (
                           <div key={`human-msg-${message.id || idx}`} className={`ai-copilot-row ${visualRole}`}>
                             {!mine ? (
-                              <span className="ai-copilot-avatar" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="img" focusable="false">
-                                  <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5z" />
-                                </svg>
+                              <span className="ai-copilot-avatar" aria-hidden="true" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>
+                                {avatarText}
                               </span>
                             ) : null}
                             <div className={`ai-copilot-msg ${visualRole}`}>
@@ -6493,7 +6550,7 @@ export default function App() {
                     onClick={() => sendHumanChatMessage(aiCopilotInput)}
                     disabled={humanChatLoading || String(humanChatSession?.status || "") !== "active"}
                   >
-                    {humanChatLoading ? "Sending..." : "Send"}
+                    Send
                   </button>
                 </>
               ) : (
