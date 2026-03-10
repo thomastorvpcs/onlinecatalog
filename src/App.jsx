@@ -2068,6 +2068,15 @@ export default function App() {
   const [aiCopilotCurrentTopic, setAiCopilotCurrentTopic] = useState("general");
   const [aiCopilotListening, setAiCopilotListening] = useState(false);
   const [aiCopilotVoiceError, setAiCopilotVoiceError] = useState("");
+  const [humanChatSession, setHumanChatSession] = useState(null);
+  const [humanChatMessages, setHumanChatMessages] = useState([]);
+  const [humanChatLoading, setHumanChatLoading] = useState(false);
+  const [humanChatError, setHumanChatError] = useState("");
+  const [humanChatEnding, setHumanChatEnding] = useState(false);
+  const [salesRepInbox, setSalesRepInbox] = useState([]);
+  const [salesRepInboxLoading, setSalesRepInboxLoading] = useState(false);
+  const [salesRepSelectedSessionId, setSalesRepSelectedSessionId] = useState(0);
+  const [humanChatUnreadCount, setHumanChatUnreadCount] = useState(0);
   const [adminAiAnomaliesLoading, setAdminAiAnomaliesLoading] = useState(false);
   const [adminAiAnomalies, setAdminAiAnomalies] = useState([]);
   const [adminAiInsightsLoading, setAdminAiInsightsLoading] = useState(false);
@@ -2250,6 +2259,15 @@ export default function App() {
     setAiCopilotCurrentTopic("general");
     setAiCopilotListening(false);
     setAiCopilotVoiceError("");
+    setHumanChatSession(null);
+    setHumanChatMessages([]);
+    setHumanChatLoading(false);
+    setHumanChatError("");
+    setHumanChatEnding(false);
+    setSalesRepInbox([]);
+    setSalesRepInboxLoading(false);
+    setSalesRepSelectedSessionId(0);
+    setHumanChatUnreadCount(0);
     setAiCopilotPanelHeight(0);
     setAiCopilotMinPanelHeight(0);
     aiCopilotPendingResultCheckRef.current = null;
@@ -2875,6 +2893,40 @@ export default function App() {
       .length;
     setAiCopilotUnreadCount(nextUnread);
   }, [aiCopilotMessages, aiCopilotOpen, aiCopilotUnreadCount]);
+
+  useEffect(() => {
+    if (!user || !authToken) return;
+    const role = normalizeUserRole(user.role);
+    if (role === "buyer") {
+      refreshBuyerHumanChat({ silent: false });
+      const timer = setInterval(() => {
+        refreshBuyerHumanChat({ silent: true });
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+    if (role === "sales_rep") {
+      refreshSalesRepInbox({ silent: false });
+      const timer = setInterval(() => {
+        refreshSalesRepInbox({ silent: true });
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+    setHumanChatUnreadCount(0);
+  }, [user, authToken, refreshBuyerHumanChat, refreshSalesRepInbox]);
+
+  useEffect(() => {
+    if (!user || normalizeUserRole(user.role) !== "sales_rep") return;
+    if (!salesRepSelectedSessionId) {
+      setHumanChatSession(null);
+      setHumanChatMessages([]);
+      return;
+    }
+    loadSalesRepSession(salesRepSelectedSessionId, { silent: false });
+    const timer = setInterval(() => {
+      loadSalesRepSession(salesRepSelectedSessionId, { silent: true });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [user, salesRepSelectedSessionId, loadSalesRepSession]);
 
   useEffect(() => {
     if (!aiCopilotOpen) return;
@@ -3652,6 +3704,13 @@ export default function App() {
       && /\b(request|requested items?|quote|order|cart)\b/.test(message);
   }
 
+  function isCopilotHumanHandoffIntent(messageRaw) {
+    const message = String(messageRaw || "").trim().toLowerCase();
+    if (!message) return false;
+    return /\b(human|sales rep|sales representative|real person|agent|support)\b/.test(message)
+      && /\b(talk|speak|chat|connect|contact)\b/.test(message);
+  }
+
   function polishCopilotOutgoingMessage(messageRaw) {
     const base = String(messageRaw || "").replace(/\s+/g, " ").trim();
     if (!base) return "";
@@ -3687,6 +3746,166 @@ export default function App() {
     return null;
   }
 
+  const refreshBuyerHumanChat = useCallback(async ({ silent = false } = {}) => {
+    if (!authToken || !user || normalizeUserRole(user.role) !== "buyer") return;
+    if (!silent) {
+      setHumanChatLoading(true);
+      setHumanChatError("");
+    }
+    try {
+      const payload = await apiRequest("/api/chat/session/current", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      const session = payload?.session || null;
+      const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+      setHumanChatSession(session);
+      setHumanChatMessages(messages);
+      if (session?.status === "active") {
+        setHumanChatUnreadCount(String(session.lastMessageSenderRole || "") === "sales_rep" ? 1 : 0);
+      } else {
+        setHumanChatUnreadCount(0);
+      }
+    } catch (error) {
+      if (!silent) setHumanChatError(error.message || "Failed to load human support chat.");
+    } finally {
+      if (!silent) setHumanChatLoading(false);
+    }
+  }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
+
+  const refreshSalesRepInbox = useCallback(async ({ silent = false } = {}) => {
+    if (!authToken || !user || normalizeUserRole(user.role) !== "sales_rep") return;
+    if (!silent) {
+      setSalesRepInboxLoading(true);
+      setHumanChatError("");
+    }
+    try {
+      const payload = await apiRequest("/api/chat/inbox", {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+      setSalesRepInbox(sessions);
+      const unread = sessions.filter((s) => s.hasUnread === true).length;
+      setHumanChatUnreadCount(unread);
+      if (!salesRepSelectedSessionId && sessions.length) {
+        setSalesRepSelectedSessionId(Number(sessions[0].id || 0));
+      } else if (salesRepSelectedSessionId && !sessions.some((s) => Number(s.id || 0) === Number(salesRepSelectedSessionId))) {
+        setSalesRepSelectedSessionId(sessions.length ? Number(sessions[0].id || 0) : 0);
+      }
+    } catch (error) {
+      if (!silent) setHumanChatError(error.message || "Failed to load sales rep inbox.");
+    } finally {
+      if (!silent) setSalesRepInboxLoading(false);
+    }
+  }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState, salesRepSelectedSessionId]);
+
+  const loadSalesRepSession = useCallback(async (sessionIdRaw, { silent = false } = {}) => {
+    const sessionId = Number(sessionIdRaw || 0);
+    if (!authToken || !user || normalizeUserRole(user.role) !== "sales_rep" || !sessionId) return;
+    if (!silent) {
+      setHumanChatLoading(true);
+      setHumanChatError("");
+    }
+    try {
+      const payload = await apiRequest(`/api/chat/session/current?sessionId=${encodeURIComponent(sessionId)}`, {
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setHumanChatSession(payload?.session || null);
+      setHumanChatMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+    } catch (error) {
+      if (!silent) setHumanChatError(error.message || "Failed to load selected conversation.");
+    } finally {
+      if (!silent) setHumanChatLoading(false);
+    }
+  }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
+
+  const requestHumanHandoff = useCallback(async (initialMessage) => {
+    if (!authToken || !user || normalizeUserRole(user.role) !== "buyer") return false;
+    setHumanChatLoading(true);
+    setHumanChatError("");
+    try {
+      const payload = await apiRequest("/api/chat/handoff/request", {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { message: String(initialMessage || "").trim() || "I would like to talk to my sales rep." }
+      });
+      setHumanChatSession(payload?.session || null);
+      setHumanChatMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+      setHumanChatUnreadCount(0);
+      return true;
+    } catch (error) {
+      setHumanChatError(error.message || "Could not connect you with a sales rep.");
+      return false;
+    } finally {
+      setHumanChatLoading(false);
+    }
+  }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
+
+  const sendHumanChatMessage = useCallback(async (messageRaw) => {
+    const sessionId = Number(humanChatSession?.id || 0);
+    if (!authToken || !user || !sessionId || String(humanChatSession?.status || "") !== "active") return;
+    const message = String(messageRaw || "").trim();
+    if (!message) return;
+    setHumanChatLoading(true);
+    setHumanChatError("");
+    try {
+      await apiRequest(`/api/chat/session/${encodeURIComponent(sessionId)}/messages`, {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { message }
+      });
+      if (normalizeUserRole(user.role) === "buyer") {
+        await refreshBuyerHumanChat({ silent: true });
+      } else {
+        await loadSalesRepSession(sessionId, { silent: true });
+        await refreshSalesRepInbox({ silent: true });
+      }
+    } catch (error) {
+      setHumanChatError(error.message || "Failed to send message.");
+    } finally {
+      setHumanChatLoading(false);
+    }
+  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshBuyerHumanChat, loadSalesRepSession, refreshSalesRepInbox]);
+
+  const endHumanChatConversation = useCallback(async () => {
+    const sessionId = Number(humanChatSession?.id || 0);
+    if (!authToken || !user || !sessionId) return;
+    setHumanChatEnding(true);
+    setHumanChatError("");
+    try {
+      const payload = await apiRequest(`/api/chat/session/${encodeURIComponent(sessionId)}/end`, {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState
+      });
+      setHumanChatSession(payload?.session || null);
+      setHumanChatMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+      if (normalizeUserRole(user.role) === "sales_rep") {
+        await refreshSalesRepInbox({ silent: true });
+      }
+    } catch (error) {
+      setHumanChatError(error.message || "Failed to end conversation.");
+    } finally {
+      setHumanChatEnding(false);
+    }
+  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshSalesRepInbox]);
+
   const runAiCopilot = async (messageOverride = null) => {
     if (!authToken || !user || aiCopilotLoading) return;
     if (aiCopilotListening) {
@@ -3696,6 +3915,26 @@ export default function App() {
     const message = polishCopilotOutgoingMessage(String((safeOverride ?? aiCopilotInput) || ""));
     if (!message) {
       setAiCopilotError("Enter a message first.");
+      return;
+    }
+    const isHumanSessionActive = Number(humanChatSession?.id || 0) > 0 && String(humanChatSession?.status || "") === "active";
+    if (isHumanSessionActive) {
+      setAiCopilotInput("");
+      await sendHumanChatMessage(message);
+      return;
+    }
+    if (normalizeUserRole(user.role) === "buyer" && isCopilotHumanHandoffIntent(message)) {
+      setAiCopilotInput("");
+      const connected = await requestHumanHandoff(message);
+      if (connected) {
+        setAiCopilotMessages((prev) => [...prev, {
+          role: "assistant",
+          text: "Connecting you with your sales rep now.",
+          action: null,
+          topic: "general",
+          timestamp: new Date().toISOString()
+        }]);
+      }
       return;
     }
     if (isCopilotShowMoreFollowUp(message)) {
@@ -4863,6 +5102,13 @@ export default function App() {
     ? `${Math.floor(sessionSecondsLeft / 60)}:${String(sessionSecondsLeft % 60).padStart(2, "0")}`
     : "0:00";
   const canManageRequests = normalizeUserRole(user?.role) !== "sales_rep";
+  const isSalesRepUser = normalizeUserRole(user?.role) === "sales_rep";
+  const isHumanSessionActive = Number(humanChatSession?.id || 0) > 0 && String(humanChatSession?.status || "") === "active";
+  const humanChatAvailable = isSalesRepUser || isHumanSessionActive;
+  const chatUnreadCount = Math.max(
+    0,
+    Number(aiCopilotUnreadCount || 0) + (aiCopilotOpen ? 0 : Number(humanChatUnreadCount || 0))
+  );
   const shortcutEntries = [...new Set([...categories, ALL_CATEGORIES_KEY])].flatMap((categoryName) =>
     (shortcutFiltersByCategory[categoryName] || []).map((savedFilter) => ({
       categoryName,
@@ -6015,7 +6261,7 @@ export default function App() {
                     <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
                   </svg>
                 </span>
-                <div className="small">Available across the app</div>
+                <div className="small">{humanChatAvailable ? "Human support chat" : "Available across the app"}</div>
               </div>
               <button
                 type="button"
@@ -6030,108 +6276,179 @@ export default function App() {
               </button>
             </div>
             <div className="ai-copilot-feed" ref={aiCopilotFeedRef}>
-              {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => {
-                const messageKey = `${String(message.timestamp || "")}:${String(message.text || "").slice(0, 80)}:${idx}`;
-                const optionList = Array.isArray(message?.action?.options) ? message.action.options : [];
-                const visibleOptionCount = Math.max(10, Number(aiCopilotOptionVisibleCountByMessage[messageKey] || 10));
-                const visibleOptions = optionList.slice(0, visibleOptionCount);
-                const canShowMoreOptions = optionList.length > visibleOptionCount;
-                return (
-                <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-row ${message.role}`}>
-                  {message.role === "assistant" ? (
-                    <span className="ai-copilot-avatar" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" role="img" focusable="false">
-                        <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
-                      </svg>
-                    </span>
+              {humanChatAvailable ? (
+                <>
+                  {isSalesRepUser ? (
+                    <div style={{ marginBottom: 8 }}>
+                      <div className="small" style={{ marginBottom: 6 }}>Active buyer conversations</div>
+                      {salesRepInboxLoading ? (
+                        <div className="small">Loading inbox...</div>
+                      ) : salesRepInbox.length ? (
+                        <div className="ai-copilot-choice-list">
+                          {salesRepInbox.map((session) => {
+                            const label = `${session.company} - ${session.buyerFirstName || session.buyerEmail || "Buyer"}`;
+                            return (
+                              <button
+                                key={`rep-session-${session.id}`}
+                                type="button"
+                                className="ai-copilot-choice-btn"
+                                onClick={() => setSalesRepSelectedSessionId(Number(session.id || 0))}
+                                style={Number(session.id || 0) === Number(salesRepSelectedSessionId || 0) ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
+                              >
+                                {label}{session.hasUnread ? " (new)" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="small">No active buyer conversations.</div>
+                      )}
+                    </div>
                   ) : null}
-                  <div className={`ai-copilot-msg ${message.role}`}>
-                    <div style={{ whiteSpace: "pre-wrap" }}>{message.text}</div>
-                    {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
-                    {message.role === "assistant" && message.action?.type === "apply_filters" ? (
-                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
-                        Apply Suggested Filters
-                      </button>
-                    ) : null}
-                    {message.role === "assistant" && message.action?.type === "add_to_request" ? (
-                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
-                        Add To Requested Items
-                      </button>
-                    ) : null}
-                    {message.role === "assistant" && message.action?.type === "add_lines_to_request" ? (
-                      <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
-                        Add Available Items
-                      </button>
-                    ) : null}
-                    {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && optionList.length ? (
-                      <div className="ai-copilot-choice-list">
-                        {visibleOptions.map((option) => (
-                          <button
-                            key={`${option.id}-${option.label}`}
-                            type="button"
-                            className="ai-copilot-choice-btn"
-                            title={option.description || option.label}
-                            onClick={() => {
-                              const nextAction = option?.payload && typeof option.payload === "object" && option.payload.type
-                                ? option.payload
-                                : { type: "apply_filters", payload: option.payload };
-                              applyCopilotAction(nextAction);
-                            }}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                        {canShowMoreOptions ? (
-                          <button
-                            type="button"
-                            className="ghost-btn"
-                            style={{ width: "auto", marginTop: 4 }}
-                            onClick={() => {
-                              setAiCopilotOptionVisibleCountByMessage((prev) => ({
-                                ...prev,
-                                [messageKey]: visibleOptionCount + 10
-                              }));
-                            }}
-                          >
-                            Show 10 more
+
+                  {humanChatSession ? (
+                    <>
+                      {humanChatMessages.length ? humanChatMessages.map((message, idx) => {
+                        const senderRole = String(message?.senderRole || "").trim().toLowerCase();
+                        const mine = (senderRole === "buyer" && normalizeUserRole(user?.role) === "buyer")
+                          || (senderRole === "sales_rep" && normalizeUserRole(user?.role) === "sales_rep");
+                        const visualRole = mine ? "user" : "assistant";
+                        return (
+                          <div key={`human-msg-${message.id || idx}`} className={`ai-copilot-row ${visualRole}`}>
+                            {!mine ? (
+                              <span className="ai-copilot-avatar" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="img" focusable="false">
+                                  <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5z" />
+                                </svg>
+                              </span>
+                            ) : null}
+                            <div className={`ai-copilot-msg ${visualRole}`}>
+                              <div style={{ whiteSpace: "pre-wrap" }}>{message.message}</div>
+                              {message.createdAt ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.createdAt)}</div> : null}
+                            </div>
+                          </div>
+                        );
+                      }) : <div className="small">No messages yet.</div>}
+                      {String(humanChatSession.status || "") !== "active" ? (
+                        <div className="small" style={{ marginTop: 8 }}>Conversation ended. AI assistant is active again.</div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="small">
+                      {isSalesRepUser ? "Select a buyer conversation to start chatting." : "No active human conversation."}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {aiCopilotMessages.length ? aiCopilotMessages.slice(-10).map((message, idx) => {
+                    const messageKey = `${String(message.timestamp || "")}:${String(message.text || "").slice(0, 80)}:${idx}`;
+                    const optionList = Array.isArray(message?.action?.options) ? message.action.options : [];
+                    const visibleOptionCount = Math.max(10, Number(aiCopilotOptionVisibleCountByMessage[messageKey] || 10));
+                    const visibleOptions = optionList.slice(0, visibleOptionCount);
+                    const canShowMoreOptions = optionList.length > visibleOptionCount;
+                    return (
+                    <div key={`copilot-msg-global-${idx}`} className={`ai-copilot-row ${message.role}`}>
+                      {message.role === "assistant" ? (
+                        <span className="ai-copilot-avatar" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" role="img" focusable="false">
+                            <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+                          </svg>
+                        </span>
+                      ) : null}
+                      <div className={`ai-copilot-msg ${message.role}`}>
+                        <div style={{ whiteSpace: "pre-wrap" }}>{message.text}</div>
+                        {message.timestamp ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.timestamp)}</div> : null}
+                        {message.role === "assistant" && message.action?.type === "apply_filters" ? (
+                          <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                            Apply Suggested Filters
                           </button>
                         ) : null}
+                        {message.role === "assistant" && message.action?.type === "add_to_request" ? (
+                          <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                            Add To Requested Items
+                          </button>
+                        ) : null}
+                        {message.role === "assistant" && message.action?.type === "add_lines_to_request" ? (
+                          <button type="button" className="ghost-btn" style={{ width: "auto", marginTop: 6 }} onClick={() => applyCopilotAction(message.action)}>
+                            Add Available Items
+                          </button>
+                        ) : null}
+                        {message.role === "assistant" && (message.action?.type === "choose_filters" || message.action?.type === "choose_devices") && optionList.length ? (
+                          <div className="ai-copilot-choice-list">
+                            {visibleOptions.map((option) => (
+                              <button
+                                key={`${option.id}-${option.label}`}
+                                type="button"
+                                className="ai-copilot-choice-btn"
+                                title={option.description || option.label}
+                                onClick={() => {
+                                  const nextAction = option?.payload && typeof option.payload === "object" && option.payload.type
+                                    ? option.payload
+                                    : { type: "apply_filters", payload: option.payload };
+                                  applyCopilotAction(nextAction);
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                            {canShowMoreOptions ? (
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                style={{ width: "auto", marginTop: 4 }}
+                                onClick={() => {
+                                  setAiCopilotOptionVisibleCountByMessage((prev) => ({
+                                    ...prev,
+                                    [messageKey]: visibleOptionCount + 10
+                                  }));
+                                }}
+                              >
+                                Show 10 more
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                </div>
-                );
-              }) : (
-                <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
+                    </div>
+                    );
+                  }) : (
+                    <div className="small">Try: "Find Apple CPO in Miami 128GB".</div>
+                  )}
+                  {(aiCopilotLoading || aiCopilotGreetingTyping) ? (
+                    <div className="ai-copilot-row assistant">
+                      <span className="ai-copilot-avatar" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" role="img" focusable="false">
+                          <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
+                        </svg>
+                      </span>
+                      <div className="ai-copilot-msg assistant typing">
+                        <span>Writing</span>
+                        <span className="ai-typing-dots" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               )}
-              {(aiCopilotLoading || aiCopilotGreetingTyping) ? (
-                <div className="ai-copilot-row assistant">
-                  <span className="ai-copilot-avatar" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" role="img" focusable="false">
-                      <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
-                    </svg>
-                  </span>
-                  <div className="ai-copilot-msg assistant typing">
-                    <span>Writing</span>
-                    <span className="ai-typing-dots" aria-hidden="true">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </div>
-                </div>
-              ) : null}
             </div>
             <div className="saved-filters-form" style={{ marginTop: 8 }}>
               <input
                 className="saved-filter-input"
                 value={aiCopilotInput}
                 onChange={(e) => setAiCopilotInput(e.target.value)}
-                placeholder="Ask AI Copilot..."
+                placeholder={humanChatAvailable ? (isSalesRepUser ? "Message buyer..." : "Message your sales rep...") : "Ask AI Copilot..."}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    runAiCopilot();
+                    if (humanChatAvailable) {
+                      sendHumanChatMessage(aiCopilotInput);
+                    } else {
+                      runAiCopilot();
+                    }
                   }
                 }}
               />
@@ -6139,7 +6456,7 @@ export default function App() {
                 type="button"
                 className={`ghost-btn ai-copilot-voice-btn${aiCopilotListening ? " listening" : ""}`}
                 onClick={toggleAiCopilotVoice}
-                disabled={!aiCopilotVoiceSupported || aiCopilotLoading}
+                disabled={humanChatAvailable || !aiCopilotVoiceSupported || aiCopilotLoading}
                 title={aiCopilotVoiceSupported ? (aiCopilotListening ? "Stop voice input" : "Start voice input") : "Voice input not supported"}
                 aria-label={aiCopilotListening ? "Stop voice input" : "Start voice input"}
               >
@@ -6148,28 +6465,57 @@ export default function App() {
                   <path d="M6.5 11.5a.75.75 0 0 1 1.5 0 4 4 0 1 0 8 0 .75.75 0 0 1 1.5 0A5.5 5.5 0 0 1 12.75 17v2h2.25a.75.75 0 0 1 0 1.5H9a.75.75 0 0 1 0-1.5h2.25v-2A5.5 5.5 0 0 1 6.5 11.5z" />
                 </svg>
               </button>
-              <button type="button" className="saved-filter-save-btn" onClick={() => runAiCopilot()} disabled={aiCopilotLoading}>
-                {aiCopilotLoading ? "Thinking..." : "Send"}
-              </button>
+              {humanChatAvailable ? (
+                <>
+                  <button
+                    type="button"
+                    className="delete-btn"
+                    onClick={endHumanChatConversation}
+                    disabled={humanChatEnding || String(humanChatSession?.status || "") !== "active"}
+                  >
+                    {humanChatEnding ? "Ending..." : "End"}
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-filter-save-btn"
+                    onClick={() => sendHumanChatMessage(aiCopilotInput)}
+                    disabled={humanChatLoading || String(humanChatSession?.status || "") !== "active"}
+                  >
+                    {humanChatLoading ? "Sending..." : "Send"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {normalizeUserRole(user?.role) === "buyer" ? (
+                    <button type="button" className="ghost-btn" style={{ width: "auto" }} onClick={() => requestHumanHandoff(aiCopilotInput)} disabled={humanChatLoading}>
+                      {humanChatLoading ? "Connecting..." : "Talk to Sales Rep"}
+                    </button>
+                  ) : null}
+                  <button type="button" className="saved-filter-save-btn" onClick={() => runAiCopilot()} disabled={aiCopilotLoading}>
+                    {aiCopilotLoading ? "Thinking..." : "Send"}
+                  </button>
+                </>
+              )}
             </div>
+            {humanChatError ? <div className="saved-filter-error">{humanChatError}</div> : null}
             {aiCopilotError ? <div className="saved-filter-error">{aiCopilotError}</div> : null}
             {aiCopilotVoiceError ? <div className="saved-filter-error">{aiCopilotVoiceError}</div> : null}
           </div>
         ) : (
           <button
             type="button"
-            className={`ai-chatbot-toggle ${aiCopilotUnreadCount > 0 ? "has-unread" : ""}`}
+            className={`ai-chatbot-toggle ${chatUnreadCount > 0 ? "has-unread" : ""}`}
             onClick={() => setAiCopilotOpen(true)}
-            aria-label={aiCopilotUnreadCount > 0 ? `Open AI chatbot (${aiCopilotUnreadCount} unread)` : "Open AI chatbot"}
+            aria-label={chatUnreadCount > 0 ? `Open AI chatbot (${chatUnreadCount} unread)` : "Open AI chatbot"}
           >
             <span className="ai-chatbot-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" role="img" focusable="false">
                 <path d="M4.75 4.5h14.5a2.25 2.25 0 0 1 2.25 2.25v8.5a2.25 2.25 0 0 1-2.25 2.25h-8.39l-4.58 3.4c-.57.43-1.39.02-1.39-.69V17.5H4.75A2.25 2.25 0 0 1 2.5 15.25v-8.5A2.25 2.25 0 0 1 4.75 4.5zm2.1 4.5a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3zm5.15 0a1.15 1.15 0 1 0 0 2.3 1.15 1.15 0 0 0 0-2.3z" />
               </svg>
             </span>
-            {aiCopilotUnreadCount > 0 ? (
+            {chatUnreadCount > 0 ? (
               <span className="ai-chatbot-unread-badge" aria-hidden="true">
-                {aiCopilotUnreadCount > 99 ? "99+" : aiCopilotUnreadCount}
+                {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
               </span>
             ) : null}
           </button>

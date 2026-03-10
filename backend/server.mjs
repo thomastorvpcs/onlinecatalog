@@ -314,6 +314,7 @@ const CORS_ALLOWED_ORIGINS = (() => {
 })();
 const sessions = new Map();
 const USER_ROLE_VALUES = new Set(["admin", "buyer", "sales_rep"]);
+const CHAT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 const auth0UserSyncState = {
   running: false,
   lastRunAt: 0,
@@ -765,6 +766,35 @@ async function ensurePostgresRuntimeSchema() {
     )
   `);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_company_sales_rep_user ON ${postgresTableRef("company_sales_rep_assignments")} (sales_rep_user_id)`);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("chat_sessions")} (
+      id BIGSERIAL PRIMARY KEY,
+      buyer_user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      sales_rep_user_id BIGINT NOT NULL REFERENCES ${postgresTableRef("users")}(id) ON DELETE CASCADE,
+      company TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'timed_out')),
+      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_activity_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ended_at TEXT,
+      ended_by TEXT,
+      close_reason TEXT,
+      last_message_sender_role TEXT,
+      last_message_preview TEXT
+    )
+  `);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_buyer_active ON ${postgresTableRef("chat_sessions")} (buyer_user_id, status, last_activity_at DESC)`);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_rep_active ON ${postgresTableRef("chat_sessions")} (sales_rep_user_id, status, last_activity_at DESC)`);
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS ${postgresTableRef("chat_messages")} (
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT NOT NULL REFERENCES ${postgresTableRef("chat_sessions")}(id) ON DELETE CASCADE,
+      sender_user_id BIGINT REFERENCES ${postgresTableRef("users")}(id) ON DELETE SET NULL,
+      sender_role TEXT NOT NULL CHECK (sender_role IN ('buyer', 'sales_rep', 'system', 'ai')),
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON ${postgresTableRef("chat_messages")} (session_id, id)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_company ON ${postgresTableRef("quote_requests")} (company)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_requests_created_at ON ${postgresTableRef("quote_requests")} (created_at)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_quote_request_lines_request ON ${postgresTableRef("quote_request_lines")} (request_id)`);
@@ -2570,6 +2600,232 @@ async function getSalesRepDashboardRuntime(user) {
     companyStats,
     recentRequests
   };
+}
+
+function mapChatSessionRow(row) {
+  return {
+    id: Number(row.id || 0),
+    buyerUserId: Number(row.buyer_user_id || 0),
+    salesRepUserId: Number(row.sales_rep_user_id || 0),
+    company: String(row.company || ""),
+    status: String(row.status || ""),
+    startedAt: row.started_at || null,
+    lastActivityAt: row.last_activity_at || null,
+    endedAt: row.ended_at || null,
+    endedBy: row.ended_by || null,
+    closeReason: row.close_reason || null,
+    lastMessageSenderRole: row.last_message_sender_role || null,
+    lastMessagePreview: row.last_message_preview || null
+  };
+}
+
+function mapChatMessageRow(row) {
+  return {
+    id: Number(row.id || 0),
+    sessionId: Number(row.session_id || 0),
+    senderUserId: row.sender_user_id ? Number(row.sender_user_id) : null,
+    senderRole: String(row.sender_role || ""),
+    message: String(row.message || ""),
+    createdAt: row.created_at || null
+  };
+}
+
+async function getSalesRepForCompanyRuntime(companyRaw) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const company = normalizeCompanyName(companyRaw);
+  if (!company) return null;
+  const result = await pgClient.query(`
+    SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.is_active
+    FROM ${postgresTableRef("company_sales_rep_assignments")} a
+    JOIN ${postgresTableRef("users")} u ON u.id = a.sales_rep_user_id
+    WHERE a.company = $1
+    LIMIT 1
+  `, [company]);
+  const row = result.rows?.[0];
+  if (!row?.id || !isSalesRepRole(row.role) || Number(row.is_active || 0) !== 1) return null;
+  return {
+    id: Number(row.id),
+    email: String(row.email || ""),
+    firstName: String(row.first_name || ""),
+    lastName: String(row.last_name || "")
+  };
+}
+
+async function insertChatMessageRuntime(sessionId, senderUserId, senderRole, messageRaw) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const normalizedRole = String(senderRole || "").trim().toLowerCase();
+  if (!["buyer", "sales_rep", "system", "ai"].includes(normalizedRole)) {
+    throw new Error("Invalid sender role.");
+  }
+  const text = String(messageRaw || "").trim();
+  if (!text) throw new Error("Message is required.");
+  const sid = Number(sessionId);
+  if (!Number.isInteger(sid) || sid < 1) throw new Error("Session not found.");
+  const insertResult = await pgClient.query(`
+    INSERT INTO ${postgresTableRef("chat_messages")} (session_id, sender_user_id, sender_role, message, created_at)
+    VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+    RETURNING id, session_id, sender_user_id, sender_role, message, created_at
+  `, [sid, senderUserId ? Number(senderUserId) : null, normalizedRole, text]);
+  await pgClient.query(`
+    UPDATE ${postgresTableRef("chat_sessions")}
+    SET last_activity_at = CURRENT_TIMESTAMP,
+        last_message_sender_role = $1,
+        last_message_preview = LEFT($2, 240)
+    WHERE id = $3
+  `, [normalizedRole, text, sid]);
+  return mapChatMessageRow(insertResult.rows?.[0] || {});
+}
+
+async function closeChatSessionRuntime(sessionId, endedBy, closeReason = "ended_by_user") {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const sid = Number(sessionId);
+  if (!Number.isInteger(sid) || sid < 1) throw new Error("Session not found.");
+  const rowRes = await pgClient.query(`SELECT * FROM ${postgresTableRef("chat_sessions")} WHERE id = $1 LIMIT 1`, [sid]);
+  const row = rowRes.rows?.[0];
+  if (!row?.id) throw new Error("Session not found.");
+  if (String(row.status || "") !== "active") return mapChatSessionRow(row);
+  await pgClient.query(`
+    UPDATE ${postgresTableRef("chat_sessions")}
+    SET status = 'closed',
+        ended_at = CURRENT_TIMESTAMP,
+        ended_by = $1,
+        close_reason = $2,
+        last_activity_at = CURRENT_TIMESTAMP
+    WHERE id = $3
+  `, [String(endedBy || "system"), String(closeReason || "ended_by_user"), sid]);
+  await insertChatMessageRuntime(sid, null, "system", "Conversation ended. AI assistant has taken over.");
+  const updated = await pgClient.query(`SELECT * FROM ${postgresTableRef("chat_sessions")} WHERE id = $1 LIMIT 1`, [sid]);
+  return mapChatSessionRow(updated.rows?.[0] || {});
+}
+
+async function closeExpiredChatSessionsRuntime() {
+  if (!pgClient) return 0;
+  const result = await pgClient.query(`
+    UPDATE ${postgresTableRef("chat_sessions")}
+    SET status = 'timed_out',
+        ended_at = CURRENT_TIMESTAMP,
+        ended_by = 'system',
+        close_reason = 'inactive_timeout_5m'
+    WHERE status = 'active'
+      AND (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - CAST(last_activity_at AS TIMESTAMP))) * 1000) > $1
+    RETURNING id
+  `, [CHAT_INACTIVITY_TIMEOUT_MS]);
+  const timedOutIds = (result.rows || []).map((row) => Number(row.id || 0)).filter((id) => Number.isInteger(id) && id > 0);
+  for (const sid of timedOutIds) {
+    await insertChatMessageRuntime(sid, null, "system", "Conversation ended due to inactivity (5 minutes). AI assistant has taken over.");
+  }
+  return timedOutIds.length;
+}
+
+async function canUserAccessChatSessionRuntime(user, sessionRow) {
+  if (!user || !sessionRow) return false;
+  const role = normalizeUserRole(user.role);
+  if (role === "admin") return true;
+  if (role === "buyer") return Number(sessionRow.buyer_user_id || 0) === Number(user.id || 0);
+  if (role === "sales_rep") return Number(sessionRow.sales_rep_user_id || 0) === Number(user.id || 0);
+  return false;
+}
+
+async function getCurrentChatSessionForBuyerRuntime(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const uid = Number(user?.id || 0);
+  if (!Number.isInteger(uid) || uid < 1) return null;
+  const result = await pgClient.query(`
+    SELECT *
+    FROM ${postgresTableRef("chat_sessions")}
+    WHERE buyer_user_id = $1
+    ORDER BY last_activity_at DESC, id DESC
+    LIMIT 1
+  `, [uid]);
+  return result.rows?.[0] || null;
+}
+
+async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  if (!user || normalizeUserRole(user.role) !== "buyer") throw new Error("Only buyers can request a sales rep.");
+  const buyerId = Number(user.id || 0);
+  if (!Number.isInteger(buyerId) || buyerId < 1) throw new Error("Unauthorized");
+  const company = normalizeCompanyName(user.company);
+  if (!company) throw new Error("Buyer company is required.");
+  const assignedRep = await getSalesRepForCompanyRuntime(company);
+  if (!assignedRep?.id) throw new Error("No active sales rep is assigned to your company.");
+
+  const existingRes = await pgClient.query(`
+    SELECT *
+    FROM ${postgresTableRef("chat_sessions")}
+    WHERE buyer_user_id = $1 AND status = 'active'
+    ORDER BY last_activity_at DESC, id DESC
+    LIMIT 1
+  `, [buyerId]);
+  const existing = existingRes.rows?.[0];
+  if (existing?.id) {
+    const text = String(initialMessageRaw || "").trim();
+    if (text) await insertChatMessageRuntime(existing.id, buyerId, "buyer", text);
+    return mapChatSessionRow(existing);
+  }
+
+  const created = await pgClient.query(`
+    INSERT INTO ${postgresTableRef("chat_sessions")} (
+      buyer_user_id, sales_rep_user_id, company, status, started_at, last_activity_at, last_message_sender_role, last_message_preview
+    )
+    VALUES ($1, $2, $3, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'buyer', LEFT($4, 240))
+    RETURNING *
+  `, [buyerId, assignedRep.id, company, String(initialMessageRaw || "Buyer requested to talk to a sales rep.")]);
+  const session = created.rows?.[0];
+  if (!session?.id) throw new Error("Failed to create handoff session.");
+  const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
+  await insertChatMessageRuntime(session.id, buyerId, "buyer", firstMessage);
+  return mapChatSessionRow(session);
+}
+
+async function listChatMessagesForSessionRuntime(sessionIdRaw, sinceIdRaw = 0, limitRaw = 200) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const sessionId = Number(sessionIdRaw);
+  if (!Number.isInteger(sessionId) || sessionId < 1) throw new Error("Session not found.");
+  const sinceId = Math.max(0, Number(sinceIdRaw || 0));
+  const limit = Math.max(1, Math.min(500, Number(limitRaw || 200)));
+  const result = await pgClient.query(`
+    SELECT id, session_id, sender_user_id, sender_role, message, created_at
+    FROM ${postgresTableRef("chat_messages")}
+    WHERE session_id = $1 AND id > $2
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `, [sessionId, sinceId]);
+  return (result.rows || []).map(mapChatMessageRow);
+}
+
+async function getChatSessionByIdRuntime(sessionIdRaw) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const sessionId = Number(sessionIdRaw);
+  if (!Number.isInteger(sessionId) || sessionId < 1) return null;
+  const result = await pgClient.query(`SELECT * FROM ${postgresTableRef("chat_sessions")} WHERE id = $1 LIMIT 1`, [sessionId]);
+  return result.rows?.[0] || null;
+}
+
+async function listSalesRepInboxRuntime(user) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  if (!user || !isSalesRepRole(user.role)) throw new Error("Forbidden");
+  const uid = Number(user.id || 0);
+  if (!Number.isInteger(uid) || uid < 1) return [];
+  const result = await pgClient.query(`
+    SELECT
+      s.*,
+      u.email AS buyer_email,
+      u.first_name AS buyer_first_name,
+      u.last_name AS buyer_last_name
+    FROM ${postgresTableRef("chat_sessions")} s
+    JOIN ${postgresTableRef("users")} u ON u.id = s.buyer_user_id
+    WHERE s.sales_rep_user_id = $1
+      AND s.status = 'active'
+    ORDER BY s.last_activity_at DESC, s.id DESC
+  `, [uid]);
+  return (result.rows || []).map((row) => ({
+    ...mapChatSessionRow(row),
+    buyerEmail: String(row.buyer_email || ""),
+    buyerFirstName: String(row.buyer_first_name || ""),
+    buyerLastName: String(row.buyer_last_name || ""),
+    hasUnread: String(row.last_message_sender_role || "") === "buyer"
+  }));
 }
 
 async function deleteUserRuntime(userId) {
@@ -7939,6 +8195,155 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/chat/handoff/request") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      const body = await parseBody(req);
+      try {
+        const session = await requestSalesRepHandoffRuntime(user, String(body.message || ""));
+        const messages = await listChatMessagesForSessionRuntime(session.id, 0, 200);
+        json(req, res, 200, { session, messages });
+      } catch (error) {
+        const message = String(error?.message || "Failed to connect to sales rep.");
+        const statusCode = message.includes("Only buyers") ? 403 : (message.includes("No active sales rep") ? 409 : 400);
+        json(req, res, statusCode, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/chat/session/current") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      const role = normalizeUserRole(user.role);
+      if (role === "buyer") {
+        const row = await getCurrentChatSessionForBuyerRuntime(user);
+        if (!row?.id) {
+          json(req, res, 200, { session: null, messages: [] });
+          return;
+        }
+        const messages = await listChatMessagesForSessionRuntime(row.id, 0, 200);
+        json(req, res, 200, { session: mapChatSessionRow(row), messages });
+        return;
+      }
+      if (role === "sales_rep") {
+        const sessionId = Number(url.searchParams.get("sessionId") || 0);
+        if (!Number.isInteger(sessionId) || sessionId < 1) {
+          json(req, res, 200, { session: null, messages: [] });
+          return;
+        }
+        const row = await getChatSessionByIdRuntime(sessionId);
+        if (!row?.id || !(await canUserAccessChatSessionRuntime(user, row))) {
+          json(req, res, 404, { error: "Session not found." });
+          return;
+        }
+        const messages = await listChatMessagesForSessionRuntime(row.id, 0, 200);
+        json(req, res, 200, { session: mapChatSessionRow(row), messages });
+        return;
+      }
+      json(req, res, 403, { error: "Forbidden" });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/chat/inbox") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      if (!isSalesRepRole(user.role)) {
+        json(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+      const sessions = await listSalesRepInboxRuntime(user);
+      json(req, res, 200, { sessions });
+      return;
+    }
+
+    const chatMessagesMatch = url.pathname.match(/^\/api\/chat\/session\/(\d+)\/messages$/);
+    if (chatMessagesMatch && req.method === "GET") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      const sessionId = Number(chatMessagesMatch[1]);
+      const row = await getChatSessionByIdRuntime(sessionId);
+      if (!row?.id || !(await canUserAccessChatSessionRuntime(user, row))) {
+        json(req, res, 404, { error: "Session not found." });
+        return;
+      }
+      const sinceId = Number(url.searchParams.get("sinceId") || 0);
+      const limit = Number(url.searchParams.get("limit") || 200);
+      const messages = await listChatMessagesForSessionRuntime(sessionId, sinceId, limit);
+      json(req, res, 200, { session: mapChatSessionRow(row), messages });
+      return;
+    }
+
+    if (chatMessagesMatch && req.method === "POST") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      const sessionId = Number(chatMessagesMatch[1]);
+      const row = await getChatSessionByIdRuntime(sessionId);
+      if (!row?.id || !(await canUserAccessChatSessionRuntime(user, row))) {
+        json(req, res, 404, { error: "Session not found." });
+        return;
+      }
+      if (String(row.status || "") !== "active") {
+        json(req, res, 409, { error: "Conversation is no longer active." });
+        return;
+      }
+      const body = await parseBody(req);
+      const role = normalizeUserRole(user.role);
+      const senderRole = role === "sales_rep" ? "sales_rep" : (role === "buyer" ? "buyer" : "");
+      if (!senderRole) {
+        json(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+      try {
+        const message = await insertChatMessageRuntime(sessionId, Number(user.id || 0), senderRole, body.message);
+        const session = await getChatSessionByIdRuntime(sessionId);
+        json(req, res, 201, { ok: true, session: mapChatSessionRow(session), message });
+      } catch (error) {
+        json(req, res, 400, { error: String(error?.message || "Failed to send message.") });
+      }
+      return;
+    }
+
+    const chatEndMatch = url.pathname.match(/^\/api\/chat\/session\/(\d+)\/end$/);
+    if (chatEndMatch && req.method === "POST") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      const sessionId = Number(chatEndMatch[1]);
+      const row = await getChatSessionByIdRuntime(sessionId);
+      if (!row?.id || !(await canUserAccessChatSessionRuntime(user, row))) {
+        json(req, res, 404, { error: "Session not found." });
+        return;
+      }
+      const role = normalizeUserRole(user.role);
+      const endedBy = role === "sales_rep" ? "sales_rep" : (role === "buyer" ? "buyer" : "admin");
+      const session = await closeChatSessionRuntime(sessionId, endedBy, "ended_by_user");
+      const messages = await listChatMessagesForSessionRuntime(sessionId, 0, 200);
+      json(req, res, 200, { ok: true, session, messages });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/cart-draft") {
       const user = getAuthUser(req);
       if (!user) {
@@ -8748,6 +9153,11 @@ async function startServer() {
   if (effectiveDbEngine === "postgres") {
     await initializePostgresRuntime();
   }
+  setInterval(() => {
+    closeExpiredChatSessionsRuntime().catch((error) => {
+      console.warn(`[chat-timeout] ${error?.message || error}`);
+    });
+  }, 60 * 1000);
   if (AUTH0_AUTO_SYNC_USERS) {
     try {
       const syncResult = await syncAuth0UsersToLocalDb({ force: true, reason: "startup" });
