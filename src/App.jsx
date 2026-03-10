@@ -3858,6 +3858,7 @@ export default function App() {
     if (!authToken || !user || !sessionId || String(humanChatSession?.status || "") !== "active") return;
     const message = String(messageRaw || "").trim();
     if (!message) return;
+    setAiCopilotInput("");
     setHumanChatLoading(true);
     setHumanChatError("");
     try {
