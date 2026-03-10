@@ -6349,12 +6349,14 @@ export default function App() {
               {userRole === "sales_rep" ? (
                 <>
                   <p className="small" style={{ marginTop: 0 }}>
-                    Active buyer conversations{inboxHasUnread ? ` (${inboxUnreadCount} unread)` : ""}.
+                    Conversation history{inboxHasUnread ? ` (${inboxUnreadCount} unread)` : ""}.
                   </p>
                   {salesRepInbox.length ? (
                     <div className="ai-copilot-choice-list">
                       {salesRepInbox.map((session) => {
                         const label = `${session.company} - ${buildPersonDisplayName(session.buyerFirstName, session.buyerLastName, session.buyerEmail, "Buyer")}`;
+                        const status = String(session.status || "").toLowerCase();
+                        const statusLabel = status === "active" ? "Active" : (status === "timed_out" ? "Timed out" : "Ended");
                         return (
                           <button
                             key={`inbox-session-${session.id}`}
@@ -6366,13 +6368,13 @@ export default function App() {
                             }}
                             style={Number(session.id || 0) === Number(salesRepSelectedSessionId || 0) ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
                           >
-                            {label}{session.hasUnread ? " (new)" : ""}
+                            {label} ({statusLabel}){session.hasUnread ? " (new)" : ""}
                           </button>
                         );
                       })}
                     </div>
                   ) : (
-                    <p className="small">No active conversations.</p>
+                    <p className="small">No conversation history yet.</p>
                   )}
                 </>
               ) : userRole === "admin" ? (
@@ -6457,11 +6459,13 @@ export default function App() {
                 <>
                   {isSalesRepUser ? (
                     <div style={{ marginBottom: 8 }}>
-                      <div className="small" style={{ marginBottom: 6 }}>Active buyer conversations</div>
+                      <div className="small" style={{ marginBottom: 6 }}>Inbox conversations</div>
                       {salesRepInbox.length ? (
                         <div className="ai-copilot-choice-list">
                           {salesRepInbox.map((session) => {
                             const label = `${session.company} - ${buildPersonDisplayName(session.buyerFirstName, session.buyerLastName, session.buyerEmail, "Buyer")}`;
+                            const status = String(session.status || "").toLowerCase();
+                            const statusLabel = status === "active" ? "Active" : (status === "timed_out" ? "Timed out" : "Ended");
                             return (
                               <button
                                 key={`rep-session-${session.id}`}
@@ -6470,7 +6474,7 @@ export default function App() {
                                 onClick={() => setSalesRepSelectedSessionId(Number(session.id || 0))}
                                 style={Number(session.id || 0) === Number(salesRepSelectedSessionId || 0) ? { borderColor: "#256fd6", color: "#256fd6" } : {}}
                               >
-                                {label}{session.hasUnread ? " (new)" : ""}
+                                {label} ({statusLabel}){session.hasUnread ? " (new)" : ""}
                               </button>
                             );
                           })}
@@ -6478,7 +6482,7 @@ export default function App() {
                       ) : salesRepInboxLoading ? (
                         <div className="small">Loading inbox...</div>
                       ) : (
-                        <div className="small">No active buyer conversations.</div>
+                        <div className="small">No conversation history yet.</div>
                       )}
                       {salesRepInboxLoading && salesRepInbox.length ? <div className="small" style={{ marginTop: 6 }}>Refreshing...</div> : null}
                     </div>

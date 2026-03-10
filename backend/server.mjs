@@ -2822,40 +2822,13 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
     return mapChatSessionRow(refreshed || existingActive);
   }
 
-  const latestSessionRes = await pgClient.query(`
-    SELECT id, sales_rep_user_id
-    FROM ${postgresTableRef("chat_sessions")}
-    WHERE buyer_user_id = $1
-    ORDER BY last_activity_at DESC, id DESC
-    LIMIT 1
-  `, [buyerId]);
-  const latestSession = latestSessionRes.rows?.[0];
-  if (latestSession?.id) {
-    await pgClient.query(`
-      UPDATE ${postgresTableRef("chat_sessions")}
-      SET sales_rep_user_id = $1,
-          company = $2,
-          status = 'active',
-          ended_at = NULL,
-          ended_by = NULL,
-          close_reason = NULL,
-          last_activity_at = CURRENT_TIMESTAMP
-      WHERE id = $3
-    `, [effectiveAssignedRep.id, company, Number(latestSession.id)]);
-    await insertChatMessageRuntime(Number(latestSession.id), null, "system", transferSystemMessage);
-    const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
-    await insertChatMessageRuntime(Number(latestSession.id), buyerId, requesterSenderRole, firstMessage);
-    const refreshed = await getChatSessionByIdRuntime(Number(latestSession.id));
-    return mapChatSessionRow(refreshed || latestSession);
-  }
-
   const created = await pgClient.query(`
     INSERT INTO ${postgresTableRef("chat_sessions")} (
       buyer_user_id, sales_rep_user_id, company, status, started_at, last_activity_at, last_message_sender_role, last_message_preview
     )
-    VALUES ($1, $2, $3, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'buyer', LEFT($4, 240))
+    VALUES ($1, $2, $3, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5, LEFT($4, 240))
     RETURNING *
-  `, [buyerId, effectiveAssignedRep.id, company, String(initialMessageRaw || "User requested to talk to a sales rep.")]);
+  `, [buyerId, effectiveAssignedRep.id, company, String(initialMessageRaw || "User requested to talk to a sales rep."), requesterSenderRole]);
   const session = created.rows?.[0];
   if (!session?.id) throw new Error("Failed to create handoff session.");
   await insertChatMessageRuntime(session.id, null, "system", transferSystemMessage);
@@ -2916,7 +2889,6 @@ async function listSalesRepInboxRuntime(user) {
     FROM ${postgresTableRef("chat_sessions")} s
     JOIN ${postgresTableRef("users")} u ON u.id = s.buyer_user_id
     WHERE s.sales_rep_user_id = $1
-      AND s.status = 'active'
     ORDER BY s.last_activity_at DESC, s.id DESC
   `, [uid]);
   return (result.rows || []).map((row) => ({
@@ -2924,7 +2896,7 @@ async function listSalesRepInboxRuntime(user) {
     buyerEmail: String(row.buyer_email || ""),
     buyerFirstName: String(row.buyer_first_name || ""),
     buyerLastName: String(row.buyer_last_name || ""),
-    hasUnread: ["buyer", "admin"].includes(String(row.last_message_sender_role || ""))
+    hasUnread: String(row.status || "") === "active" && ["buyer", "admin"].includes(String(row.last_message_sender_role || ""))
   }));
 }
 
