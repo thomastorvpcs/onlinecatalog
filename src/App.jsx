@@ -2147,6 +2147,7 @@ export default function App() {
   const cartDraftSyncTimerRef = useRef(null);
   const humanChatScrollSessionRef = useRef(0);
   const humanChatScrollMessageKeyRef = useRef("");
+  const humanChatEndedNoticeSessionRef = useRef(0);
   const buyerHumanChatPollInFlightRef = useRef(false);
   const salesRepInboxPollInFlightRef = useRef(false);
   const salesRepSessionPollInFlightRef = useRef(false);
@@ -3955,6 +3956,23 @@ export default function App() {
     }
     setHumanChatUnreadCount(0);
   }, [user, authToken, refreshBuyerHumanChat, refreshSalesRepInbox]);
+
+  useEffect(() => {
+    const role = normalizeUserRole(user?.role);
+    if (role !== "buyer") return;
+    const sessionId = Number(humanChatSession?.id || 0);
+    const status = String(humanChatSession?.status || "").toLowerCase();
+    if (!sessionId || !status || status === "active") return;
+    if (Number(humanChatEndedNoticeSessionRef.current || 0) === sessionId) return;
+    humanChatEndedNoticeSessionRef.current = sessionId;
+    setAiCopilotMessages((prev) => [...prev, {
+      role: "assistant",
+      text: "Welcome back. I am here if you need any more assistance.",
+      action: null,
+      topic: "general",
+      timestamp: new Date().toISOString()
+    }]);
+  }, [user, humanChatSession]);
 
   useEffect(() => {
     if (!user || normalizeUserRole(user.role) !== "sales_rep") return;
