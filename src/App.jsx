@@ -2122,6 +2122,9 @@ export default function App() {
   const postLoginLandingSetRef = useRef("");
   const cartLoadedFromBackendRef = useRef(false);
   const cartDraftSyncTimerRef = useRef(null);
+  const buyerHumanChatPollInFlightRef = useRef(false);
+  const salesRepInboxPollInFlightRef = useRef(false);
+  const salesRepSessionPollInFlightRef = useRef(false);
 
   const markAuth0LogoutRequested = () => {
     if (typeof window === "undefined") return;
@@ -3714,6 +3717,8 @@ export default function App() {
 
   const refreshBuyerHumanChat = useCallback(async ({ silent = false } = {}) => {
     if (!authToken || !user || normalizeUserRole(user.role) !== "buyer") return;
+    if (buyerHumanChatPollInFlightRef.current) return;
+    buyerHumanChatPollInFlightRef.current = true;
     if (!silent) {
       setHumanChatLoading(true);
       setHumanChatError("");
@@ -3737,12 +3742,15 @@ export default function App() {
     } catch (error) {
       if (!silent) setHumanChatError(error.message || "Failed to load human support chat.");
     } finally {
+      buyerHumanChatPollInFlightRef.current = false;
       if (!silent) setHumanChatLoading(false);
     }
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
 
   const refreshSalesRepInbox = useCallback(async ({ silent = false } = {}) => {
     if (!authToken || !user || normalizeUserRole(user.role) !== "sales_rep") return;
+    if (salesRepInboxPollInFlightRef.current) return;
+    salesRepInboxPollInFlightRef.current = true;
     if (!silent) {
       setSalesRepInboxLoading(true);
       setHumanChatError("");
@@ -3766,6 +3774,7 @@ export default function App() {
     } catch (error) {
       if (!silent) setHumanChatError(error.message || "Failed to load sales rep inbox.");
     } finally {
+      salesRepInboxPollInFlightRef.current = false;
       if (!silent) setSalesRepInboxLoading(false);
     }
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState, salesRepSelectedSessionId]);
@@ -3773,6 +3782,8 @@ export default function App() {
   const loadSalesRepSession = useCallback(async (sessionIdRaw, { silent = false } = {}) => {
     const sessionId = Number(sessionIdRaw || 0);
     if (!authToken || !user || normalizeUserRole(user.role) !== "sales_rep" || !sessionId) return;
+    if (salesRepSessionPollInFlightRef.current) return;
+    salesRepSessionPollInFlightRef.current = true;
     if (!silent) {
       setHumanChatLoading(true);
       setHumanChatError("");
@@ -3789,6 +3800,7 @@ export default function App() {
     } catch (error) {
       if (!silent) setHumanChatError(error.message || "Failed to load selected conversation.");
     } finally {
+      salesRepSessionPollInFlightRef.current = false;
       if (!silent) setHumanChatLoading(false);
     }
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
