@@ -6547,15 +6547,15 @@ export default function App() {
                           ? salesRepInitials
                           : (senderRole === "buyer" || senderRole === "admin" ? activeBuyerInitials : "HS");
                         return (
-                          <div key={`human-msg-${message.id || idx}`} className={`ai-copilot-row ${visualRole}`}>
+                          <div key={`human-msg-${message.id || idx}`} className={`ai-copilot-row ${visualRole}`} style={{ margin: "2px 0", gap: 4 }}>
                             {!mine ? (
                               <span className="ai-copilot-avatar" aria-hidden="true" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>
                                 {avatarText}
                               </span>
                             ) : null}
-                            <div className={`ai-copilot-msg ${visualRole}`}>
+                            <div className={`ai-copilot-msg ${visualRole}`} style={{ maxWidth: "min(92%, 440px)", padding: "6px 8px" }}>
                               <div style={{ whiteSpace: "pre-wrap" }}>{message.message}</div>
-                              {message.createdAt ? <div className="ai-copilot-msg-time">{formatChatTimestamp(message.createdAt)}</div> : null}
+                              {message.createdAt ? <div className="ai-copilot-msg-time" style={{ marginTop: 2 }}>{formatChatTimestamp(message.createdAt)}</div> : null}
                             </div>
                           </div>
                         );
