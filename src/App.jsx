@@ -2145,6 +2145,8 @@ export default function App() {
   const postLoginLandingSetRef = useRef("");
   const cartLoadedFromBackendRef = useRef(false);
   const cartDraftSyncTimerRef = useRef(null);
+  const humanChatScrollSessionRef = useRef(0);
+  const humanChatScrollMessageKeyRef = useRef("");
   const buyerHumanChatPollInFlightRef = useRef(false);
   const salesRepInboxPollInFlightRef = useRef(false);
   const salesRepSessionPollInFlightRef = useRef(false);
@@ -3623,16 +3625,27 @@ export default function App() {
       node.scrollTop = node.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [
-    aiCopilotOpen,
-    aiCopilotMessages,
-    aiCopilotLoading,
-    aiCopilotGreetingTyping,
-    humanChatMessages,
-    humanChatLoading,
-    humanChatSession,
-    salesRepSelectedSessionId
-  ]);
+  }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading, aiCopilotGreetingTyping]);
+
+  useEffect(() => {
+    if (!aiCopilotOpen || !humanChatAvailable) return;
+    const node = aiCopilotFeedRef.current;
+    if (!node) return;
+    const sessionId = Number(humanChatSession?.id || 0);
+    const lastMessage = humanChatMessages.length ? humanChatMessages[humanChatMessages.length - 1] : null;
+    const lastMessageKey = lastMessage
+      ? `${String(lastMessage.id || "")}:${String(lastMessage.createdAt || "")}:${String(lastMessage.message || "")}`
+      : "";
+    const sessionChanged = sessionId !== Number(humanChatScrollSessionRef.current || 0);
+    const messageChanged = lastMessageKey !== String(humanChatScrollMessageKeyRef.current || "");
+    if (!sessionChanged && !messageChanged) return;
+    humanChatScrollSessionRef.current = sessionId;
+    humanChatScrollMessageKeyRef.current = lastMessageKey;
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [aiCopilotOpen, humanChatAvailable, humanChatSession, humanChatMessages]);
 
   function handleAiCopilotResizeAtY(clientY) {
     const state = aiCopilotResizeRef.current;
