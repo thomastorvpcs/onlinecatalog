@@ -2660,7 +2660,7 @@ async function getSalesRepForCompanyRuntime(companyRaw) {
 async function insertChatMessageRuntime(sessionId, senderUserId, senderRole, messageRaw) {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
   const normalizedRole = String(senderRole || "").trim().toLowerCase();
-  if (!["buyer", "sales_rep", "system", "ai"].includes(normalizedRole)) {
+  if (!["buyer", "admin", "sales_rep", "system", "ai"].includes(normalizedRole)) {
     throw new Error("Invalid sender role.");
   }
   const text = String(messageRaw || "").trim();
@@ -2757,17 +2757,39 @@ async function getCurrentChatSessionForBuyerRuntime(user) {
 
 async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
   if (!pgClient) throw new Error("Postgres runtime is not initialized.");
-  if (!user || normalizeUserRole(user.role) !== "buyer") throw new Error("Only buyers can request a sales rep.");
+  const requesterRole = normalizeUserRole(user?.role);
+  if (!user || (requesterRole !== "buyer" && requesterRole !== "admin")) throw new Error("Only buyers or admins can request a sales rep.");
   const buyerId = Number(user.id || 0);
   if (!Number.isInteger(buyerId) || buyerId < 1) throw new Error("Unauthorized");
-  const company = normalizeCompanyName(user.company);
-  if (!company) throw new Error("Buyer company is required.");
+  const company = normalizeCompanyName(user.company) || "ADMIN";
   const buyerDisplayName = [String(user.firstName || "").trim(), String(user.lastName || "").trim()].filter(Boolean).join(" ").trim()
     || String(user.email || "").trim()
-    || "Buyer";
+    || (requesterRole === "admin" ? "Admin" : "Buyer");
   const transferSystemMessage = `${buyerDisplayName} has been transferred from AI assistant.`;
-  const assignedRep = await getSalesRepForCompanyRuntime(company);
-  if (!assignedRep?.id) throw new Error("No active sales rep is assigned to your company.");
+  const assignedRep = requesterRole === "buyer"
+    ? await getSalesRepForCompanyRuntime(company)
+    : (() => null)();
+  let effectiveAssignedRep = assignedRep;
+  if (!effectiveAssignedRep?.id && requesterRole === "admin") {
+    const repRes = await pgClient.query(`
+      SELECT id, email, first_name, last_name
+      FROM ${postgresTableRef("users")}
+      WHERE role = 'sales_rep' AND is_active = 1
+      ORDER BY id ASC
+      LIMIT 1
+    `);
+    const rep = repRes.rows?.[0];
+    effectiveAssignedRep = rep?.id
+      ? {
+        id: Number(rep.id),
+        email: String(rep.email || ""),
+        firstName: String(rep.first_name || ""),
+        lastName: String(rep.last_name || "")
+      }
+      : null;
+  }
+  if (!effectiveAssignedRep?.id) throw new Error("No active sales rep is available.");
+  const requesterSenderRole = requesterRole === "admin" ? "admin" : "buyer";
 
   const existingActiveRes = await pgClient.query(`
     SELECT *
@@ -2779,7 +2801,7 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
   const existingActive = existingActiveRes.rows?.[0];
   if (existingActive?.id) {
     const text = String(initialMessageRaw || "").trim();
-    if (text) await insertChatMessageRuntime(existingActive.id, buyerId, "buyer", text);
+    if (text) await insertChatMessageRuntime(existingActive.id, buyerId, requesterSenderRole, text);
     const refreshed = await getChatSessionByIdRuntime(existingActive.id);
     return mapChatSessionRow(refreshed || existingActive);
   }
@@ -2803,10 +2825,10 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
           close_reason = NULL,
           last_activity_at = CURRENT_TIMESTAMP
       WHERE id = $3
-    `, [assignedRep.id, company, Number(latestSession.id)]);
+    `, [effectiveAssignedRep.id, company, Number(latestSession.id)]);
     await insertChatMessageRuntime(Number(latestSession.id), null, "system", transferSystemMessage);
     const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
-    await insertChatMessageRuntime(Number(latestSession.id), buyerId, "buyer", firstMessage);
+    await insertChatMessageRuntime(Number(latestSession.id), buyerId, requesterSenderRole, firstMessage);
     const refreshed = await getChatSessionByIdRuntime(Number(latestSession.id));
     return mapChatSessionRow(refreshed || latestSession);
   }
@@ -2817,12 +2839,12 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
     )
     VALUES ($1, $2, $3, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'buyer', LEFT($4, 240))
     RETURNING *
-  `, [buyerId, assignedRep.id, company, String(initialMessageRaw || "Buyer requested to talk to a sales rep.")]);
+  `, [buyerId, effectiveAssignedRep.id, company, String(initialMessageRaw || "User requested to talk to a sales rep.")]);
   const session = created.rows?.[0];
   if (!session?.id) throw new Error("Failed to create handoff session.");
   await insertChatMessageRuntime(session.id, null, "system", transferSystemMessage);
   const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
-  await insertChatMessageRuntime(session.id, buyerId, "buyer", firstMessage);
+  await insertChatMessageRuntime(session.id, buyerId, requesterSenderRole, firstMessage);
   return mapChatSessionRow(session);
 }
 
@@ -2886,7 +2908,7 @@ async function listSalesRepInboxRuntime(user) {
     buyerEmail: String(row.buyer_email || ""),
     buyerFirstName: String(row.buyer_first_name || ""),
     buyerLastName: String(row.buyer_last_name || ""),
-    hasUnread: String(row.last_message_sender_role || "") === "buyer"
+    hasUnread: ["buyer", "admin"].includes(String(row.last_message_sender_role || ""))
   }));
 }
 
@@ -8271,7 +8293,7 @@ const server = createServer(async (req, res) => {
         json(req, res, 200, { session, messages });
       } catch (error) {
         const message = String(error?.message || "Failed to connect to sales rep.");
-        const statusCode = message.includes("Only buyers") ? 403 : (message.includes("No active sales rep") ? 409 : 400);
+        const statusCode = message.includes("Only buyers or admins") ? 403 : (message.includes("No active sales rep") ? 409 : 400);
         json(req, res, statusCode, { error: message });
       }
       return;
@@ -8285,7 +8307,7 @@ const server = createServer(async (req, res) => {
       }
       await closeExpiredChatSessionsRuntime();
       const role = normalizeUserRole(user.role);
-      if (role === "buyer") {
+      if (role === "buyer" || role === "admin") {
         const row = await getCurrentChatSessionForBuyerRuntime(user);
         if (!row?.id) {
           json(req, res, 200, { session: null, messages: [] });
@@ -8370,7 +8392,7 @@ const server = createServer(async (req, res) => {
       }
       const body = await parseBody(req);
       const role = normalizeUserRole(user.role);
-      const senderRole = role === "sales_rep" ? "sales_rep" : (role === "buyer" ? "buyer" : "");
+      const senderRole = role === "sales_rep" ? "sales_rep" : (role === "admin" ? "admin" : (role === "buyer" ? "buyer" : ""));
       if (!senderRole) {
         json(req, res, 403, { error: "Forbidden" });
         return;

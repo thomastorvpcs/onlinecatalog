@@ -3838,7 +3838,8 @@ export default function App() {
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
 
   const requestHumanHandoff = useCallback(async (initialMessage) => {
-    if (!authToken || !user || normalizeUserRole(user.role) !== "buyer") return false;
+    const role = normalizeUserRole(user?.role);
+    if (!authToken || !user || (role !== "buyer" && role !== "admin")) return false;
     setHumanChatLoading(true);
     setHumanChatError("");
     try {
@@ -3879,7 +3880,7 @@ export default function App() {
         onAuthFail: clearAuthState,
         body: { message }
       });
-      if (normalizeUserRole(user.role) === "buyer") {
+      if (["buyer", "admin"].includes(normalizeUserRole(user.role))) {
         await refreshBuyerHumanChat({ silent: true });
       } else {
         await loadSalesRepSession(sessionId, { silent: true });
@@ -3920,7 +3921,7 @@ export default function App() {
   useEffect(() => {
     if (!user || !authToken) return;
     const role = normalizeUserRole(user.role);
-    if (role === "buyer") {
+    if (role === "buyer" || role === "admin") {
       refreshBuyerHumanChat({ silent: false });
       const timer = setInterval(() => {
         refreshBuyerHumanChat({ silent: true });
@@ -3968,7 +3969,7 @@ export default function App() {
       await sendHumanChatMessage(message);
       return;
     }
-    if (normalizeUserRole(user.role) === "buyer" && isCopilotHumanHandoffIntent(message)) {
+    if (["buyer", "admin"].includes(normalizeUserRole(user.role)) && isCopilotHumanHandoffIntent(message)) {
       const now = new Date().toISOString();
       setAiCopilotMessages((prev) => [...prev, {
         role: "user",
@@ -6406,12 +6407,12 @@ export default function App() {
                       ) : null}
                       {humanChatMessages.length ? humanChatMessages.map((message, idx) => {
                         const senderRole = String(message?.senderRole || "").trim().toLowerCase();
-                        const mine = (senderRole === "buyer" && normalizeUserRole(user?.role) === "buyer")
+                        const mine = ((senderRole === "buyer" || senderRole === "admin") && ["buyer", "admin"].includes(normalizeUserRole(user?.role)))
                           || (senderRole === "sales_rep" && normalizeUserRole(user?.role) === "sales_rep");
                         const visualRole = mine ? "user" : "assistant";
                         const avatarText = senderRole === "sales_rep"
                           ? salesRepInitials
-                          : (senderRole === "buyer" ? activeBuyerInitials : "HS");
+                          : (senderRole === "buyer" || senderRole === "admin" ? activeBuyerInitials : "HS");
                         return (
                           <div key={`human-msg-${message.id || idx}`} className={`ai-copilot-row ${visualRole}`}>
                             {!mine ? (
