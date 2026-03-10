@@ -3458,12 +3458,6 @@ export default function App() {
 
   const applyCopilotAction = (action) => {
     if (!action || typeof action !== "object") return;
-    if (action.type === "request_human_handoff") {
-      if (normalizeUserRole(user?.role) !== "buyer") return;
-      const actionMessage = String(action?.payload?.message || aiCopilotInput || "").trim();
-      requestHumanHandoff(actionMessage || "I would like to talk to my sales rep.");
-      return;
-    }
     if (action.type === "add_lines_to_request") {
       const lines = Array.isArray(action?.payload?.lines) ? action.payload.lines : [];
       if (!lines.length) {
@@ -3681,12 +3675,6 @@ export default function App() {
     if (!message) return false;
     return /\b(human|sales rep|sales representative|real person|agent|support)\b/.test(message)
       && /\b(talk|speak|chat|connect|contact)\b/.test(message);
-  }
-
-  function isCopilotSupportEscalationReply(replyRaw) {
-    const reply = String(replyRaw || "").trim().toLowerCase();
-    if (!reply) return false;
-    return /\b(talk to a human|talk to your sales rep|sales representative|customer support|reach out)\b/.test(reply);
   }
 
   function polishCopilotOutgoingMessage(messageRaw) {
@@ -4014,23 +4002,6 @@ export default function App() {
         setAiCopilotCurrentTopic(nextTopic);
       }
       const suggestedAction = payload.action && typeof payload.action === "object" ? payload.action : null;
-      const shouldTryHumanHandoff = normalizeUserRole(user.role) === "buyer" && (
-        suggestedAction?.type === "request_human_handoff"
-        || isCopilotSupportEscalationReply(payload?.reply)
-      );
-      if (shouldTryHumanHandoff) {
-        const connected = await requestHumanHandoff(message);
-        if (connected) {
-          setAiCopilotMessages((prev) => [...prev, {
-            role: "assistant",
-            text: "Connecting you with your sales rep now.",
-            action: null,
-            topic: "general",
-            timestamp: new Date().toISOString()
-          }]);
-          return;
-        }
-      }
       const shouldAutoApplyAddAction = isCopilotDirectAddIntent(message)
         && (suggestedAction?.type === "add_to_request" || suggestedAction?.type === "add_lines_to_request");
       if (shouldAutoApplyAddAction) {
@@ -7286,4 +7257,10 @@ function ProductCard({ p, image, onOpen, onAdd, onOpenGrade }) {
     </article>
   );
 }
+
+
+
+
+
+
 
