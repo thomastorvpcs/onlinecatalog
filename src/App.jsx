@@ -3623,7 +3623,16 @@ export default function App() {
       node.scrollTop = node.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [aiCopilotOpen, aiCopilotMessages, aiCopilotLoading]);
+  }, [
+    aiCopilotOpen,
+    aiCopilotMessages,
+    aiCopilotLoading,
+    aiCopilotGreetingTyping,
+    humanChatMessages,
+    humanChatLoading,
+    humanChatSession,
+    salesRepSelectedSessionId
+  ]);
 
   function handleAiCopilotResizeAtY(clientY) {
     const state = aiCopilotResizeRef.current;
