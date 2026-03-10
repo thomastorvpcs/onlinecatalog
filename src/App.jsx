@@ -2895,40 +2895,6 @@ export default function App() {
   }, [aiCopilotMessages, aiCopilotOpen, aiCopilotUnreadCount]);
 
   useEffect(() => {
-    if (!user || !authToken) return;
-    const role = normalizeUserRole(user.role);
-    if (role === "buyer") {
-      refreshBuyerHumanChat({ silent: false });
-      const timer = setInterval(() => {
-        refreshBuyerHumanChat({ silent: true });
-      }, 4000);
-      return () => clearInterval(timer);
-    }
-    if (role === "sales_rep") {
-      refreshSalesRepInbox({ silent: false });
-      const timer = setInterval(() => {
-        refreshSalesRepInbox({ silent: true });
-      }, 4000);
-      return () => clearInterval(timer);
-    }
-    setHumanChatUnreadCount(0);
-  }, [user, authToken, refreshBuyerHumanChat, refreshSalesRepInbox]);
-
-  useEffect(() => {
-    if (!user || normalizeUserRole(user.role) !== "sales_rep") return;
-    if (!salesRepSelectedSessionId) {
-      setHumanChatSession(null);
-      setHumanChatMessages([]);
-      return;
-    }
-    loadSalesRepSession(salesRepSelectedSessionId, { silent: false });
-    const timer = setInterval(() => {
-      loadSalesRepSession(salesRepSelectedSessionId, { silent: true });
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [user, salesRepSelectedSessionId, loadSalesRepSession]);
-
-  useEffect(() => {
     if (!aiCopilotOpen) return;
     const frame = window.requestAnimationFrame(() => {
       const maxAllowed = Math.max(260, Math.floor(window.innerHeight - 24));
@@ -3905,6 +3871,40 @@ export default function App() {
       setHumanChatEnding(false);
     }
   }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshSalesRepInbox]);
+
+  useEffect(() => {
+    if (!user || !authToken) return;
+    const role = normalizeUserRole(user.role);
+    if (role === "buyer") {
+      refreshBuyerHumanChat({ silent: false });
+      const timer = setInterval(() => {
+        refreshBuyerHumanChat({ silent: true });
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+    if (role === "sales_rep") {
+      refreshSalesRepInbox({ silent: false });
+      const timer = setInterval(() => {
+        refreshSalesRepInbox({ silent: true });
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+    setHumanChatUnreadCount(0);
+  }, [user, authToken, refreshBuyerHumanChat, refreshSalesRepInbox]);
+
+  useEffect(() => {
+    if (!user || normalizeUserRole(user.role) !== "sales_rep") return;
+    if (!salesRepSelectedSessionId) {
+      setHumanChatSession(null);
+      setHumanChatMessages([]);
+      return;
+    }
+    loadSalesRepSession(salesRepSelectedSessionId, { silent: false });
+    const timer = setInterval(() => {
+      loadSalesRepSession(salesRepSelectedSessionId, { silent: true });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [user, salesRepSelectedSessionId, loadSalesRepSession]);
 
   const runAiCopilot = async (messageOverride = null) => {
     if (!authToken || !user || aiCopilotLoading) return;
