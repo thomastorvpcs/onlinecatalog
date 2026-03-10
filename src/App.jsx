@@ -3960,12 +3960,30 @@ export default function App() {
       return;
     }
     if (normalizeUserRole(user.role) === "buyer" && isCopilotHumanHandoffIntent(message)) {
+      const now = new Date().toISOString();
+      setAiCopilotMessages((prev) => [...prev, {
+        role: "user",
+        text: message,
+        topic: aiCopilotCurrentTopic,
+        timestamp: now
+      }, {
+        role: "assistant",
+        text: "Transferring you to your sales rep now. Please wait about 5 seconds.",
+        action: null,
+        topic: "general",
+        timestamp: now
+      }]);
       setAiCopilotInput("");
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 5000);
+      });
       const connected = await requestHumanHandoff(message);
       if (connected) {
+        // Human chat polling/view will take over once the session is active.
+      } else {
         setAiCopilotMessages((prev) => [...prev, {
           role: "assistant",
-          text: "Connecting you with your sales rep now.",
+          text: "I couldn't transfer you right now. Please try again in a moment.",
           action: null,
           topic: "general",
           timestamp: new Date().toISOString()

@@ -2762,6 +2762,10 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
   if (!Number.isInteger(buyerId) || buyerId < 1) throw new Error("Unauthorized");
   const company = normalizeCompanyName(user.company);
   if (!company) throw new Error("Buyer company is required.");
+  const buyerDisplayName = [String(user.firstName || "").trim(), String(user.lastName || "").trim()].filter(Boolean).join(" ").trim()
+    || String(user.email || "").trim()
+    || "Buyer";
+  const transferSystemMessage = `${buyerDisplayName} has been transferred from AI assistant.`;
   const assignedRep = await getSalesRepForCompanyRuntime(company);
   if (!assignedRep?.id) throw new Error("No active sales rep is assigned to your company.");
 
@@ -2800,6 +2804,7 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
           last_activity_at = CURRENT_TIMESTAMP
       WHERE id = $3
     `, [assignedRep.id, company, Number(latestSession.id)]);
+    await insertChatMessageRuntime(Number(latestSession.id), null, "system", transferSystemMessage);
     const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
     await insertChatMessageRuntime(Number(latestSession.id), buyerId, "buyer", firstMessage);
     const refreshed = await getChatSessionByIdRuntime(Number(latestSession.id));
@@ -2815,6 +2820,7 @@ async function requestSalesRepHandoffRuntime(user, initialMessageRaw = "") {
   `, [buyerId, assignedRep.id, company, String(initialMessageRaw || "Buyer requested to talk to a sales rep.")]);
   const session = created.rows?.[0];
   if (!session?.id) throw new Error("Failed to create handoff session.");
+  await insertChatMessageRuntime(session.id, null, "system", transferSystemMessage);
   const firstMessage = String(initialMessageRaw || "").trim() || "Hi, I would like to talk to my sales rep.";
   await insertChatMessageRuntime(session.id, buyerId, "buyer", firstMessage);
   return mapChatSessionRow(session);
