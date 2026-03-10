@@ -779,9 +779,13 @@ async function ensurePostgresRuntimeSchema() {
       ended_by TEXT,
       close_reason TEXT,
       last_message_sender_role TEXT,
-      last_message_preview TEXT
+      last_message_preview TEXT,
+      typing_sender_role TEXT,
+      typing_expires_at TEXT
     )
   `);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("chat_sessions")} ADD COLUMN IF NOT EXISTS typing_sender_role TEXT`);
+  await pgClient.query(`ALTER TABLE ${postgresTableRef("chat_sessions")} ADD COLUMN IF NOT EXISTS typing_expires_at TEXT`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_buyer_active ON ${postgresTableRef("chat_sessions")} (buyer_user_id, status, last_activity_at DESC)`);
   await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_rep_active ON ${postgresTableRef("chat_sessions")} (sales_rep_user_id, status, last_activity_at DESC)`);
   await pgClient.query(`
@@ -2632,6 +2636,8 @@ function mapChatSessionRow(row) {
     closeReason: row.close_reason || null,
     lastMessageSenderRole: row.last_message_sender_role || null,
     lastMessagePreview: row.last_message_preview || null,
+    typingSenderRole: row.typing_sender_role || null,
+    typingExpiresAt: row.typing_expires_at || null,
     buyerEmail: String(row.buyer_email || ""),
     buyerFirstName: String(row.buyer_first_name || ""),
     buyerLastName: String(row.buyer_last_name || ""),
@@ -2692,10 +2698,42 @@ async function insertChatMessageRuntime(sessionId, senderUserId, senderRole, mes
     UPDATE ${postgresTableRef("chat_sessions")}
     SET last_activity_at = CURRENT_TIMESTAMP,
         last_message_sender_role = $1,
-        last_message_preview = LEFT($2, 240)
+        last_message_preview = LEFT($2, 240),
+        typing_sender_role = NULL,
+        typing_expires_at = NULL
     WHERE id = $3
   `, [normalizedRole, text, sid]);
   return mapChatMessageRow(insertResult.rows?.[0] || {});
+}
+
+async function setChatTypingStateRuntime(sessionIdRaw, user, isTypingRaw) {
+  if (!pgClient) throw new Error("Postgres runtime is not initialized.");
+  const sessionId = Number(sessionIdRaw);
+  if (!Number.isInteger(sessionId) || sessionId < 1) throw new Error("Session not found.");
+  const row = await getChatSessionByIdRuntime(sessionId);
+  if (!row?.id || !(await canUserAccessChatSessionRuntime(user, row))) throw new Error("Session not found.");
+  if (String(row.status || "") !== "active") throw new Error("Conversation is no longer active.");
+  const role = normalizeUserRole(user?.role);
+  const senderRole = role === "sales_rep" ? "sales_rep" : (role === "admin" ? "admin" : (role === "buyer" ? "buyer" : ""));
+  if (!senderRole) throw new Error("Forbidden");
+  const isTyping = isTypingRaw === true;
+  if (isTyping) {
+    await pgClient.query(`
+      UPDATE ${postgresTableRef("chat_sessions")}
+      SET typing_sender_role = $1,
+          typing_expires_at = CURRENT_TIMESTAMP + INTERVAL '5 seconds'
+      WHERE id = $2
+    `, [senderRole, sessionId]);
+  } else {
+    await pgClient.query(`
+      UPDATE ${postgresTableRef("chat_sessions")}
+      SET typing_sender_role = NULL,
+          typing_expires_at = NULL
+      WHERE id = $1
+    `, [sessionId]);
+  }
+  const refreshed = await getChatSessionByIdRuntime(sessionId);
+  return mapChatSessionRow(refreshed || row);
 }
 
 async function closeChatSessionRuntime(sessionId, endedBy, closeReason = "ended_by_user") {
@@ -8391,6 +8429,29 @@ const server = createServer(async (req, res) => {
         json(req, res, 201, { ok: true, session: mapChatSessionRow(session), message });
       } catch (error) {
         json(req, res, 400, { error: String(error?.message || "Failed to send message.") });
+      }
+      return;
+    }
+
+    const chatTypingMatch = url.pathname.match(/^\/api\/chat\/session\/(\d+)\/typing$/);
+    if (chatTypingMatch && req.method === "POST") {
+      const user = getAuthUser(req);
+      if (!user) {
+        json(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      await closeExpiredChatSessionsRuntime();
+      const sessionId = Number(chatTypingMatch[1]);
+      try {
+        const body = await parseBody(req);
+        const session = await setChatTypingStateRuntime(sessionId, user, body?.isTyping === true);
+        json(req, res, 200, { ok: true, session });
+      } catch (error) {
+        const message = String(error?.message || "Failed to update typing state.");
+        const statusCode = message.includes("Unauthorized") || message.includes("Forbidden")
+          ? 403
+          : (message.includes("Session not found") ? 404 : 409);
+        json(req, res, statusCode, { error: message });
       }
       return;
     }

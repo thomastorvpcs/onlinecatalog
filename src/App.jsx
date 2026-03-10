@@ -2148,6 +2148,8 @@ export default function App() {
   const humanChatScrollSessionRef = useRef(0);
   const humanChatScrollMessageKeyRef = useRef("");
   const humanChatEndedNoticeSessionRef = useRef(0);
+  const humanTypingStopTimerRef = useRef(null);
+  const humanTypingLastSentRef = useRef({ key: "", at: 0 });
   const buyerHumanChatPollInFlightRef = useRef(false);
   const salesRepInboxPollInFlightRef = useRef(false);
   const salesRepSessionPollInFlightRef = useRef(false);
@@ -3882,11 +3884,63 @@ export default function App() {
     }
   }, [authToken, refreshToken, user, applyAuthTokens, clearAuthState]);
 
+  const sendHumanTypingState = useCallback(async (isTypingRaw) => {
+    const sessionId = Number(humanChatSession?.id || 0);
+    const status = String(humanChatSession?.status || "").toLowerCase();
+    if (!authToken || !user || !sessionId || status !== "active") return;
+    const role = normalizeUserRole(user.role);
+    if (!["buyer", "admin", "sales_rep"].includes(role)) return;
+    const isTyping = isTypingRaw === true;
+    const key = `${sessionId}:${role}:${isTyping ? 1 : 0}`;
+    const now = Date.now();
+    if (humanTypingLastSentRef.current.key === key && (now - Number(humanTypingLastSentRef.current.at || 0)) < 900) return;
+    humanTypingLastSentRef.current = { key, at: now };
+    try {
+      const payload = await apiRequest(`/api/chat/session/${encodeURIComponent(sessionId)}/typing`, {
+        method: "POST",
+        token: authToken,
+        refreshToken,
+        onAuthUpdate: applyAuthTokens,
+        onAuthFail: clearAuthState,
+        body: { isTyping }
+      });
+      if (payload?.session) setHumanChatSession(payload.session);
+    } catch {
+      // typing indicator failures are non-blocking
+    }
+  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState]);
+
+  const queueHumanTypingHeartbeat = useCallback((textRaw) => {
+    const sessionId = Number(humanChatSession?.id || 0);
+    const status = String(humanChatSession?.status || "").toLowerCase();
+    if (!sessionId || status !== "active") return;
+    const hasText = String(textRaw || "").trim().length > 0;
+    if (hasText) {
+      sendHumanTypingState(true);
+      if (humanTypingStopTimerRef.current) clearTimeout(humanTypingStopTimerRef.current);
+      humanTypingStopTimerRef.current = setTimeout(() => {
+        humanTypingStopTimerRef.current = null;
+        sendHumanTypingState(false);
+      }, 2200);
+    } else {
+      if (humanTypingStopTimerRef.current) {
+        clearTimeout(humanTypingStopTimerRef.current);
+        humanTypingStopTimerRef.current = null;
+      }
+      sendHumanTypingState(false);
+    }
+  }, [humanChatSession, sendHumanTypingState]);
+
   const sendHumanChatMessage = useCallback(async (messageRaw) => {
     const sessionId = Number(humanChatSession?.id || 0);
     if (!authToken || !user || !sessionId || String(humanChatSession?.status || "") !== "active") return;
     const message = String(messageRaw || "").trim();
     if (!message) return;
+    if (humanTypingStopTimerRef.current) {
+      clearTimeout(humanTypingStopTimerRef.current);
+      humanTypingStopTimerRef.current = null;
+    }
+    sendHumanTypingState(false);
     setAiCopilotInput("");
     setHumanChatLoading(true);
     setHumanChatError("");
@@ -3910,11 +3964,16 @@ export default function App() {
     } finally {
       setHumanChatLoading(false);
     }
-  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshBuyerHumanChat, loadSalesRepSession, refreshSalesRepInbox]);
+  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshBuyerHumanChat, loadSalesRepSession, refreshSalesRepInbox, sendHumanTypingState]);
 
   const endHumanChatConversation = useCallback(async () => {
     const sessionId = Number(humanChatSession?.id || 0);
     if (!authToken || !user || !sessionId) return;
+    if (humanTypingStopTimerRef.current) {
+      clearTimeout(humanTypingStopTimerRef.current);
+      humanTypingStopTimerRef.current = null;
+    }
+    sendHumanTypingState(false);
     setHumanChatEnding(true);
     setHumanChatError("");
     try {
@@ -3935,7 +3994,7 @@ export default function App() {
     } finally {
       setHumanChatEnding(false);
     }
-  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshSalesRepInbox]);
+  }, [authToken, refreshToken, user, humanChatSession, applyAuthTokens, clearAuthState, refreshSalesRepInbox, sendHumanTypingState]);
 
   useEffect(() => {
     if (!user || !authToken) return;
@@ -3973,6 +4032,13 @@ export default function App() {
       timestamp: new Date().toISOString()
     }]);
   }, [user, humanChatSession]);
+
+  useEffect(() => () => {
+    if (humanTypingStopTimerRef.current) {
+      clearTimeout(humanTypingStopTimerRef.current);
+      humanTypingStopTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!user || normalizeUserRole(user.role) !== "sales_rep") return;
@@ -5233,6 +5299,14 @@ export default function App() {
     humanChatSession?.salesRepEmail,
     "SR"
   );
+  const humanTypingSenderRole = String(humanChatSession?.typingSenderRole || "").trim().toLowerCase();
+  const humanTypingExpiresAtMs = humanChatSession?.typingExpiresAt ? new Date(humanChatSession.typingExpiresAt).getTime() : 0;
+  const humanTypingFresh = Number.isFinite(humanTypingExpiresAtMs) && humanTypingExpiresAtMs > Date.now();
+  const isOppositeHumanTyping = isHumanSessionActive && humanTypingFresh && (
+    (isSalesRepUser && (humanTypingSenderRole === "buyer" || humanTypingSenderRole === "admin"))
+    || (!isSalesRepUser && humanTypingSenderRole === "sales_rep")
+  );
+  const oppositeTypingAvatarText = isSalesRepUser ? activeBuyerInitials : salesRepInitials;
   const inboxUnreadCount = userRole === "sales_rep"
     ? salesRepInbox.filter((s) => s?.hasUnread === true).length
     : (userRole === "admin" ? Math.max(0, Number(humanChatUnreadCount || 0)) : 0);
@@ -6560,6 +6634,21 @@ export default function App() {
                           </div>
                         );
                       }) : <div className="small">No messages yet.</div>}
+                      {isOppositeHumanTyping ? (
+                        <div className="ai-copilot-row assistant" style={{ margin: "2px 0", gap: 4 }}>
+                          <span className="ai-copilot-avatar" aria-hidden="true" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>
+                            {oppositeTypingAvatarText}
+                          </span>
+                          <div className="ai-copilot-msg assistant typing">
+                            <span>Typing</span>
+                            <span className="ai-typing-dots" aria-hidden="true">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
                       {String(humanChatSession.status || "") !== "active" ? (
                         <div className="small" style={{ marginTop: 8 }}>Conversation ended. AI assistant is active again.</div>
                       ) : null}
@@ -6670,7 +6759,18 @@ export default function App() {
               <input
                 className="saved-filter-input"
                 value={aiCopilotInput}
-                onChange={(e) => setAiCopilotInput(e.target.value)}
+                onChange={(e) => {
+                  const nextValue = e.target.value;
+                  setAiCopilotInput(nextValue);
+                  if (humanChatAvailable && String(humanChatSession?.status || "").toLowerCase() === "active") {
+                    queueHumanTypingHeartbeat(nextValue);
+                  }
+                }}
+                onBlur={() => {
+                  if (humanChatAvailable && String(humanChatSession?.status || "").toLowerCase() === "active") {
+                    queueHumanTypingHeartbeat("");
+                  }
+                }}
                 placeholder={humanChatAvailable ? (isSalesRepUser ? "Message buyer..." : "Message your sales rep...") : "Ask AI Copilot..."}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
